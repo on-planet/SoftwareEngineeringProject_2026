@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Logs
+*.log
+logs/
+repo/logs/
+
+# Env files
+.env
+.env.*
+
+# Node / Next.js
+node_modules/
+repo/web/node_modules/
+repo/web/.next/
+repo/web/out/
+
+# OS/editor
+.DS_Store
+.vscode/
+.idea/
+
+# TypeScript
+*.tsbuildinfo
