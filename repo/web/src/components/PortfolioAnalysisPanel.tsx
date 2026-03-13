@@ -136,40 +136,35 @@ export function PortfolioAnalysisPanel() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <section
-        style={{
-          border: "1px solid #edf2f7",
-          borderRadius: 12,
-          padding: 16,
-          background: "#f8fafc",
-        }}
-      >
-        <div style={{ fontWeight: 600, marginBottom: 12 }}>组合分析筛选</div>
-        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+      <section className="card">
+        <div className="card-title" style={{ marginBottom: 12 }}>
+          组合分析筛选
+        </div>
+        <div className="toolbar">
           <label style={{ display: "flex", flexDirection: "column", fontSize: 12, gap: 6 }}>
             用户ID
             <input
+              className="input"
               type="number"
               min={1}
               value={userId}
               onChange={(event) => setUserId(Number(event.target.value) || DEFAULT_USER_ID)}
-              style={{ padding: "6px 8px" }}
             />
           </label>
           <label style={{ display: "flex", flexDirection: "column", fontSize: 12, gap: 6 }}>
             TopN
             <input
+              className="input"
               type="number"
               min={1}
               max={50}
               value={topN}
               onChange={(event) => setTopN(Number(event.target.value) || 5)}
-              style={{ padding: "6px 8px" }}
             />
           </label>
           <label style={{ display: "flex", flexDirection: "column", fontSize: 12, gap: 6 }}>
             行业市场
-            <select value={market} onChange={(event) => setMarket(event.target.value)} style={{ padding: "6px 8px" }}>
+            <select className="select" value={market} onChange={(event) => setMarket(event.target.value)}>
               <option value="">全部市场</option>
               <option value="A">A股</option>
               <option value="HK">港股</option>
@@ -177,60 +172,55 @@ export function PortfolioAnalysisPanel() {
           </label>
           <label style={{ display: "flex", flexDirection: "column", fontSize: 12, gap: 6 }}>
             行业日期
-            <input
-              type="date"
-              value={asOf}
-              onChange={(event) => setAsOf(event.target.value)}
-              style={{ padding: "6px 8px" }}
-            />
+            <input className="input" type="date" value={asOf} onChange={(event) => setAsOf(event.target.value)} />
           </label>
         </div>
       </section>
 
       {loading ? (
-        <div>组合分析加载中...</div>
+        <div className="helper">组合分析加载中...</div>
       ) : error ? (
-        <div>组合分析加载失败：{error}</div>
+        <div className="helper">组合分析加载失败：{error}</div>
       ) : analysis ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <section style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
-            <div style={{ border: "1px solid #e2e8f0", borderRadius: 10, padding: 12, background: "#fff" }}>
-              <div style={{ fontSize: 12, color: "#718096" }}>组合成本</div>
-              <div style={{ fontWeight: 600, marginTop: 4 }}>{formatNumber(analysis.summary.total_cost)}</div>
+          <section className="grid grid-3">
+            <div className="card">
+              <div className="helper">组合成本</div>
+              <div style={{ fontWeight: 700, marginTop: 4 }}>{formatNumber(analysis.summary.total_cost)}</div>
             </div>
-            <div style={{ border: "1px solid #e2e8f0", borderRadius: 10, padding: 12, background: "#fff" }}>
-              <div style={{ fontSize: 12, color: "#718096" }}>组合市值</div>
-              <div style={{ fontWeight: 600, marginTop: 4 }}>{formatNumber(analysis.summary.total_value)}</div>
+            <div className="card">
+              <div className="helper">组合市值</div>
+              <div style={{ fontWeight: 700, marginTop: 4 }}>{formatNumber(analysis.summary.total_value)}</div>
             </div>
-            <div style={{ border: "1px solid #e2e8f0", borderRadius: 10, padding: 12, background: "#fff" }}>
-              <div style={{ fontSize: 12, color: "#718096" }}>浮动收益</div>
-              <div style={{ fontWeight: 600, marginTop: 4 }}>{formatNumber(analysis.summary.total_pnl)}</div>
+            <div className="card">
+              <div className="helper">浮动收益</div>
+              <div style={{ fontWeight: 700, marginTop: 4 }}>{formatNumber(analysis.summary.total_pnl)}</div>
             </div>
-            <div style={{ border: "1px solid #e2e8f0", borderRadius: 10, padding: 12, background: "#fff" }}>
-              <div style={{ fontSize: 12, color: "#718096" }}>收益率</div>
-              <div style={{ fontWeight: 600, marginTop: 4 }}>{formatPercent(analysis.summary.total_pnl_pct)}</div>
-            </div>
-          </section>
-
-          <section style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))" }}>
-            <div style={{ border: "1px solid #e2e8f0", borderRadius: 10, padding: 12, background: "#fff" }}>
-              <div style={{ fontWeight: 600, marginBottom: 8 }}>组合行业暴露</div>
-              {sectorPieOption ? <ReactECharts option={sectorPieOption} style={{ height: 240 }} /> : <div>暂无行业暴露</div>}
-            </div>
-            <div style={{ border: "1px solid #e2e8f0", borderRadius: 10, padding: 12, background: "#fff" }}>
-              <div style={{ fontWeight: 600, marginBottom: 8 }}>集中度 Top 持仓</div>
-              {holdingsBarOption ? <ReactECharts option={holdingsBarOption} style={{ height: 240 }} /> : <div>暂无持仓数据</div>}
-            </div>
-            <div style={{ border: "1px solid #e2e8f0", borderRadius: 10, padding: 12, background: "#fff" }}>
-              <div style={{ fontWeight: 600, marginBottom: 8 }}>市场行业暴露</div>
-              {sectorExposureOption ? <ReactECharts option={sectorExposureOption} style={{ height: 240 }} /> : <div>暂无行业暴露数据</div>}
+            <div className="card">
+              <div className="helper">收益率</div>
+              <div style={{ fontWeight: 700, marginTop: 4 }}>{formatPercent(analysis.summary.total_pnl_pct)}</div>
             </div>
           </section>
 
-          <section style={{ border: "1px solid #e2e8f0", borderRadius: 10, padding: 12, background: "#fff" }}>
-            <div style={{ fontWeight: 600, marginBottom: 8 }}>持仓明细</div>
+          <section className="grid grid-3">
+            <div className="card">
+              <div className="card-title">组合行业暴露</div>
+              {sectorPieOption ? <ReactECharts option={sectorPieOption} style={{ height: 240 }} /> : <div className="helper">暂无行业暴露</div>}
+            </div>
+            <div className="card">
+              <div className="card-title">集中度 Top 持仓</div>
+              {holdingsBarOption ? <ReactECharts option={holdingsBarOption} style={{ height: 240 }} /> : <div className="helper">暂无持仓数据</div>}
+            </div>
+            <div className="card">
+              <div className="card-title">市场行业暴露</div>
+              {sectorExposureOption ? <ReactECharts option={sectorExposureOption} style={{ height: 240 }} /> : <div className="helper">暂无行业暴露数据</div>}
+            </div>
+          </section>
+
+          <section className="card">
+            <div className="card-title">持仓明细</div>
             {analysis.items.length === 0 ? (
-              <div style={{ fontSize: 12, color: "#718096" }}>暂无持仓数据</div>
+              <div className="helper">暂无持仓数据</div>
             ) : (
               <div style={{ display: "grid", gap: 8 }}>
                 {analysis.items.map((item) => (

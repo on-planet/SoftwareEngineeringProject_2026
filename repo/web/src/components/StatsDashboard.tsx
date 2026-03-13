@@ -57,29 +57,14 @@ type StatCardProps<T> = {
 
 function StatCard<T>({ title, items, getLabel, getCount }: StatCardProps<T>) {
   return (
-    <div
-      style={{
-        border: "1px solid #e2e8f0",
-        borderRadius: 10,
-        padding: 16,
-        background: "#fff",
-        boxShadow: "0 1px 2px rgba(0,0,0,0.06)",
-      }}
-    >
-      <div style={{ fontWeight: 600, marginBottom: 10 }}>{title}</div>
+    <div className="card">
+      <div className="card-title">{title}</div>
       {items.length === 0 ? (
-        <div style={{ fontSize: 12, color: "#718096" }}>暂无数据</div>
+        <div className="helper">暂无数据</div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           {items.map((item, index) => (
-            <div
-              key={`${title}-${index}`}
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                fontSize: 13,
-              }}
-            >
+            <div key={`${title}-${index}`} style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
               <span>{getLabel(item)}</span>
               <span style={{ fontWeight: 600 }}>{getCount(item)}</span>
             </div>
@@ -245,32 +230,23 @@ export function StatsDashboard({
   }, [symbol, start, end, granularity, topDate, topType, topSymbol, topSentiment]);
 
   if (loading) {
-    return <div>统计加载中...</div>;
+    return <div className="helper">统计加载中...</div>;
   }
 
   if (error) {
-    return <div>统计加载失败：{error}</div>;
+    return <div className="helper">统计加载失败：{error}</div>;
   }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-      <section
-        style={{
-          border: "1px solid #edf2f7",
-          borderRadius: 12,
-          padding: 16,
-          background: "#f8fafc",
-        }}
-      >
-        <div style={{ fontWeight: 600, marginBottom: 12 }}>筛选条件</div>
-        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+      <section className="card">
+        <div className="card-title" style={{ marginBottom: 12 }}>
+          筛选条件
+        </div>
+        <div className="toolbar">
           <label style={{ display: "flex", flexDirection: "column", fontSize: 12, gap: 6 }}>
             时间粒度
-            <select
-              value={granularity}
-              onChange={(event) => setGranularity(event.target.value as Granularity)}
-              style={{ padding: "6px 8px" }}
-            >
+            <select className="select" value={granularity} onChange={(event) => setGranularity(event.target.value as Granularity)}>
               <option value="day">日</option>
               <option value="week">周</option>
               <option value="month">月</option>
@@ -278,60 +254,36 @@ export function StatsDashboard({
           </label>
           <label style={{ display: "flex", flexDirection: "column", fontSize: 12, gap: 6 }}>
             时间 TopN
-            <input
-              type="number"
-              min={0}
-              value={topDate}
-              onChange={(event) => setTopDate(Number(event.target.value) || 0)}
-              style={{ padding: "6px 8px" }}
-            />
+            <input className="input" type="number" min={0} value={topDate} onChange={(event) => setTopDate(Number(event.target.value) || 0)} />
           </label>
           <label style={{ display: "flex", flexDirection: "column", fontSize: 12, gap: 6 }}>
             事件类型 TopN
-            <input
-              type="number"
-              min={0}
-              value={topType}
-              onChange={(event) => setTopType(Number(event.target.value) || 0)}
-              style={{ padding: "6px 8px" }}
-            />
+            <input className="input" type="number" min={0} value={topType} onChange={(event) => setTopType(Number(event.target.value) || 0)} />
           </label>
           <label style={{ display: "flex", flexDirection: "column", fontSize: 12, gap: 6 }}>
             标的 TopN
-            <input
-              type="number"
-              min={0}
-              value={topSymbol}
-              onChange={(event) => setTopSymbol(Number(event.target.value) || 0)}
-              style={{ padding: "6px 8px" }}
-            />
+            <input className="input" type="number" min={0} value={topSymbol} onChange={(event) => setTopSymbol(Number(event.target.value) || 0)} />
           </label>
           <label style={{ display: "flex", flexDirection: "column", fontSize: 12, gap: 6 }}>
             情绪 TopN
-            <input
-              type="number"
-              min={0}
-              value={topSentiment}
-              onChange={(event) => setTopSentiment(Number(event.target.value) || 0)}
-              style={{ padding: "6px 8px" }}
-            />
+            <input className="input" type="number" min={0} value={topSentiment} onChange={(event) => setTopSentiment(Number(event.target.value) || 0)} />
           </label>
         </div>
       </section>
 
       <section>
-        <h2 style={{ fontSize: 18, marginBottom: 12 }}>事件统计</h2>
-        <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))" }}>
-          <div style={{ border: "1px solid #e2e8f0", borderRadius: 10, padding: 12, background: "#fff" }}>
-            <div style={{ fontWeight: 600, marginBottom: 8 }}>按时间</div>
+        <h2 className="section-title">事件统计</h2>
+        <div className="grid grid-3">
+          <div className="card">
+            <div className="card-title">按时间</div>
             <ReactECharts option={eventDateOption} style={{ height: 220 }} />
           </div>
-          <div style={{ border: "1px solid #e2e8f0", borderRadius: 10, padding: 12, background: "#fff" }}>
-            <div style={{ fontWeight: 600, marginBottom: 8 }}>按类型</div>
+          <div className="card">
+            <div className="card-title">按类型</div>
             <ReactECharts option={eventTypeOption} style={{ height: 220 }} />
           </div>
-          <div style={{ border: "1px solid #e2e8f0", borderRadius: 10, padding: 12, background: "#fff" }}>
-            <div style={{ fontWeight: 600, marginBottom: 8 }}>按标的</div>
+          <div className="card">
+            <div className="card-title">按标的</div>
             <ReactECharts option={eventSymbolOption} style={{ height: 220 }} />
           </div>
         </div>
@@ -346,18 +298,18 @@ export function StatsDashboard({
       </section>
 
       <section>
-        <h2 style={{ fontSize: 18, marginBottom: 12 }}>新闻统计</h2>
-        <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))" }}>
-          <div style={{ border: "1px solid #e2e8f0", borderRadius: 10, padding: 12, background: "#fff" }}>
-            <div style={{ fontWeight: 600, marginBottom: 8 }}>按时间</div>
+        <h2 className="section-title">新闻统计</h2>
+        <div className="grid grid-3">
+          <div className="card">
+            <div className="card-title">按时间</div>
             <ReactECharts option={newsDateOption} style={{ height: 220 }} />
           </div>
-          <div style={{ border: "1px solid #e2e8f0", borderRadius: 10, padding: 12, background: "#fff" }}>
-            <div style={{ fontWeight: 600, marginBottom: 8 }}>按情绪</div>
+          <div className="card">
+            <div className="card-title">按情绪</div>
             <ReactECharts option={newsSentimentOption} style={{ height: 220 }} />
           </div>
-          <div style={{ border: "1px solid #e2e8f0", borderRadius: 10, padding: 12, background: "#fff" }}>
-            <div style={{ fontWeight: 600, marginBottom: 8 }}>按标的</div>
+          <div className="card">
+            <div className="card-title">按标的</div>
             <ReactECharts option={newsSymbolOption} style={{ height: 220 }} />
           </div>
         </div>

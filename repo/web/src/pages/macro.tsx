@@ -96,43 +96,52 @@ export default function MacroPage() {
   }, [series]);
 
   if (loading) {
-    return <div style={{ padding: 24 }}>宏观指标加载中...</div>;
+    return <div className="page">宏观指标加载中...</div>;
   }
 
   if (error) {
-    return <div style={{ padding: 24 }}>宏观指标加载失败：{error}</div>;
+    return <div className="page">宏观指标加载失败：{error}</div>;
   }
 
   return (
-    <div style={{ padding: 24 }}>
-      <h2 style={{ marginBottom: 16 }}>宏观指标</h2>
-      <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 16 }}>
-        <span style={{ fontSize: 12, color: "#4a5568" }}>选择指标</span>
-        <select value={selectedKey} onChange={(event) => setSelectedKey(event.target.value)}>
-          {keys.map((key) => (
-            <option key={key} value={key}>
-              {key}
-            </option>
+    <div className="page">
+      <section>
+        <h2 className="section-title">宏观指标</h2>
+        <div className="toolbar" style={{ marginBottom: 16 }}>
+          <span className="helper">选择指标</span>
+          <select className="select" value={selectedKey} onChange={(event) => setSelectedKey(event.target.value)}>
+            {keys.map((key) => (
+              <option key={key} value={key}>
+                {key}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="card">
+          {seriesLoading ? (
+            <div>宏观序列加载中...</div>
+          ) : seriesOption ? (
+            <ReactECharts option={seriesOption} style={{ height: 320 }} />
+          ) : (
+            <div>暂无宏观序列数据</div>
+          )}
+        </div>
+      </section>
+      <section>
+        <h2 className="section-title">最新指标快照</h2>
+        <div className="grid grid-3">
+          {items.map((item) => (
+            <div key={`${item.key}-${item.date}`} className="card">
+              <div className="card-title">{item.key}</div>
+              <div className="helper">{item.date}</div>
+              <div style={{ marginTop: 6 }}>数值 {formatNumber(item.value)}</div>
+              <div className="helper" style={{ marginTop: 4 }}>
+                评分 {formatNumber(item.score ?? 0)}
+              </div>
+            </div>
           ))}
-        </select>
-      </div>
-      {seriesLoading ? (
-        <div>宏观序列加载中...</div>
-      ) : seriesOption ? (
-        <ReactECharts option={seriesOption} style={{ height: 320 }} />
-      ) : (
-        <div>暂无宏观序列数据</div>
-      )}
-      <div style={{ marginTop: 24, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
-        {items.map((item) => (
-          <div key={`${item.key}-${item.date}`} style={{ border: "1px solid #e2e8f0", borderRadius: 8, padding: 12 }}>
-            <div style={{ fontWeight: 600 }}>{item.key}</div>
-            <div style={{ fontSize: 12, color: "#718096" }}>{item.date}</div>
-            <div style={{ marginTop: 6 }}>数值 {formatNumber(item.value)}</div>
-            <div style={{ marginTop: 4, fontSize: 12 }}>评分 {formatNumber(item.score ?? 0)}</div>
-          </div>
-        ))}
-      </div>
+        </div>
+      </section>
     </div>
   );
 }

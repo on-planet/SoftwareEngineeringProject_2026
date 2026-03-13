@@ -56,40 +56,40 @@ export function StockFundamental({ symbol }: Props) {
   }, [symbol]);
 
   if (loading) {
-    return <div>基本面加载中...</div>;
+    return <div className="helper">基本面加载中...</div>;
   }
 
   if (error) {
-    return <div>基本面加载失败：{error}</div>;
+    return <div className="helper">基本面加载失败：{error}</div>;
   }
 
   if (!profile) {
-    return <div>暂无股票信息</div>;
+    return <div className="helper">暂无股票信息</div>;
   }
 
   return (
-    <div style={{ border: "1px solid #e2e8f0", borderRadius: 8, padding: 16, background: "#fff" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 16 }}>
+    <div className="card">
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
         <div>
           <div style={{ fontSize: 18, fontWeight: 600 }}>{profile.name}</div>
-          <div style={{ color: "#718096", fontSize: 12 }}>{profile.symbol} · {profile.market}</div>
+          <div className="helper">{profile.symbol} · {profile.market}</div>
         </div>
         <div style={{ textAlign: "right" }}>
-          <div style={{ fontSize: 12, color: "#718096" }}>行业</div>
+          <div className="helper">行业</div>
           <div>{profile.sector}</div>
         </div>
       </div>
       <div style={{ marginTop: 12 }}>
-        <div style={{ fontSize: 12, color: "#718096" }}>综合评分</div>
+        <div className="helper">综合评分</div>
         <div style={{ fontSize: 28, fontWeight: 700 }}>
           {fundamental ? formatNumber(fundamental.score) : "-"}
         </div>
       </div>
-      <div style={{ marginTop: 12, color: "#4a5568", lineHeight: 1.6 }}>
+      <div style={{ marginTop: 12, color: "#cbd5f5", lineHeight: 1.6 }}>
         {fundamental?.summary ?? "暂无评分摘要"}
       </div>
       {fundamental?.updated_at ? (
-        <div style={{ marginTop: 8, fontSize: 12, color: "#a0aec0" }}>
+        <div className="helper" style={{ marginTop: 8 }}>
           更新时间：{new Date(fundamental.updated_at).toLocaleString("zh-CN")}
         </div>
       ) : null}

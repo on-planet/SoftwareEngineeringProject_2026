@@ -18,31 +18,39 @@ export default function StockPage({ symbol = "000001" }: Props) {
 
   const appliedSymbol = currentSymbol || symbol;
   return (
-    <div style={{ padding: "24px", display: "flex", flexDirection: "column", gap: 24 }}>
+    <div className="page">
       <section>
-        <h2 style={{ fontSize: 20, marginBottom: 12 }}>基本面概览</h2>
-        <div style={{ display: "flex", gap: 12, marginBottom: 12 }}>
+        <h2 className="section-title">基本面概览</h2>
+        <div className="toolbar" style={{ marginBottom: 12 }}>
           <input
+            className="input"
             type="text"
             value={currentSymbol}
             onChange={handleChange}
             placeholder="输入股票代码"
-            style={{ padding: "6px 10px", border: "1px solid #e2e8f0", borderRadius: 6 }}
           />
         </div>
-        <StockFundamental symbol={appliedSymbol} />
+        <div className="card">
+          <StockFundamental symbol={appliedSymbol} />
+        </div>
       </section>
       <section>
-        <h2 style={{ fontSize: 20, marginBottom: 12 }}>技术指标</h2>
-        <StockIndicatorsChart symbol={appliedSymbol} />
+        <h2 className="section-title">技术指标</h2>
+        <div className="card">
+          <StockIndicatorsChart symbol={appliedSymbol} />
+        </div>
       </section>
       <section>
-        <h2 style={{ fontSize: 20, marginBottom: 12 }}>风险指标</h2>
-        <StockRiskChart symbol={appliedSymbol} />
+        <h2 className="section-title">风险指标</h2>
+        <div className="card">
+          <StockRiskChart symbol={appliedSymbol} />
+        </div>
       </section>
       <section>
-        <h2 style={{ fontSize: 20, marginBottom: 12 }}>相关新闻</h2>
-        <NewsList symbol={appliedSymbol} />
+        <h2 className="section-title">相关新闻</h2>
+        <div className="card">
+          <NewsList symbol={appliedSymbol} />
+        </div>
       </section>
     </div>
   );

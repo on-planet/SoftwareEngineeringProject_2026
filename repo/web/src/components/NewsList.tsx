@@ -56,38 +56,38 @@ export function NewsList({ symbol }: Props) {
   }, [symbol, limit]);
 
   if (loading) {
-    return <div>新闻加载中...</div>;
+    return <div className="helper">新闻加载中...</div>;
   }
 
   if (error) {
-    return <div>新闻加载失败：{error}</div>;
+    return <div className="helper">新闻加载失败：{error}</div>;
   }
 
   if (items.length === 0) {
-    return <div>暂无新闻</div>;
+    return <div className="helper">暂无新闻</div>;
   }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <div style={{ fontSize: 12, color: "#718096" }}>最新 {items.length} 条</div>
-        <select value={limit} onChange={(event) => setLimit(Number(event.target.value) || 10)} style={{ padding: "4px 8px" }}>
+      <div className="toolbar" style={{ justifyContent: "space-between" }}>
+        <div className="helper">最新 {items.length} 条</div>
+        <select className="select" value={limit} onChange={(event) => setLimit(Number(event.target.value) || 10)}>
           <option value={5}>5 条</option>
           <option value={10}>10 条</option>
           <option value={20}>20 条</option>
         </select>
       </div>
       {items.map((item) => (
-        <div
-          key={item.id}
-          style={{ border: "1px solid #e2e8f0", borderRadius: 8, padding: 12, background: "#fff" }}
-        >
-          <div style={{ fontWeight: 600 }}>{item.title}</div>
-          <div style={{ marginTop: 6, fontSize: 12, color: "#718096" }}>
+        <div key={item.id} className="card">
+          <div className="card-title">{item.title}</div>
+          <div className="helper" style={{ marginTop: 6 }}>
             {item.symbol} · {new Date(item.published_at).toLocaleString("zh-CN")}
           </div>
           <div style={{ marginTop: 6, fontSize: 12 }}>
-            情绪：<span style={{ color: item.sentiment === "positive" ? "#d64545" : "#2c7a7b" }}>{item.sentiment}</span>
+            情绪：
+            <span style={{ color: item.sentiment === "positive" ? "#f87171" : "#34d399", fontWeight: 600 }}>
+              {item.sentiment}
+            </span>
           </div>
         </div>
       ))}

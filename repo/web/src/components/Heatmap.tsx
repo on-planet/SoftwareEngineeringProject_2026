@@ -90,17 +90,17 @@ export function Heatmap({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+      <div className="toolbar" style={{ justifyContent: "space-between" }}>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <label style={{ display: "flex", flexDirection: "column", fontSize: 12, gap: 6 }}>
             市场
             <select
+              className="select"
               value={market}
               onChange={(event) => {
                 setMarket(event.target.value);
                 setPage(1);
               }}
-              style={{ padding: "4px 8px" }}
             >
               <option value="">全部市场</option>
               <option value="A">A股</option>
@@ -110,12 +110,12 @@ export function Heatmap({
           <label style={{ display: "flex", flexDirection: "column", fontSize: 12, gap: 6 }}>
             排序
             <select
+              className="select"
               value={sort}
               onChange={(event) => {
                 setSort(event.target.value as SortOrder);
                 setPage(1);
               }}
-              style={{ padding: "4px 8px" }}
             >
               <option value="desc">降序</option>
               <option value="asc">升序</option>
@@ -124,12 +124,12 @@ export function Heatmap({
           <label style={{ display: "flex", flexDirection: "column", fontSize: 12, gap: 6 }}>
             每页
             <select
+              className="select"
               value={limit}
               onChange={(event) => {
                 setLimit(Number(event.target.value) || 24);
                 setPage(1);
               }}
-              style={{ padding: "4px 8px" }}
             >
               <option value={12}>12</option>
               <option value={24}>24</option>
@@ -137,45 +137,33 @@ export function Heatmap({
             </select>
           </label>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#4a5568" }}>
-          <button type="button" onClick={handlePrev} disabled={page <= 1}>
+        <div className="helper" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <button type="button" onClick={handlePrev} disabled={page <= 1} className="input">
             上一页
           </button>
           <span>
             第 {page} / {maxPage} 页 · 共 {total} 条
           </span>
-          <button type="button" onClick={handleNext} disabled={page >= maxPage}>
+          <button type="button" onClick={handleNext} disabled={page >= maxPage} className="input">
             下一页
           </button>
         </div>
       </div>
       {loading ? (
-        <div>热力图加载中...</div>
+        <div className="helper">热力图加载中...</div>
       ) : error ? (
-        <div>热力图加载失败：{error}</div>
+        <div className="helper">热力图加载失败：{error}</div>
       ) : items.length === 0 ? (
-        <div>暂无热力图数据</div>
+        <div className="helper">暂无热力图数据</div>
       ) : (
-        <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))" }}>
+        <div className="grid grid-3">
           {items.map((item) => {
-            const color = item.avg_change >= 0 ? "#fed7d7" : "#c6f6d5";
+            const bgColor = item.avg_change >= 0 ? "rgba(248, 113, 113, 0.2)" : "rgba(52, 211, 153, 0.2)";
             return (
-              <div
-                key={item.sector}
-                style={{
-                  border: "1px solid #e2e8f0",
-                  borderRadius: 8,
-                  padding: 12,
-                  background: color,
-                }}
-              >
-                <div style={{ fontWeight: 600 }}>{item.sector}</div>
-                <div style={{ marginTop: 6, fontSize: 12, color: "#4a5568" }}>
-                  均价 {formatNumber(item.avg_close)}
-                </div>
-                <div style={{ marginTop: 4, fontSize: 12 }}>
-                  变动 {formatSigned(item.avg_change)}
-                </div>
+              <div key={item.sector} className="card" style={{ background: bgColor }}>
+                <div className="card-title">{item.sector}</div>
+                <div className="helper">均价 {formatNumber(item.avg_close)}</div>
+                <div style={{ marginTop: 4, fontWeight: 600 }}>变动 {formatSigned(item.avg_change)}</div>
               </div>
             );
           })}

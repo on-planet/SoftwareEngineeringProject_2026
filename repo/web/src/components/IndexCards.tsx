@@ -51,36 +51,27 @@ export function IndexCards({ asOf }: { asOf?: string }) {
   }, [asOf]);
 
   if (loading) {
-    return <div>指数加载中...</div>;
+    return <div className="helper">指数加载中...</div>;
   }
 
   if (error) {
-    return <div>指数加载失败：{error}</div>;
+    return <div className="helper">指数加载失败：{error}</div>;
   }
 
   if (data.length === 0) {
-    return <div>暂无指数数据</div>;
+    return <div className="helper">暂无指数数据</div>;
   }
 
   return (
-    <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))" }}>
+    <div className="grid grid-3">
       {data.map((item) => {
-        const changeColor = item.change >= 0 ? "#d64545" : "#2c7a7b";
+        const changeColor = item.change >= 0 ? "#f87171" : "#34d399";
         return (
-          <div
-            key={`${item.symbol}-${item.date}`}
-            style={{
-              border: "1px solid #e2e8f0",
-              borderRadius: 8,
-              padding: 12,
-              background: "#fff",
-              boxShadow: "0 1px 2px rgba(0,0,0,0.06)",
-            }}
-          >
-            <div style={{ fontWeight: 600 }}>{item.symbol}</div>
-            <div style={{ fontSize: 12, color: "#718096" }}>{item.date}</div>
-            <div style={{ marginTop: 8, fontSize: 18 }}>{formatNumber(item.close)}</div>
-            <div style={{ marginTop: 4, color: changeColor }}>{formatSigned(item.change)}</div>
+          <div key={`${item.symbol}-${item.date}`} className="card">
+            <div className="card-title">{item.symbol}</div>
+            <div className="helper">{item.date}</div>
+            <div style={{ marginTop: 8, fontSize: 20, fontWeight: 700 }}>{formatNumber(item.close)}</div>
+            <div style={{ marginTop: 4, color: changeColor, fontWeight: 600 }}>{formatSigned(item.change)}</div>
           </div>
         );
       })}
