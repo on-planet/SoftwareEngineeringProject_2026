@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 import json
 import os
 from pathlib import Path
@@ -48,6 +48,14 @@ def _parse_time(value: str) -> time:
     return time(int(hour), int(minute))
 
 
+def _is_process_running(pid: int) -> bool:
+    try:
+        os.kill(int(pid), 0)
+    except OSError:
+        return False
+    return True
+
+
 def _acquire_lock() -> bool:
     LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
     if LOCK_PATH.exists():
@@ -56,14 +64,21 @@ def _acquire_lock() -> bool:
         except Exception:
             payload = {}
         ts = payload.get("ts", 0)
+        pid = payload.get("pid")
+        if pid and _is_process_running(pid):
+            LOGGER.warning("ETL 已在运行中（锁文件存在且进程存活），跳过本次执行")
+            return False
         if isinstance(ts, (int, float)):
-            age = datetime.utcnow().timestamp() - ts
+            age = datetime.now(timezone.utc).timestamp() - ts
             if age < 6 * 3600:
                 LOGGER.warning("ETL 已在运行中（锁文件存在），跳过本次执行")
                 return False
     try:
         LOCK_PATH.write_text(
-            json.dumps({"pid": os.getpid(), "ts": datetime.utcnow().timestamp()}, ensure_ascii=False),
+            json.dumps(
+                {"pid": os.getpid(), "ts": datetime.now(timezone.utc).timestamp()},
+                ensure_ascii=False,
+            ),
             encoding="utf-8",
         )
     except Exception:
