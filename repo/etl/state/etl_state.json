@@ -1,0 +1,20 @@
+{
+  "news_job": {
+    "last_success_date": "2026-03-12"
+  },
+  "index_job": {
+    "last_success_date": "2026-03-12"
+  },
+  "macro_job": {
+    "last_success_date": "2026-03-12"
+  },
+  "financial_job": {
+    "last_success_date": "2026-03-12"
+  },
+  "events_job": {
+    "last_success_date": "2026-03-12"
+  },
+  "index_constituent_job": {
+    "last_success_date": "2026-03-12"
+  }
+}
