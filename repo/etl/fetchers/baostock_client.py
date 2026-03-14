@@ -252,8 +252,8 @@ def get_daily_prices(symbols, as_of: date) -> List[dict]:
     start_date = as_of.strftime("%Y-%m-%d")
     end_date = start_date
     total = len(symbols)
-    workers = int(os.getenv("BAOSTOCK_WORKERS", "8"))
-    batch_size = int(os.getenv("BAOSTOCK_BATCH_SIZE", "200"))
+    workers = int(os.getenv("BAOSTOCK_WORKERS", "16"))
+    batch_size = int(os.getenv("BAOSTOCK_BATCH_SIZE", "50"))
 
     def _fetch_batch(batch: list[str]) -> List[dict]:
         output: List[dict] = []

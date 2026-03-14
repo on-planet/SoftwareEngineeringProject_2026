@@ -20,6 +20,8 @@ LOGGER = get_logger(__name__)
 CACHE_DIR = Path(__file__).resolve().parents[1] / "state" / "rss_cache"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 CACHE_TTL_SECONDS = int(os.getenv("RSS_CACHE_TTL", "1800"))
+RSS_TIMEOUT_SECONDS = int(os.getenv("RSS_TIMEOUT_SECONDS", "12"))
+RSS_MAX_WORKERS = int(os.getenv("RSS_MAX_WORKERS", "12"))
 
 
 def _rss_symbols() -> list[str]:
@@ -130,7 +132,7 @@ def _fetch_rss(url: str) -> List[dict]:
         return cached
     LOGGER.info("rss cache miss: %s", url)
     try:
-        with urlopen(url, timeout=20) as resp:
+        with urlopen(url, timeout=RSS_TIMEOUT_SECONDS) as resp:
             data = resp.read()
     except Exception as exc:
         LOGGER.warning("fetch rss failed: %s", exc)
@@ -152,12 +154,13 @@ def _fetch_rss(url: str) -> List[dict]:
     return items
 
 
-def _fetch_rss_batch(urls: Iterable[str], max_workers: int = 8) -> dict[str, List[dict]]:
+def _fetch_rss_batch(urls: Iterable[str], max_workers: int | None = None) -> dict[str, List[dict]]:
     results: dict[str, List[dict]] = {}
     url_list = [u for u in urls if u]
     if not url_list:
         return results
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+    workers = max(1, min(max_workers or RSS_MAX_WORKERS, len(url_list)))
+    with ThreadPoolExecutor(max_workers=workers) as executor:
         future_map = {executor.submit(_fetch_rss, url): url for url in url_list}
         for future in as_completed(future_map):
             url = future_map[future]
