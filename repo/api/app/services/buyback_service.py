@@ -2,11 +2,54 @@ from __future__ import annotations
 
 from datetime import date
 
+from app.core.cache import get_json
 from sqlalchemy.orm import Session
 
 from app.models.buyback import Buyback
+from app.schemas.buyback import BuybackOut
 from app.schemas.buyback import BuybackCreate, BuybackUpdate
 from app.utils.query_params import SortOrder
+
+
+def _load_preloaded_buyback(
+    symbol: str,
+    start: date | None,
+    end: date | None,
+    min_amount: float | None,
+    max_amount: float | None,
+    sort: SortOrder,
+    limit: int,
+    offset: int,
+):
+    if min_amount is not None or max_amount is not None:
+        return None
+    preload_key = None
+    if start is not None and end is not None and start == end:
+        preload_key = f"events:{start.isoformat()}"
+    elif start is None and end is None:
+        preload_key = "events:latest"
+    if preload_key is None:
+        return None
+    payload = get_json(preload_key)
+    items = payload.get("buyback") if isinstance(payload, dict) else None
+    if not isinstance(items, list):
+        return None
+    output = []
+    for item in items:
+        if not isinstance(item, dict) or item.get("symbol") != symbol:
+            continue
+        row_date = item.get("date")
+        if start is not None and row_date and row_date < start.isoformat():
+            continue
+        if end is not None and row_date and row_date > end.isoformat():
+            continue
+        try:
+            output.append(BuybackOut(symbol=symbol, date=row_date, amount=float(item.get("amount") or 0)))
+        except Exception:
+            continue
+    output.sort(key=lambda item: item.date, reverse=(sort == "desc"))
+    total = len(output)
+    return output[offset : offset + limit], total
 
 
 def list_buyback(
@@ -21,6 +64,10 @@ def list_buyback(
     sort: SortOrder = "desc",
 ):
     """List buyback disclosures by symbol."""
+    preloaded = _load_preloaded_buyback(symbol, start, end, min_amount, max_amount, sort, limit, offset)
+    if preloaded is not None:
+        return preloaded
+
     query = db.query(Buyback).filter(Buyback.symbol == symbol)
     if start is not None:
         query = query.filter(Buyback.date >= start)

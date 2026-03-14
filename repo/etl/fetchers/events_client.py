@@ -62,7 +62,7 @@ def _rsshub_base() -> str:
     base = os.getenv("RSSHUB_BASE")
     if base:
         return base.rstrip("/")
-    return "https://rsshub.friesport.ac.cn"
+    return "https://rsshub.liumingye.cn"
 
 
 def _rsshub_hk_symbols() -> list[str]:
@@ -94,7 +94,17 @@ def _fetch_rss(url: str) -> List[dict]:
             data = resp.read()
     except Exception as exc:
         LOGGER.warning("fetch rss failed: %s", exc)
-        return []
+        if url.startswith("https://rsshub.liumingye.cn"):
+            fallback_url = url.replace("https://rsshub.liumingye.cn", "https://hub.slarker.me", 1)
+            try:
+                with urlopen(fallback_url, timeout=RSS_TIMEOUT_SECONDS) as resp:
+                    data = resp.read()
+                    url = fallback_url
+            except Exception as fallback_exc:
+                LOGGER.warning("fetch rss fallback failed: %s", fallback_exc)
+                return []
+        else:
+            return []
 
     try:
         root = ET.fromstring(data)
@@ -168,6 +178,8 @@ def get_events(as_of: date) -> List[dict]:
                 "type": "report",
                 "title": str(title),
                 "date": row_date,
+                "link": record.get("link") or record.get("公告链接") or "",
+                "source": record.get("source") or "AkShare",
             }
         )
 
@@ -196,6 +208,8 @@ def get_buyback(as_of: date) -> List[dict]:
                     "symbol": hk_symbol,
                     "date": published_at.date(),
                     "amount": 0.0,
+                    "link": item.get("link") or "",
+                    "source": "RSSHub:雪球公告",
                 }
             )
 
@@ -235,6 +249,8 @@ def get_insider_trade(as_of: date) -> List[dict]:
                 "date": row_date,
                 "type": str(trade_type),
                 "shares": shares_val,
+                "link": record.get("link") or record.get("公告链接") or "",
+                "source": record.get("source") or "AkShare",
             }
         )
 

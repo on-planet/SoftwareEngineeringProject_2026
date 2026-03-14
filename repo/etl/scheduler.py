@@ -20,6 +20,15 @@ from etl.jobs.index_constituent_job import run_index_constituent_job
 from etl.jobs.sector_exposure_job import run_sector_exposure_job
 from etl.jobs.fund_holdings_job import run_fund_holdings_job
 from etl.jobs.cache_metrics_job import write_risk_series_cache, write_indicator_cache, list_symbols
+from etl.loaders.pg_loader import (
+    delete_events_before,
+    delete_index_constituents_before,
+    delete_macro_before,
+    delete_news_before,
+    delete_buyback_before,
+    delete_insider_trade_before,
+)
+from etl.utils.console import install_console_shutdown
 from etl.utils.dates import to_t1
 from etl.utils.logging import get_logger
 from etl.utils.alerting import notify_error, notify_batch
@@ -63,16 +72,15 @@ def _acquire_lock() -> bool:
             payload = json.loads(LOCK_PATH.read_text(encoding="utf-8"))
         except Exception:
             payload = {}
-        ts = payload.get("ts", 0)
         pid = payload.get("pid")
         if pid and _is_process_running(pid):
             LOGGER.warning("ETL 已在运行中（锁文件存在且进程存活），跳过本次执行")
             return False
-        if isinstance(ts, (int, float)):
-            age = datetime.now(timezone.utc).timestamp() - ts
-            if age < 6 * 3600:
-                LOGGER.warning("ETL 已在运行中（锁文件存在），跳过本次执行")
-                return False
+        # 进程不存在或 pid 缺失时，认为是陈旧锁，清理后继续
+        try:
+            LOCK_PATH.unlink()
+        except Exception:
+            pass
     try:
         LOCK_PATH.write_text(
             json.dumps(
@@ -114,6 +122,16 @@ def _resolve_range(
     return target_date, target_date
 
 
+def _cleanup_retention(target_date: date, *, days: int = 7) -> None:
+    cutoff = target_date - timedelta(days=days - 1)
+    delete_macro_before(cutoff)
+    delete_news_before(cutoff)
+    delete_events_before(cutoff)
+    delete_buyback_before(cutoff)
+    delete_insider_trade_before(cutoff)
+    delete_index_constituents_before(cutoff)
+
+
 def run_once(
     as_of: date | None = None,
     *,
@@ -121,6 +139,7 @@ def run_once(
     end_date: date | None = None,
     incremental: bool = True,
 ) -> None:
+    install_console_shutdown(lambda: None)
     if not _acquire_lock():
         return
     try:
@@ -150,6 +169,9 @@ def run_once(
                     incremental=incremental,
                     lookback_days=lookback_days,
                 )
+                if job.name in {"macro_job", "news_job", "events_job", "index_constituent_job", "sector_exposure_job"}:
+                    job_start = target_date
+                    job_end = target_date
                 job.runner(job_start, job_end)
                 update_job_state(job.name, job_end)
             except Exception as exc:
@@ -158,6 +180,7 @@ def run_once(
                 notify_error(job.name, str(exc))
         if errors:
             notify_batch(errors)
+        _cleanup_retention(target_date, days=7)
         try:
             metric_limit = int(config.raw.get("etl", {}).get("metrics_cache_limit", 200))
             symbols = list_symbols(db_session, limit=metric_limit)

@@ -13,3 +13,5 @@ class Event(Base):
     type = Column(String)
     title = Column(String)
     date = Column(Date)
+    link = Column(String)
+    source = Column(String)

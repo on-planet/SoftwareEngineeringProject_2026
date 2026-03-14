@@ -1,20 +1,26 @@
 {
   "news_job": {
-    "last_success_date": "2026-03-12"
+    "last_success_date": "2026-03-14"
   },
   "index_job": {
-    "last_success_date": "2026-03-12"
+    "last_success_date": "2026-03-14"
   },
   "macro_job": {
-    "last_success_date": "2026-03-12"
+    "last_success_date": "2026-03-14"
   },
   "financial_job": {
-    "last_success_date": "2026-03-12"
+    "last_success_date": "2026-03-14"
   },
   "events_job": {
-    "last_success_date": "2026-03-12"
+    "last_success_date": "2026-03-14"
   },
   "index_constituent_job": {
-    "last_success_date": "2026-03-12"
+    "last_success_date": "2026-03-14"
+  },
+  "sector_exposure_job": {
+    "last_success_date": "2026-03-14"
+  },
+  "fund_holdings_job": {
+    "last_success_date": "2026-03-14"
   }
 }

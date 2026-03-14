@@ -41,15 +41,28 @@ def run_sector_exposure_job(start: date, end: date) -> int:
                     "close": row.get("close"),
                 })
             payload, _ = validate_numeric_range(payload, "close", min_value=0.0, context="sector_exposure")
-            exposure_rows = build_sector_exposure(payload)
-            LOGGER.info("sector_exposure_job built exposure rows=%s for %s", len(exposure_rows), as_of)
-            if exposure_rows:
-                upsert_sector_exposure(
-                    [
-                        {"sector": item["sector"], "market": "ALL", "value": item["value"]}
-                        for item in exposure_rows
-                    ]
+            all_rows = build_sector_exposure(payload)
+            LOGGER.info("sector_exposure_job built exposure rows=%s for %s", len(all_rows), as_of)
+            db_rows = []
+            if all_rows:
+                db_rows.extend(
+                    {"sector": item["sector"], "market": "ALL", "value": item["value"]}
+                    for item in all_rows
                 )
-                cache_sector_exposure(as_of, {"date": as_of.isoformat(), "items": exposure_rows})
-                total += len(exposure_rows)
+                cache_sector_exposure(as_of, {"date": as_of.isoformat(), "items": all_rows}, market=None)
+                total += len(all_rows)
+
+            for market in sorted({item.get("market") for item in payload if item.get("market")}):
+                market_rows = build_sector_exposure(item for item in payload if item.get("market") == market)
+                if not market_rows:
+                    continue
+                db_rows.extend(
+                    {"sector": item["sector"], "market": market, "value": item["value"]}
+                    for item in market_rows
+                )
+                cache_sector_exposure(as_of, {"date": as_of.isoformat(), "items": market_rows}, market=market)
+
+            if db_rows:
+                upsert_sector_exposure(db_rows)
+                total += len(db_rows) - len(all_rows)
     return total

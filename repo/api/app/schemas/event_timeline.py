@@ -10,6 +10,8 @@ class EventTimelineItem(BaseModel):
     type: str
     title: str
     date: date
+    link: str | None = None
+    source: str | None = None
 
 
 class EventTimelineOut(BaseModel):

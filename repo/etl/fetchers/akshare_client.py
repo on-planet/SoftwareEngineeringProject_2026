@@ -101,12 +101,22 @@ def get_macro_series(code: str, start: date, end: date) -> List[dict]:
             df = ak.macro_china_cpi()
         elif code_upper == "PPI" and hasattr(ak, "macro_china_ppi"):
             df = ak.macro_china_ppi()
-        elif code_upper == "M2" and hasattr(ak, "macro_china_money_supply"):
+        elif code_upper in {"M0", "M1", "M2"} and hasattr(ak, "macro_china_money_supply"):
             df = ak.macro_china_money_supply()
         elif code_upper == "PMI" and hasattr(ak, "macro_china_pmi"):
             df = ak.macro_china_pmi()
+        elif code_upper == "GDP" and hasattr(ak, "macro_china_gdp"):
+            df = ak.macro_china_gdp()
         elif code_upper == "SHIBOR" and hasattr(ak, "macro_china_shibor_all"):
             df = ak.macro_china_shibor_all()
+        elif code_upper == "LPR" and hasattr(ak, "rate_loan_prime"):
+            df = ak.rate_loan_prime()
+        elif code_upper in {"LOAN_RATE", "DEPOSIT_RATE"} and hasattr(ak, "macro_china_interest_rate"):
+            df = ak.macro_china_interest_rate()
+        elif code_upper == "FX_RATE" and hasattr(ak, "macro_china_fx_rate"):
+            df = ak.macro_china_fx_rate()
+        elif code_upper == "FX_RESERVES" and hasattr(ak, "macro_china_foreign_exchange_reserves"):
+            df = ak.macro_china_foreign_exchange_reserves()
         elif code_upper == "TSF" and hasattr(ak, "macro_china_tsf"):
             df = ak.macro_china_tsf()
 
@@ -117,10 +127,24 @@ def get_macro_series(code: str, start: date, end: date) -> List[dict]:
             if row_date < start or row_date > end:
                 continue
             value = None
-            if code_upper == "M2":
-                value = record.get("M2") or record.get("货币和准货币(M2)") or record.get("m2")
+            if code_upper in {"M0", "M1", "M2"}:
+                value = (
+                    record.get(code_upper)
+                    or record.get(f"货币和准货币({code_upper})")
+                    or record.get(code_upper.lower())
+                )
             elif code_upper == "SHIBOR":
                 value = record.get("隔夜") or record.get("ON") or record.get("value")
+            elif code_upper == "LPR":
+                value = record.get("1年") or record.get("5年") or record.get("value")
+            elif code_upper == "LOAN_RATE":
+                value = record.get("贷款基准利率") or record.get("value")
+            elif code_upper == "DEPOSIT_RATE":
+                value = record.get("存款基准利率") or record.get("value")
+            elif code_upper == "FX_RATE":
+                value = record.get("中间价") or record.get("收盘价") or record.get("value")
+            elif code_upper == "FX_RESERVES":
+                value = record.get("外汇储备") or record.get("value")
             elif code_upper == "TSF":
                 value = record.get("社会融资规模") or record.get("value")
             else:

@@ -36,7 +36,7 @@ def list_macro_route(
     db: Session = Depends(get_db),
 ):
     """获取宏观指标列表。"""
-    cached = get_cached_macro(as_of)
+    cached = get_cached_macro(as_of, start, end, sorting["sort"])
     if cached is None:
         items = list_macro(db, start, end, sorting["sort"])
     else:

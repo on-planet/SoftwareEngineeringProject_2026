@@ -37,6 +37,16 @@ def _format_key_suffix(value: Any) -> str:
     return str(value)
 
 
+def _format_optional_date(value: date | datetime | str | None) -> str:
+    if value is None:
+        return "none"
+    return _format_key_suffix(value)
+
+
+def _format_market_suffix(market: str | None) -> str:
+    return "" if not market else f":{market}"
+
+
 def _dump_payload(data: Dict[str, Any]) -> str:
     def _default(obj: Any):
         if isinstance(obj, (date, datetime)):
@@ -88,23 +98,47 @@ def cache_risk(symbol: str, data: Dict[str, Any]) -> None:
     _set_json(key, data)
 
 
-def cache_risk_series(symbol: str, data: Dict[str, Any]) -> None:
+def cache_risk_series(
+    symbol: str,
+    data: Dict[str, Any],
+    *,
+    window: int = 20,
+    limit: int = 200,
+    start: date | None = None,
+    end: date | None = None,
+) -> None:
     """Cache risk series into Redis."""
-    key = f"risk_series:{symbol}"
-    _set_json(key, data)
+    start_key = _format_optional_date(start)
+    end_key = _format_optional_date(end)
+    key = f"risk_series:{symbol}:{window}:{limit}:{start_key}:{end_key}"
+    _set_json(key, {"items": data.get("items", [])})
+    _set_json(f"risk_series:{symbol}", data)
 
 
-def cache_indicator(symbol: str, indicator: str, data: Dict[str, Any]) -> None:
+def cache_indicator(
+    symbol: str,
+    indicator: str,
+    data: Dict[str, Any],
+    *,
+    window: int = 14,
+    limit: int = 200,
+    start: date | None = None,
+    end: date | None = None,
+) -> None:
     """Cache indicator series into Redis."""
-    key = f"indicator:{symbol}:{indicator}"
-    _set_json(key, data)
+    start_key = _format_optional_date(start)
+    end_key = _format_optional_date(end)
+    key = f"indicators:{symbol}:{indicator}:{window}:{limit}:{start_key}:{end_key}"
+    _set_json(key, {"items": data.get("items", [])})
+    _set_json(f"indicator:{symbol}:{indicator}", data)
 
 
-def cache_sector_exposure(as_of: date | str, data: Dict[str, Any]) -> None:
+def cache_sector_exposure(as_of: date | str, data: Dict[str, Any], market: str | None = None) -> None:
     """Cache sector exposure into Redis."""
-    key = f"sector_exposure:{_format_key_suffix(as_of)}"
+    suffix = _format_market_suffix(market)
+    key = f"sector_exposure:{_format_key_suffix(as_of)}{suffix}"
     _set_json(key, data)
-    _set_json("sector_exposure:latest", data)
+    _set_json(f"sector_exposure:latest{suffix}", data)
 
 
 def cache_macro(as_of: date | str, data: Dict[str, Any]) -> None:
@@ -112,3 +146,10 @@ def cache_macro(as_of: date | str, data: Dict[str, Any]) -> None:
     key = f"macro:{_format_key_suffix(as_of)}"
     _set_json(key, data)
     _set_json("macro:latest", data)
+
+
+def cache_events(as_of: date | str, data: Dict[str, Any]) -> None:
+    """Cache events timeline into Redis."""
+    key = f"events:{_format_key_suffix(as_of)}"
+    _set_json(key, data)
+    _set_json("events:latest", data)

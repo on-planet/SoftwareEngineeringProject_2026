@@ -10,7 +10,7 @@ logger = get_logger("api")
 
 
 def http_error_handler(request: Request, exc: Exception) -> JSONResponse:
-    logger.exception("Unhandled error", extra={"path": request.url.path})
+    logger.error("Unhandled error", extra={"path": request.url.path}, exc_info=exc)
     return JSONResponse(
         status_code=500,
         content={"code": ErrorCode.INTERNAL_ERROR, "message": "Internal server error"},

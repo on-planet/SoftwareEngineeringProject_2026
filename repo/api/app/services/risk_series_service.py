@@ -28,6 +28,8 @@ def get_risk_series(
     cached = get_json(cache_key)
     if isinstance(cached, list):
         return cached, True
+    if isinstance(cached, dict) and isinstance(cached.get("items"), list):
+        return cached.get("items"), True
 
     query = db.query(DailyPrice).filter(DailyPrice.symbol == symbol)
     if end is not None:

@@ -44,7 +44,7 @@ def write_risk_series_cache(db: Session, symbol: str, window: int = 20, limit: i
                 "volatility": calc_volatility(window_returns),
             }
         )
-    cache_risk_series(symbol, {"symbol": symbol, "items": items})
+    cache_risk_series(symbol, {"symbol": symbol, "items": items}, window=window, limit=limit, end=end)
 
 
 def write_indicator_cache(
@@ -69,7 +69,14 @@ def write_indicator_cache(
         {"date": row.date, "value": float(value)}
         for row, value in zip(rows, values)
     ]
-    cache_indicator(symbol, indicator, {"symbol": symbol, "indicator": indicator, "window": window, "items": items})
+    cache_indicator(
+        symbol,
+        indicator,
+        {"symbol": symbol, "indicator": indicator, "window": window, "items": items},
+        window=window,
+        limit=limit,
+        end=end,
+    )
 
 
 def list_symbols(db: Session, limit: int = 200) -> list[str]:

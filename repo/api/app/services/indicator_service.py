@@ -43,6 +43,8 @@ def get_indicator_series(
     cached = get_json(cache_key)
     if isinstance(cached, list):
         return cached, True
+    if isinstance(cached, dict) and isinstance(cached.get("items"), list):
+        return cached.get("items"), True
 
     rows = _select_prices(db, symbol, end, limit, start)
     if not rows:

@@ -77,7 +77,10 @@ def _call_index_cons(index_symbol: str):
                 try:
                     return ak.index_stock_cons(index=market, symbol=symbol)
                 except TypeError:
-                    return ak.index_stock_cons(market=market, symbol=symbol)
+                    try:
+                        return ak.index_stock_cons(market=market, symbol=symbol)
+                    except TypeError:
+                        return ak.index_stock_cons(symbol=symbol)
             return ak.index_stock_cons(symbol=symbol)
         except Exception as exc:
             LOGGER.warning("index_stock_cons failed for %s: %s", index_symbol, exc)

@@ -29,8 +29,9 @@ def get_sector_exposure(
     as_of: str | None = None,
 ):
     """Get sector exposure based on latest close aggregation."""
-    cache_key = "sector_exposure:latest" if as_of is None else f"sector_exposure:{as_of}"
-    cached = get_json(cache_key) or {}
+    suffix = f":{market}" if market else ""
+    cache_key = f"sector_exposure:latest{suffix}" if as_of is None else f"sector_exposure:{as_of}{suffix}"
+    cached = get_json(cache_key)
     cached_items = cached.get("items") if isinstance(cached, dict) else None
     if isinstance(cached_items, list) and cached_items:
         items = _normalize_items(cached_items)

@@ -11,6 +11,8 @@ class EventOut(BaseModel):
     type: str
     title: str
     date: DateType
+    link: str | None = None
+    source: str | None = None
 
     class Config:
         from_attributes = True
@@ -21,9 +23,13 @@ class EventCreate(BaseModel):
     type: str
     title: str
     date: DateType
+    link: str | None = None
+    source: str | None = None
 
 
 class EventUpdate(BaseModel):
     type: str | None = None
     title: str | None = None
     date: DateType | None = None
+    link: str | None = None
+    source: str | None = None

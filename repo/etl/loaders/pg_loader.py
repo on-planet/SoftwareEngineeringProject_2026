@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Iterable
 
 from sqlalchemy import create_engine, text
+from datetime import date
 
 from etl.config.loader import load_config
 from etl.utils.logging import get_logger
@@ -136,8 +137,8 @@ def upsert_fundamental_score(rows: Iterable[dict]) -> int:
 
 def upsert_news(rows: Iterable[dict]) -> int:
     sql = """
-    INSERT INTO news (symbol, title, sentiment, published_at)
-    VALUES (:symbol, :title, :sentiment, :published_at)
+    INSERT INTO news (symbol, title, sentiment, published_at, link, source)
+    VALUES (:symbol, :title, :sentiment, :published_at, :link, :source)
     """
     payload = _validate_rows(rows, ["symbol", "title", "published_at"], "news")
     return _get_loader().execute_many(sql, payload)
@@ -145,8 +146,8 @@ def upsert_news(rows: Iterable[dict]) -> int:
 
 def upsert_events(rows: Iterable[dict]) -> int:
     sql = """
-    INSERT INTO events (symbol, type, title, date)
-    VALUES (:symbol, :type, :title, :date)
+    INSERT INTO events (symbol, type, title, date, link, source)
+    VALUES (:symbol, :type, :title, :date, :link, :source)
     """
     payload = _validate_rows(rows, ["symbol", "title", "date"], "events")
     return _get_loader().execute_many(sql, payload)
@@ -203,6 +204,36 @@ def upsert_macro(rows: Iterable[dict]) -> int:
     """
     payload = _validate_rows(rows, ["key", "date"], "macro")
     return _get_loader().execute_many(sql, payload)
+
+
+def delete_macro_before(cutoff: date) -> int:
+    sql = "DELETE FROM macro WHERE date < :cutoff"
+    return _get_loader().execute_many(sql, [{"cutoff": cutoff}])
+
+
+def delete_news_before(cutoff: date) -> int:
+    sql = "DELETE FROM news WHERE published_at::date < :cutoff"
+    return _get_loader().execute_many(sql, [{"cutoff": cutoff}])
+
+
+def delete_events_before(cutoff: date) -> int:
+    sql = "DELETE FROM events WHERE date < :cutoff"
+    return _get_loader().execute_many(sql, [{"cutoff": cutoff}])
+
+
+def delete_buyback_before(cutoff: date) -> int:
+    sql = "DELETE FROM buyback WHERE date < :cutoff"
+    return _get_loader().execute_many(sql, [{"cutoff": cutoff}])
+
+
+def delete_insider_trade_before(cutoff: date) -> int:
+    sql = "DELETE FROM insider_trade WHERE date < :cutoff"
+    return _get_loader().execute_many(sql, [{"cutoff": cutoff}])
+
+
+def delete_index_constituents_before(cutoff: date) -> int:
+    sql = "DELETE FROM index_constituents WHERE date < :cutoff"
+    return _get_loader().execute_many(sql, [{"cutoff": cutoff}])
 
 
 def upsert_fund_holdings(rows: Iterable[dict]) -> int:

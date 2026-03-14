@@ -13,3 +13,5 @@ class News(Base):
     title = Column(String)
     sentiment = Column(String)
     published_at = Column(DateTime)
+    link = Column(String)
+    source = Column(String)

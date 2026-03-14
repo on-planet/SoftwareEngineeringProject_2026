@@ -6,6 +6,7 @@ import os
 
 from etl.fetchers.events_client import get_events, get_buyback, get_insider_trade
 from etl.loaders.pg_loader import upsert_events, upsert_buyback, upsert_insider_trade
+from etl.loaders.redis_cache import cache_events
 from etl.utils.dates import date_range
 from etl.utils.logging import get_logger
 from etl.utils.normalize import ensure_required
@@ -52,6 +53,16 @@ def run_events_job(start: date, end: date) -> int:
         if not (events_rows or buyback_rows or insider_rows):
             LOGGER.info("events_job empty for %s", as_of)
             continue
+
+        cache_events(
+            as_of,
+            {
+                "items": events_rows,
+                "buyback": buyback_rows,
+                "insider": insider_rows,
+                "date": as_of.isoformat(),
+            },
+        )
 
         total += len(events_rows) + len(buyback_rows) + len(insider_rows)
 

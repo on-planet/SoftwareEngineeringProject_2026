@@ -120,8 +120,17 @@ export async function getNewsStats(params?: {
   return request(`/api/news/stats?${query.toString()}`);
 }
 
+export async function getIndexConstituents(symbol: string, params?: { as_of?: string; limit?: number; offset?: number }) {
+  const query = new URLSearchParams();
+  if (params?.as_of) query.set("as_of", params.as_of);
+  if (params?.limit !== undefined) query.set("limit", String(params.limit));
+  if (params?.offset !== undefined) query.set("offset", String(params.offset));
+  const suffix = query.toString();
+  return request(`/api/index/${symbol}/constituents${suffix ? `?${suffix}` : ""}`);
+}
+
 export async function getStock(symbol: string) {
-  return request(`/api/stock/${symbol}`);
+    return request(`/api/stock/${symbol}`);
 }
 
 export async function getFundamental(symbol: string) {
@@ -134,29 +143,6 @@ export async function getNews(symbol: string, params?: { limit?: number; offset?
   if (params?.offset !== undefined) query.set("offset", String(params.offset));
   const suffix = query.toString();
   return request(`/api/stock/${symbol}/news${suffix ? `?${suffix}` : ""}`);
-}
-
-export async function getHeatmap(params?: {
-  sector?: string;
-  market?: string;
-  min_change?: number;
-  max_change?: number;
-  as_of?: string;
-  sort?: "asc" | "desc";
-  limit?: number;
-  offset?: number;
-}) {
-  const query = new URLSearchParams();
-  if (params?.sector) query.set("sector", params.sector);
-  if (params?.market) query.set("market", params.market);
-  if (params?.min_change !== undefined) query.set("min_change", String(params.min_change));
-  if (params?.max_change !== undefined) query.set("max_change", String(params.max_change));
-  if (params?.as_of) query.set("as_of", params.as_of);
-  if (params?.sort) query.set("sort", params.sort);
-  if (params?.limit !== undefined) query.set("limit", String(params.limit));
-  if (params?.offset !== undefined) query.set("offset", String(params.offset));
-  const suffix = query.toString();
-  return request(`/api/heatmap${suffix ? `?${suffix}` : ""}`);
 }
 
 export async function getEventTimeline(params?: {
@@ -215,6 +201,29 @@ export async function getNewsAggregate(params?: {
   return request(`/api/news/aggregate?${query.toString()}`);
 }
 
+export async function getHeatmap(params?: {
+  sector?: string;
+  market?: string;
+  min_change?: number;
+  max_change?: number;
+  as_of?: string;
+  sort?: "asc" | "desc";
+  limit?: number;
+  offset?: number;
+}) {
+  const query = new URLSearchParams();
+  if (params?.sector) query.set("sector", params.sector);
+  if (params?.market) query.set("market", params.market);
+  if (params?.min_change !== undefined) query.set("min_change", String(params.min_change));
+  if (params?.max_change !== undefined) query.set("max_change", String(params.max_change));
+  if (params?.as_of) query.set("as_of", params.as_of);
+  if (params?.sort) query.set("sort", params.sort);
+  if (params?.limit !== undefined) query.set("limit", String(params.limit));
+  if (params?.offset !== undefined) query.set("offset", String(params.offset));
+  const suffix = query.toString();
+  return request(`/api/heatmap${suffix ? `?${suffix}` : ""}`);
+}
+
 export async function getMacro(params?: {
   start?: string;
   end?: string;
@@ -239,7 +248,7 @@ export async function getMacroSeries(key: string, params?: { start?: string; end
   if (params?.start) query.set("start", params.start);
   if (params?.end) query.set("end", params.end);
   const suffix = query.toString();
-  return request(`/api/macro/series/${key}${suffix ? `?${suffix}` : ""}`);
+  return request(`/api/macro/series/${encodeURIComponent(key)}${suffix ? `?${suffix}` : ""}`);
 }
 
 export async function getSectorExposure(params?: {

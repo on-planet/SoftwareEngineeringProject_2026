@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.models.news import News
@@ -21,21 +21,35 @@ def list_news_aggregate(
     offset: int = 0,
     sort: str = "desc",
 ):
-    query = db.query(News)
+    base_query = db.query(News)
     if symbols:
-        query = query.filter(News.symbol.in_(symbols))
+        base_query = base_query.filter(News.symbol.in_(symbols))
     if sentiments:
-        query = query.filter(News.sentiment.in_(sentiments))
+        base_query = base_query.filter(News.sentiment.in_(sentiments))
     if keyword:
         keyword_like = f"%{keyword}%"
-        query = query.filter(
+        base_query = base_query.filter(
             or_(News.title.ilike(keyword_like), News.symbol.ilike(keyword_like))
         )
     if start is not None:
-        query = query.filter(News.published_at >= start)
+        base_query = base_query.filter(News.published_at >= start)
     if end is not None:
-        query = query.filter(News.published_at <= end)
-    total = query.count()
+        base_query = base_query.filter(News.published_at <= end)
+
+    deduped = (
+        base_query.with_entities(func.max(News.id).label("id"))
+        .group_by(
+            News.symbol,
+            News.title,
+            News.sentiment,
+            News.published_at,
+            News.link,
+            News.source,
+        )
+        .subquery()
+    )
+    query = db.query(News).join(deduped, News.id == deduped.c.id)
+    total = db.query(func.count()).select_from(deduped).scalar() or 0
     sort_fields = {
         "published_at": News.published_at,
         "title": News.title,

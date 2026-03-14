@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 
 class InsiderTradeOut(BaseModel):
-    id: int
+    id: int | None = None
     symbol: str
     date: date
     type: str

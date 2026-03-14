@@ -180,6 +180,7 @@ def get_stock_basic() -> List[dict]:
     if bs is None:
         LOGGER.warning("baostock unavailable, skip stock basic")
         return []
+    limit = int(os.getenv("BAOSTOCK_STOCK_BASIC_LIMIT", "10"))
     rows: List[dict] = []
     rs = bs.query_stock_basic()
     for record in _iter_rows(rs):
@@ -196,6 +197,8 @@ def get_stock_basic() -> List[dict]:
                 "sector": str(industry) if industry is not None else "未知",
             }
         )
+        if limit > 0 and len(rows) >= limit:
+            break
     return ensure_required(rows, ["symbol", "name", "market", "sector"], "baostock.stock_basic")
 
 
@@ -289,7 +292,8 @@ def get_daily_prices(symbols, as_of: date) -> List[dict]:
         for idx in range(0, total, batch_size):
             batch = symbols[idx: idx + batch_size]
             completed += len(batch)
-            LOGGER.info("baostock daily progress %s/%s for %s", completed, total, as_of)
+            if completed % 200 == 0 or completed >= total:
+                LOGGER.info("baostock daily progress %s/%s for %s", completed, total, as_of)
             rows.extend(_fetch_batch(batch))
     else:
         LOGGER.info(
@@ -306,7 +310,7 @@ def get_daily_prices(symbols, as_of: date) -> List[dict]:
             for future in as_completed(future_map):
                 batch = future_map[future]
                 completed += len(batch)
-                if completed == len(batch) or completed % 200 == 0 or completed >= total:
+                if completed % 200 == 0 or completed >= total:
                     LOGGER.info("baostock daily progress %s/%s for %s", completed, total, as_of)
                 try:
                     rows.extend(future.result())

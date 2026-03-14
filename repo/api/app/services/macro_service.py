@@ -23,25 +23,48 @@ def list_macro(db: Session, start: date | None = None, end: date | None = None, 
     return query.order_by(Macro.date.desc()).all()
 
 
-def get_cached_macro(as_of: date | None = None) -> list[dict] | None:
+def get_cached_macro(
+    as_of: date | None = None,
+    start: date | None = None,
+    end: date | None = None,
+    sort: SortOrder = "desc",
+) -> list[dict] | None:
     """Get cached macro data from Redis (if any)."""
+    if as_of is None and (start is not None or end is not None):
+        return None
     key = "macro:latest" if as_of is None else f"macro:{as_of.isoformat()}"
     payload = get_json(key)
-    if not payload:
+    if not isinstance(payload, dict):
         return None
     items = payload.get("items")
     if isinstance(items, list):
         normalized = []
         for item in items:
-            normalized.append(
-                {
-                    "key": item.get("key"),
-                    "date": item.get("date"),
-                    "value": item.get("value"),
-                    "score": item.get("score"),
-                }
-            )
-        return normalized
+            if not isinstance(item, dict):
+                continue
+            key_value = item.get("key")
+            date_value = item.get("date")
+            value = item.get("value")
+            score = item.get("score")
+            if not key_value or not date_value or value is None:
+                continue
+            try:
+                normalized.append(
+                    {
+                        "key": str(key_value),
+                        "date": str(date_value),
+                        "value": float(value),
+                        "score": None if score is None else float(score),
+                    }
+                )
+            except (TypeError, ValueError):
+                continue
+        if start is not None:
+            normalized = [item for item in normalized if item.get("date") and item["date"] >= start.isoformat()]
+        if end is not None:
+            normalized = [item for item in normalized if item.get("date") and item["date"] <= end.isoformat()]
+        normalized.sort(key=lambda item: item.get("date") or "", reverse=(sort == "desc"))
+        return normalized or None
     return None
 
 

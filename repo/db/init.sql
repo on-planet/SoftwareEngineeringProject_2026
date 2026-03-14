@@ -50,7 +50,9 @@ CREATE TABLE IF NOT EXISTS news (
     symbol VARCHAR(32),
     title TEXT,
     sentiment VARCHAR(32),
-    published_at TIMESTAMP
+    published_at TIMESTAMP,
+    link TEXT,
+    source VARCHAR(128)
 );
 
 CREATE TABLE IF NOT EXISTS events (
@@ -58,7 +60,9 @@ CREATE TABLE IF NOT EXISTS events (
     symbol VARCHAR(32),
     type VARCHAR(64),
     title TEXT,
-    date DATE
+    date DATE,
+    link TEXT,
+    source VARCHAR(128)
 );
 
 CREATE TABLE IF NOT EXISTS user_portfolio (

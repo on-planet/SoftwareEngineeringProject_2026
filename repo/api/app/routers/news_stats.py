@@ -9,7 +9,7 @@ from app.core.db import get_db
 from app.schemas.error import ErrorResponse
 from app.schemas.examples import ERROR_EXAMPLE
 from app.schemas.news_stats import NewsStatsOut
-from app.services.news_stats_service import get_news_stats
+from app.services.news_stats_service import get_news_stats as fetch_news_stats
 
 router = APIRouter(tags=["news"])
 
@@ -19,7 +19,7 @@ router = APIRouter(tags=["news"])
     response_model=NewsStatsOut,
     responses={500: {"model": ErrorResponse, "content": {"application/json": {"example": ERROR_EXAMPLE}}}},
 )
-def get_news_stats(
+def get_news_stats_route(
     symbol: str | None = Query(None),
     symbols: list[str] | None = Query(None),
     sentiment: str | None = Query(None),
@@ -35,7 +35,7 @@ def get_news_stats(
     """获取新闻统计（按日/情绪/标的）。"""
     symbols_filter = symbols or ([symbol] if symbol else None)
     sentiments_filter = sentiments or ([sentiment] if sentiment else None)
-    by_date, by_sentiment, by_symbol = get_news_stats(
+    by_date, by_sentiment, by_symbol = fetch_news_stats(
         db,
         symbols=symbols_filter,
         sentiments=sentiments_filter,
