@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import List
@@ -12,6 +13,8 @@ from etl.utils.logging import get_logger
 from etl.utils.normalize import ensure_required
 
 LOGGER = get_logger(__name__)
+RSS_TIMEOUT_SECONDS = int(os.getenv("RSS_TIMEOUT_SECONDS", "12"))
+RSS_MAX_WORKERS = int(os.getenv("RSS_MAX_WORKERS", "8"))
 
 try:
     import akshare as ak  # type: ignore
@@ -87,7 +90,7 @@ def _parse_pub_date(value: str) -> datetime | None:
 
 def _fetch_rss(url: str) -> List[dict]:
     try:
-        with urlopen(url, timeout=20) as resp:
+        with urlopen(url, timeout=RSS_TIMEOUT_SECONDS) as resp:
             data = resp.read()
     except Exception as exc:
         LOGGER.warning("fetch rss failed: %s", exc)
@@ -106,6 +109,24 @@ def _fetch_rss(url: str) -> List[dict]:
         pub_date = _parse_pub_date(item.findtext("pubDate") or "")
         items.append({"title": title.strip(), "link": link.strip(), "published_at": pub_date})
     return items
+
+
+def _fetch_rss_batch(urls: list[str]) -> dict[str, List[dict]]:
+    results: dict[str, List[dict]] = {}
+    url_list = [url for url in urls if url]
+    if not url_list:
+        return results
+    workers = max(1, min(RSS_MAX_WORKERS, len(url_list)))
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        future_map = {executor.submit(_fetch_rss, url): url for url in url_list}
+        for future in as_completed(future_map):
+            url = future_map[future]
+            try:
+                results[url] = future.result()
+            except Exception as exc:
+                LOGGER.warning("fetch rss batch failed: %s", exc)
+                results[url] = []
+    return results
 
 
 def _is_buyback_title(title: str) -> bool:
@@ -156,8 +177,12 @@ def get_events(as_of: date) -> List[dict]:
 def get_buyback(as_of: date) -> List[dict]:
     """Fetch buyback disclosures using RSSHub Xueqiu announcements (HK)."""
     rows: List[dict] = []
-    for hk_symbol in _rsshub_hk_symbols():
-        for item in _fetch_rss(_rsshub_xueqiu_announcement(hk_symbol)):
+    hk_symbols = _rsshub_hk_symbols()
+    url_map = {symbol: _rsshub_xueqiu_announcement(symbol) for symbol in hk_symbols}
+    fetched = _fetch_rss_batch(list(url_map.values()))
+
+    for hk_symbol, url in url_map.items():
+        for item in fetched.get(url, []):
             published_at = item.get("published_at")
             if not published_at:
                 continue
