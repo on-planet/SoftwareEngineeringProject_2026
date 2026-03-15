@@ -22,7 +22,7 @@ router = APIRouter(tags=["kline"])
 )
 def get_index_kline_route(
     symbol: str,
-    period: str = Query("day", pattern="^(day|week|month|quarter|year)$"),
+    period: str = Query("day", pattern="^(1m|30m|60m|day|week|month|quarter|year)$"),
     limit: int = Query(200, ge=10, le=500),
     end: date | None = Query(None),
     start: date | None = Query(None),
@@ -41,7 +41,7 @@ def get_index_kline_route(
 )
 def get_stock_kline_route(
     symbol: str,
-    period: str = Query("day", pattern="^(day|week|month|quarter|year)$"),
+    period: str = Query("day", pattern="^(1m|30m|60m|day|week|month|quarter|year)$"),
     limit: int = Query(200, ge=10, le=500),
     end: date | None = Query(None),
     start: date | None = Query(None),

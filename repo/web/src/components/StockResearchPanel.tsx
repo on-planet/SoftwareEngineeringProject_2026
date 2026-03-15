@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+﻿import React, { useEffect, useState } from "react";
 
 import { getStockResearch } from "../services/api";
 
@@ -35,12 +35,12 @@ function ResearchList({ title, items, emptyText }: { title: string; items: Resea
                 <div className="research-item-title">{item.title}</div>
                 {item.link ? (
                   <a className="subtle-link" href={item.link} target="_blank" rel="noreferrer">
-                    Open
+                    查看原文
                   </a>
                 ) : null}
               </div>
               <div className="research-item-meta">
-                <span>{item.published_at ? new Date(item.published_at).toLocaleString("zh-CN") : "Unknown time"}</span>
+                <span>{item.published_at ? new Date(item.published_at).toLocaleString("zh-CN") : "时间未知"}</span>
                 {item.source ? <span>{item.source}</span> : null}
               </div>
               {item.institution || item.rating ? (
@@ -79,7 +79,7 @@ export function StockResearchPanel({ symbol }: Props) {
           return;
         }
         setPayload(null);
-        setError(err.message || "Failed to load research panel");
+        setError(err.message || "研报面板加载失败");
       })
       .finally(() => {
         if (active) {
@@ -93,25 +93,17 @@ export function StockResearchPanel({ symbol }: Props) {
   }, [symbol]);
 
   if (loading) {
-    return <div className="helper">Loading research panel...</div>;
+    return <div className="helper">研报与业绩预告加载中...</div>;
   }
 
   if (error) {
-    return <div className="helper">Research panel failed: {error}</div>;
+    return <div className="helper">研报与业绩预告加载失败：{error}</div>;
   }
 
   return (
     <div className="research-grid">
-      <ResearchList
-        title="Research Reports"
-        items={payload?.reports ?? []}
-        emptyText="No research reports available."
-      />
-      <ResearchList
-        title="Earning Forecasts"
-        items={payload?.earning_forecasts ?? []}
-        emptyText="No earning forecasts available."
-      />
+      <ResearchList title="最新研报" items={payload?.reports ?? []} emptyText="暂无研报数据。" />
+      <ResearchList title="业绩预告" items={payload?.earning_forecasts ?? []} emptyText="暂无业绩预告数据。" />
     </div>
   );
 }

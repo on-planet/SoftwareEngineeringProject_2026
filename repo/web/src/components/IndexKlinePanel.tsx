@@ -1,8 +1,10 @@
-import React, { useEffect, useMemo, useState } from "react";
+﻿import React, { useEffect, useMemo, useState } from "react";
 
 import ReactECharts from "echarts-for-react";
 
 import { getIndexKline } from "../services/api";
+
+type KlinePeriod = "1m" | "30m" | "60m" | "day" | "week" | "month" | "quarter" | "year";
 
 type KlinePoint = {
   date: string;
@@ -14,29 +16,45 @@ type KlinePoint = {
 
 type KlineSeries = {
   symbol: string;
-  period: "day" | "week" | "month" | "quarter" | "year";
+  period: KlinePeriod;
   items: KlinePoint[];
 };
 
 const INDEX_OPTIONS = [
-  { symbol: "000001.SH", label: "SSE Composite" },
-  { symbol: "399001.SZ", label: "SZSE Component" },
-  { symbol: "399006.SZ", label: "ChiNext" },
+  { symbol: "000001.SH", label: "上证指数" },
+  { symbol: "399001.SZ", label: "深证成指" },
+  { symbol: "399006.SZ", label: "创业板指" },
 ] as const;
 
-const PERIOD_OPTIONS: Array<KlineSeries["period"]> = ["day", "week", "month", "quarter", "year"];
+const PERIOD_OPTIONS: KlinePeriod[] = ["1m", "30m", "60m", "day", "week", "month", "quarter", "year"];
 
-const PERIOD_LABELS: Record<KlineSeries["period"], string> = {
-  day: "Day",
-  week: "Week",
-  month: "Month",
-  quarter: "Quarter",
-  year: "Year",
+const PERIOD_LABELS: Record<KlinePeriod, string> = {
+  "1m": "1 分钟",
+  "30m": "30 分钟",
+  "60m": "60 分钟",
+  day: "日 K",
+  week: "周 K",
+  month: "月 K",
+  quarter: "季 K",
+  year: "年 K",
 };
+
+function formatAxisLabel(value: string, period: KlinePeriod) {
+  if (period === "1m" || period === "30m" || period === "60m") {
+    return new Date(value).toLocaleString("zh-CN", {
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+  }
+  return String(value).slice(0, 10);
+}
 
 export function IndexKlinePanel() {
   const [symbol, setSymbol] = useState<string>(INDEX_OPTIONS[0].symbol);
-  const [period, setPeriod] = useState<KlineSeries["period"]>("day");
+  const [period, setPeriod] = useState<KlinePeriod>("day");
   const [items, setItems] = useState<KlinePoint[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -44,7 +62,7 @@ export function IndexKlinePanel() {
   useEffect(() => {
     let active = true;
     setLoading(true);
-    getIndexKline(symbol, { period, limit: 240 })
+    getIndexKline(symbol, { period, limit: period === "1m" ? 180 : 240 })
       .then((res) => {
         if (!active) {
           return;
@@ -58,7 +76,7 @@ export function IndexKlinePanel() {
           return;
         }
         setItems([]);
-        setError(err.message || "Failed to load index kline");
+        setError(err.message || "指数 K 线加载失败");
       })
       .finally(() => {
         if (active) {
@@ -78,7 +96,11 @@ export function IndexKlinePanel() {
       animation: false,
       tooltip: { trigger: "axis" },
       grid: { left: 48, right: 24, top: 28, bottom: 40 },
-      xAxis: { type: "category", data: items.map((item) => item.date), boundaryGap: true },
+      xAxis: {
+        type: "category",
+        data: items.map((item) => formatAxisLabel(item.date, period)),
+        boundaryGap: true,
+      },
       yAxis: { type: "value", scale: true },
       series: [
         {
@@ -93,7 +115,7 @@ export function IndexKlinePanel() {
         },
       ],
     };
-  }, [items]);
+  }, [items, period]);
 
   return (
     <div className="card">
@@ -121,10 +143,10 @@ export function IndexKlinePanel() {
           </div>
         </div>
       </div>
-      {loading ? <div className="helper">Loading index kline...</div> : null}
-      {!loading && error ? <div className="helper">Index kline failed: {error}</div> : null}
+      {loading ? <div className="helper">指数 K 线加载中...</div> : null}
+      {!loading && error ? <div className="helper">指数 K 线加载失败：{error}</div> : null}
       {!loading && !error && option ? <ReactECharts option={option} style={{ height: 360 }} /> : null}
-      {!loading && !error && !option ? <div className="helper">No index kline data available.</div> : null}
+      {!loading && !error && !option ? <div className="helper">暂无指数 K 线数据。</div> : null}
     </div>
   );
 }

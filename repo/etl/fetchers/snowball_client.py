@@ -392,6 +392,32 @@ def _extract_payload_items(payload) -> list[dict]:
     return []
 
 
+def _extract_primary_record(payload, *, symbol: str | None = None, preferred_keys: Iterable[str] = ()) -> dict:
+    candidates = _extract_payload_items(payload) + _extract_dict_rows(payload)
+    normalized_symbol = normalize_symbol(symbol) if symbol else None
+    snow_symbol = to_snowball_symbol(symbol) if symbol else None
+    best: dict | None = None
+    best_score = -1
+    for row in candidates:
+        if not isinstance(row, dict) or not row:
+            continue
+        score = 0
+        raw_symbol = _pick(row, ("symbol", "code", "ticker", "stock_symbol", "quote_symbol"))
+        if raw_symbol not in (None, ""):
+            row_symbol = normalize_symbol(str(raw_symbol))
+            if normalized_symbol and row_symbol == normalized_symbol:
+                score += 10
+            if snow_symbol and str(raw_symbol).strip().upper() == snow_symbol:
+                score += 10
+        for key in preferred_keys:
+            if row.get(key) not in (None, "", [], {}):
+                score += 1
+        if score > best_score:
+            best = row
+            best_score = score
+    return best or {}
+
+
 def _extract_dict_rows(payload) -> list[dict]:
     rows: list[dict] = []
     stack = [payload]
@@ -690,11 +716,18 @@ def _extract_finance_period(row: dict, fallback_period: str) -> str:
     return f"{record_date.year:04d}{record_date.month:02d}"
 
 
-def _parse_kline_history_rows(symbol: str, rows: list[dict], *, as_of: date | None = None) -> list[dict]:
+def _parse_kline_history_rows(
+    symbol: str,
+    rows: list[dict],
+    *,
+    as_of: date | None = None,
+    preserve_time: bool = False,
+) -> list[dict]:
     output: list[dict] = []
     normalized = normalize_symbol(symbol)
     for row in rows:
-        row_date = _to_date(row.get("timestamp") or row.get("time") or row.get("date"))
+        row_time = _to_datetime(row.get("timestamp") or row.get("time") or row.get("date"))
+        row_date = row_time.date() if row_time is not None else None
         if row_date is None:
             continue
         if as_of is not None and row_date > as_of:
@@ -709,7 +742,7 @@ def _parse_kline_history_rows(symbol: str, rows: list[dict], *, as_of: date | No
         output.append(
             {
                 "symbol": normalized,
-                "date": row_date,
+                "date": row_time if preserve_time and row_time is not None else row_date,
                 "open": open_val,
                 "high": high_val,
                 "low": low_val,
@@ -756,6 +789,151 @@ def get_stock_basics(symbols: Iterable[str] | None = None) -> List[dict]:
             }
         )
     return ensure_required(rows, ["symbol", "name", "market", "sector"], "snowball.stock_basic")
+
+
+def _quote_from_record(symbol: str, record: dict) -> dict:
+    normalized = normalize_symbol(symbol)
+    current = _safe_float(_pick(record, ("current", "price", "last_price", "close")))
+    last_close = _safe_float(_pick(record, ("last_close", "prev_close", "preclose", "close_prev")))
+    change = _safe_float(_pick(record, ("chg", "change")))
+    if change is None and current is not None and last_close not in (None, 0):
+        change = current - last_close
+    percent = _safe_float(_pick(record, ("percent", "chg_percent", "change_percent", "pct")))
+    if percent is None and change is not None and last_close not in (None, 0):
+        percent = change / last_close * 100.0
+    return {
+        "symbol": normalized,
+        "current": current,
+        "change": change,
+        "percent": percent,
+        "open": _safe_float(_pick(record, ("open",))),
+        "high": _safe_float(_pick(record, ("high",))),
+        "low": _safe_float(_pick(record, ("low",))),
+        "last_close": last_close,
+        "volume": _safe_float(_pick(record, ("volume", "current_volume"))),
+        "amount": _safe_float(_pick(record, ("amount", "turnover", "deal_amount"))),
+        "turnover_rate": _safe_float(_pick(record, ("turnover_rate", "turn_rate", "turnoverratio"))),
+        "amplitude": _safe_float(_pick(record, ("amplitude", "amp_rate"))),
+        "timestamp": _to_datetime(
+            _pick(record, ("timestamp", "time", "trade_timestamp", "update_time", "current_timestamp"))
+        ),
+    }
+
+
+def _quote_detail_from_record(symbol: str, record: dict) -> dict:
+    normalized = normalize_symbol(symbol)
+    return {
+        "symbol": normalized,
+        "pe_ttm": _safe_float(_pick(record, ("pe_ttm", "pettm", "pe", "pe_lyr"))),
+        "pb": _safe_float(_pick(record, ("pb",))),
+        "ps_ttm": _safe_float(_pick(record, ("ps_ttm", "ps", "psr"))),
+        "pcf": _safe_float(_pick(record, ("pcf", "pcf_ttm"))),
+        "market_cap": _safe_float(
+            _pick(record, ("market_capital", "market_cap", "total_market_cap", "market_value"))
+        ),
+        "float_market_cap": _safe_float(
+            _pick(record, ("float_market_capital", "float_market_cap", "float_market_value"))
+        ),
+        "dividend_yield": _safe_float(_pick(record, ("dividend_yield", "dividend_yield_ttm"))),
+        "volume_ratio": _safe_float(_pick(record, ("volume_ratio", "vol_ratio"))),
+        "lot_size": _safe_float(_pick(record, ("lot_size", "lot", "volume_unit"))),
+    }
+
+
+def _order_book_levels(record: dict, *, side: str) -> list[dict]:
+    direct_keys = ("bids", "bid", "buy", "buy_levels") if side == "bid" else ("asks", "ask", "sell", "sell_levels")
+    for key in direct_keys:
+        levels = record.get(key)
+        if not isinstance(levels, list):
+            continue
+        rows: list[dict] = []
+        for idx, item in enumerate(levels[:5], start=1):
+            if not isinstance(item, dict):
+                continue
+            price = _safe_float(_pick(item, ("price", "p", "current")))
+            volume = _safe_float(_pick(item, ("volume", "v", "count", "size", "amount")))
+            if price is None and volume is None:
+                continue
+            rows.append({"level": idx, "price": price, "volume": volume})
+        if rows:
+            return rows
+
+    rows: list[dict] = []
+    for idx in range(1, 6):
+        if side == "bid":
+            price = _safe_float(_pick(record, (f"bp{idx}", f"bid{idx}", f"buy{idx}", f"bid{idx}_price")))
+            volume = _safe_float(
+                _pick(record, (f"bc{idx}", f"bid{idx}_volume", f"buy{idx}_volume", f"bv{idx}"))
+            )
+        else:
+            price = _safe_float(_pick(record, (f"sp{idx}", f"ask{idx}", f"sell{idx}", f"ask{idx}_price")))
+            volume = _safe_float(
+                _pick(record, (f"sc{idx}", f"ask{idx}_volume", f"sell{idx}_volume", f"sv{idx}"))
+            )
+        if price is None and volume is None:
+            continue
+        rows.append({"level": idx, "price": price, "volume": volume})
+    return rows
+
+
+def get_stock_quote(symbol: str) -> dict:
+    normalized = normalize_symbol(symbol)
+    rows = _call_quotec([normalized])
+    if not rows:
+        return {}
+    record = _extract_primary_record(
+        {"data": rows},
+        symbol=normalized,
+        preferred_keys=("current", "price", "volume", "high", "low"),
+    )
+    if not record:
+        return {}
+    return _quote_from_record(normalized, record)
+
+
+def get_stock_quote_detail(symbol: str) -> dict:
+    normalized = normalize_symbol(symbol)
+    payload = _call_with_token_retry(
+        lambda: ball.quote_detail(to_snowball_symbol(normalized)),
+        context="snowball quote_detail",
+        ref=normalized,
+    )
+    if payload is None:
+        return {}
+    record = _extract_primary_record(
+        payload,
+        symbol=normalized,
+        preferred_keys=("pe_ttm", "pb", "ps_ttm", "pcf", "market_capital", "turnover_rate"),
+    )
+    if not record:
+        return {}
+    return _quote_detail_from_record(normalized, record)
+
+
+def get_stock_pankou(symbol: str) -> dict:
+    normalized = normalize_symbol(symbol)
+    payload = _call_with_token_retry(
+        lambda: ball.pankou(to_snowball_symbol(normalized)),
+        context="snowball pankou",
+        ref=normalized,
+    )
+    if payload is None:
+        return {}
+    record = _extract_primary_record(
+        payload,
+        symbol=normalized,
+        preferred_keys=("diff", "ratio", "bp1", "sp1", "bids", "asks"),
+    )
+    if not record:
+        return {}
+    return {
+        "symbol": normalized,
+        "diff": _safe_float(_pick(record, ("diff", "difference"))),
+        "ratio": _safe_float(_pick(record, ("ratio", "diff_percent", "percent"))),
+        "timestamp": _to_datetime(_pick(record, ("timestamp", "time", "update_time"))),
+        "bids": _order_book_levels(record, side="bid"),
+        "asks": _order_book_levels(record, side="ask"),
+    }
 
 
 def search_stocks(keyword: str, market: str | None = None, limit: int = 50) -> List[dict]:
@@ -939,7 +1117,12 @@ def get_kline_history(
     )
     if payload is None:
         return []
-    rows = _parse_kline_history_rows(normalized, _extract_kline_rows(payload), as_of=as_of)
+    rows = _parse_kline_history_rows(
+        normalized,
+        _extract_kline_rows(payload),
+        as_of=as_of,
+        preserve_time=period in {"1m", "30m", "60m"},
+    )
     return ensure_required(rows, ["symbol", "date", "open", "high", "low", "close", "volume"], "snowball.kline_history")
 
 
@@ -1164,7 +1347,7 @@ def get_stock_reports(symbol: str, *, limit: int = 10) -> List[dict]:
     )
     if payload is None:
         return []
-    return _extract_disclosure_items(payload, source="Snowball Report", limit=limit)
+    return _extract_disclosure_items(payload, source="雪球研报", limit=limit)
 
 
 def get_stock_earning_forecasts(symbol: str, *, limit: int = 10) -> List[dict]:
@@ -1176,4 +1359,4 @@ def get_stock_earning_forecasts(symbol: str, *, limit: int = 10) -> List[dict]:
     )
     if payload is None:
         return []
-    return _extract_disclosure_items(payload, source="Snowball Earning Forecast", limit=limit)
+    return _extract_disclosure_items(payload, source="雪球业绩预告", limit=limit)

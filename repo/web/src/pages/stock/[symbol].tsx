@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+﻿import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/router";
 
 import { StockFinancialTable } from "../../components/StockFinancialTable";
@@ -38,11 +38,8 @@ export default function StockPage({ symbol = "000001.SZ" }: Props) {
       <section className="card">
         <div className="page-header">
           <div>
-            <h1 className="page-title">Stock Detail</h1>
-            <p className="helper">
-              Interface-only page with profile, multi-period kline, live financials, research reports, earning
-              forecasts, indicators, and risk.
-            </p>
+            <h1 className="page-title">个股详情</h1>
+            <p className="helper">页面全部直连雪球接口，展示实时快照、盘口、多周期 K 线、财报、技术指标、风险和研报信息。</p>
           </div>
           <form className="toolbar" onSubmit={handleSubmit}>
             <input
@@ -50,10 +47,10 @@ export default function StockPage({ symbol = "000001.SZ" }: Props) {
               type="text"
               value={currentSymbol}
               onChange={(event) => setCurrentSymbol(event.target.value)}
-              placeholder="Enter symbol, for example 600000 or 00700.HK"
+              placeholder="输入股票代码，例如 600000、000001.SZ、00700.HK"
             />
             <button type="submit" className="primary-button">
-              Open
+              打开详情
             </button>
           </form>
         </div>
@@ -69,13 +66,13 @@ export default function StockPage({ symbol = "000001.SZ" }: Props) {
 
       <section className="split-grid">
         <div>
-          <h2 className="section-title">Technical Indicators</h2>
+          <h2 className="section-title">技术指标</h2>
           <div className="card">
             <StockIndicatorsChart symbol={appliedSymbol} />
           </div>
         </div>
         <div>
-          <h2 className="section-title">Risk Snapshot</h2>
+          <h2 className="section-title">风险分析</h2>
           <div className="card">
             <StockRiskChart symbol={appliedSymbol} />
           </div>
@@ -83,14 +80,14 @@ export default function StockPage({ symbol = "000001.SZ" }: Props) {
       </section>
 
       <section>
-        <h2 className="section-title">Financial Statements</h2>
+        <h2 className="section-title">财务报表</h2>
         <div className="card">
           <StockFinancialTable symbol={appliedSymbol} />
         </div>
       </section>
 
       <section>
-        <h2 className="section-title">Research And Forecasts</h2>
+        <h2 className="section-title">研报与业绩预告</h2>
         <div className="card">
           <StockResearchPanel symbol={appliedSymbol} />
         </div>

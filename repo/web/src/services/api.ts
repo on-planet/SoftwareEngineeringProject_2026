@@ -35,7 +35,7 @@ export async function getStocks(params?: {
 }
 
 export async function getIndexKline(symbol: string, params?: {
-  period?: "day" | "week" | "month" | "quarter" | "year";
+  period?: "1m" | "30m" | "60m" | "day" | "week" | "month" | "quarter" | "year";
   limit?: number;
   start?: string;
   end?: string;
@@ -50,7 +50,7 @@ export async function getIndexKline(symbol: string, params?: {
 }
 
 export async function getStockKline(symbol: string, params?: {
-  period?: "day" | "week" | "month" | "quarter" | "year";
+  period?: "1m" | "30m" | "60m" | "day" | "week" | "month" | "quarter" | "year";
   limit?: number;
   start?: string;
   end?: string;

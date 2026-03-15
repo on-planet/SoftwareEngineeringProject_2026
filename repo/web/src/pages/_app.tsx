@@ -1,16 +1,16 @@
-import React from "react";
+﻿import React from "react";
 
 import type { AppProps } from "next/app";
 
 import "../styles/global.css";
 
 const NAV_LINKS = [
-  { href: "/", label: "Home" },
-  { href: "/stocks", label: "Stocks" },
-  { href: "/insights", label: "Insights" },
-  { href: "/macro", label: "Macro" },
-  { href: "/stats", label: "Stats" },
-  { href: "/futures", label: "Futures" },
+  { href: "/", label: "总览" },
+  { href: "/stocks", label: "股票" },
+  { href: "/insights", label: "洞察" },
+  { href: "/macro", label: "宏观" },
+  { href: "/stats", label: "统计" },
+  { href: "/futures", label: "期货" },
 ];
 
 export default function App({ Component, pageProps }: AppProps) {

@@ -1,8 +1,10 @@
-import React, { useEffect, useMemo, useState } from "react";
+﻿import React, { useEffect, useMemo, useState } from "react";
 
 import ReactECharts from "echarts-for-react";
 
 import { getStockKline } from "../services/api";
+
+type KlinePeriod = "1m" | "30m" | "60m" | "day" | "week" | "month" | "quarter" | "year";
 
 type KlinePoint = {
   date: string;
@@ -14,7 +16,7 @@ type KlinePoint = {
 
 type KlineSeries = {
   symbol: string;
-  period: "day" | "week" | "month" | "quarter" | "year";
+  period: KlinePeriod;
   items: KlinePoint[];
 };
 
@@ -22,18 +24,34 @@ type Props = {
   symbol: string;
 };
 
-const PERIOD_OPTIONS: Array<KlineSeries["period"]> = ["day", "week", "month", "quarter", "year"];
+const PERIOD_OPTIONS: KlinePeriod[] = ["1m", "30m", "60m", "day", "week", "month", "quarter", "year"];
 
-const PERIOD_LABELS: Record<KlineSeries["period"], string> = {
-  day: "Day",
-  week: "Week",
-  month: "Month",
-  quarter: "Quarter",
-  year: "Year",
+const PERIOD_LABELS: Record<KlinePeriod, string> = {
+  "1m": "1 分钟",
+  "30m": "30 分钟",
+  "60m": "60 分钟",
+  day: "日 K",
+  week: "周 K",
+  month: "月 K",
+  quarter: "季 K",
+  year: "年 K",
 };
 
+function formatAxisLabel(value: string, period: KlinePeriod) {
+  if (period === "1m" || period === "30m" || period === "60m") {
+    return new Date(value).toLocaleString("zh-CN", {
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+  }
+  return String(value).slice(0, 10);
+}
+
 export function StockKlinePanel({ symbol }: Props) {
-  const [period, setPeriod] = useState<KlineSeries["period"]>("day");
+  const [period, setPeriod] = useState<KlinePeriod>("day");
   const [items, setItems] = useState<KlinePoint[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -41,7 +59,7 @@ export function StockKlinePanel({ symbol }: Props) {
   useEffect(() => {
     let active = true;
     setLoading(true);
-    getStockKline(symbol, { period, limit: 240 })
+    getStockKline(symbol, { period, limit: period === "1m" ? 180 : 240 })
       .then((res) => {
         if (!active) {
           return;
@@ -55,7 +73,7 @@ export function StockKlinePanel({ symbol }: Props) {
           return;
         }
         setItems([]);
-        setError(err.message || "Failed to load stock kline");
+        setError(err.message || "K 线加载失败");
       })
       .finally(() => {
         if (active) {
@@ -77,7 +95,7 @@ export function StockKlinePanel({ symbol }: Props) {
       grid: { left: 48, right: 24, top: 28, bottom: 40 },
       xAxis: {
         type: "category",
-        data: items.map((item) => item.date),
+        data: items.map((item) => formatAxisLabel(item.date, period)),
         boundaryGap: true,
       },
       yAxis: {
@@ -97,13 +115,13 @@ export function StockKlinePanel({ symbol }: Props) {
         },
       ],
     };
-  }, [items]);
+  }, [items, period]);
 
   return (
     <div className="card">
       <div className="panel-header">
         <div>
-          <div className="card-title">Price Kline</div>
+          <div className="card-title">K 线走势</div>
           <div className="helper">{symbol.toUpperCase()}</div>
         </div>
         <div className="chip-group">
@@ -120,10 +138,10 @@ export function StockKlinePanel({ symbol }: Props) {
           ))}
         </div>
       </div>
-      {loading ? <div className="helper">Loading kline...</div> : null}
-      {!loading && error ? <div className="helper">Kline failed: {error}</div> : null}
+      {loading ? <div className="helper">K 线加载中...</div> : null}
+      {!loading && error ? <div className="helper">K 线加载失败：{error}</div> : null}
       {!loading && !error && option ? <ReactECharts option={option} style={{ height: 360 }} /> : null}
-      {!loading && !error && !option ? <div className="helper">No kline data available.</div> : null}
+      {!loading && !error && !option ? <div className="helper">暂无 K 线数据。</div> : null}
     </div>
   );
 }

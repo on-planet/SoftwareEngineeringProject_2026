@@ -15,6 +15,9 @@ from etl.fetchers.snowball_client import (
     get_recent_financials,
     get_stock_earning_forecasts,
     get_stock_basics,
+    get_stock_pankou,
+    get_stock_quote,
+    get_stock_quote_detail,
     get_stock_reports,
     market_from_symbol,
     search_stocks,
@@ -25,21 +28,26 @@ from etl.utils.env import load_project_env
 
 load_project_env()
 
-LiveKlinePeriod = Literal["day", "week", "month", "quarter", "year"]
+LiveKlinePeriod = Literal["1m", "30m", "60m", "day", "week", "month", "quarter", "year"]
 LIVE_CACHE_TTL = 300
 
 
-def _period_key(value: date, period: LiveKlinePeriod) -> tuple[int, int]:
+def _calendar_value(value: date | datetime) -> date:
+    return value.date() if isinstance(value, datetime) else value
+
+
+def _period_key(value: date | datetime, period: LiveKlinePeriod) -> tuple[int, int]:
+    calendar_value = _calendar_value(value)
     if period == "week":
-        iso_year, iso_week, _ = value.isocalendar()
+        iso_year, iso_week, _ = calendar_value.isocalendar()
         return iso_year, iso_week
     if period == "month":
-        return value.year, value.month
+        return calendar_value.year, calendar_value.month
     if period == "quarter":
-        return value.year, (value.month - 1) // 3 + 1
+        return calendar_value.year, (calendar_value.month - 1) // 3 + 1
     if period == "year":
-        return value.year, 1
-    return value.year, value.toordinal()
+        return calendar_value.year, 1
+    return calendar_value.year, calendar_value.toordinal()
 
 
 def _aggregate_points(rows: Iterable[KlinePoint], period: LiveKlinePeriod) -> list[KlinePoint]:
@@ -99,7 +107,7 @@ def _filter_points(points: list[KlinePoint], start: date | None, end: date | Non
     filtered = [
         item
         for item in points
-        if (start is None or item.date >= start) and (end is None or item.date <= end)
+        if (start is None or _calendar_value(item.date) >= start) and (end is None or _calendar_value(item.date) <= end)
     ]
     return filtered[-limit:]
 
@@ -150,10 +158,24 @@ def get_live_stock_profile(symbol: str) -> dict | None:
         return cached
 
     rows = get_stock_basics([normalized])
-    if rows:
-        result = rows[0]
-    else:
+    if not rows:
         return None
+    result = dict(rows[0])
+    quote = get_stock_quote(normalized)
+    quote_detail = get_stock_quote_detail(normalized)
+    pankou = get_stock_pankou(normalized)
+    if quote:
+        result["quote"] = {key: value for key, value in quote.items() if key != "symbol"}
+    if quote_detail:
+        result["quote_detail"] = {key: value for key, value in quote_detail.items() if key != "symbol"}
+    if pankou:
+        result["pankou"] = {
+            "diff": pankou.get("diff"),
+            "ratio": pankou.get("ratio"),
+            "timestamp": pankou.get("timestamp"),
+            "bids": pankou.get("bids") or [],
+            "asks": pankou.get("asks") or [],
+        }
     set_json(cache_key, result, ttl=LIVE_CACHE_TTL)
     return result
 
@@ -205,8 +227,13 @@ def get_live_kline(
         if items:
             return items
 
-    if period in {"day", "week", "month"}:
-        fetch_count = max(limit * (3 if period == "day" else 2), 160)
+    if period in {"1m", "30m", "60m", "day", "week", "month"}:
+        if period == "1m":
+            fetch_count = max(limit * 2, 240)
+        elif period in {"30m", "60m", "day"}:
+            fetch_count = max(limit * 2, 180)
+        else:
+            fetch_count = max(limit * 2, 160)
         points = _points_from_rows(
             get_kline_history(normalized, period=period, count=fetch_count, as_of=end, is_index=is_index)
         )
@@ -285,8 +312,8 @@ def get_live_fundamental(symbol: str) -> dict | None:
         "symbol": normalized,
         "score": float(score),
         "summary": (
-            f"{normalized} score {score:.1f}. "
-            f"Profit quality {profit_quality:.2f}, growth {growth:.2f}, risk {risk:.2f}."
+            f"{normalized} 综合得分 {score:.1f}。"
+            f"盈利质量 {profit_quality:.2f}，成长性 {growth:.2f}，风险项 {risk:.2f}。"
         ),
         "updated_at": datetime.now(),
     }

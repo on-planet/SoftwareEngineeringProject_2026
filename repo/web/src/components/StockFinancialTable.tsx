@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from "react";
+﻿import React, { useEffect, useState } from "react";
 
 import { getStockFinancials } from "../services/api";
-import { formatNumber } from "../utils/format";
+import { formatNullableNumber, formatSmartPercent } from "../utils/format";
 
 type FinancialItem = {
   symbol: string;
@@ -46,7 +46,7 @@ export function StockFinancialTable({ symbol }: Props) {
           return;
         }
         setItems([]);
-        setError(err.message || "Failed to load financials");
+        setError(err.message || "财务报表加载失败");
       })
       .finally(() => {
         if (active) {
@@ -59,15 +59,15 @@ export function StockFinancialTable({ symbol }: Props) {
   }, [symbol]);
 
   if (loading) {
-    return <div className="helper">Loading financial statements...</div>;
+    return <div className="helper">财务报表加载中...</div>;
   }
 
   if (error) {
-    return <div className="helper">Financial statements failed: {error}</div>;
+    return <div className="helper">财务报表加载失败：{error}</div>;
   }
 
   if (!items.length) {
-    return <div className="helper">No financial statements available.</div>;
+    return <div className="helper">暂无财务报表数据。</div>;
   }
 
   return (
@@ -75,23 +75,23 @@ export function StockFinancialTable({ symbol }: Props) {
       <table className="data-table">
         <thead>
           <tr>
-            <th>Period</th>
-            <th>Revenue</th>
-            <th>Net Income</th>
-            <th>Operating Cash Flow</th>
+            <th>报告期</th>
+            <th>营业收入</th>
+            <th>净利润</th>
+            <th>经营现金流</th>
             <th>ROE</th>
-            <th>Debt Ratio</th>
+            <th>资产负债率</th>
           </tr>
         </thead>
         <tbody>
           {items.map((item) => (
             <tr key={`${item.symbol}-${item.period}`}>
               <td>{item.period}</td>
-              <td>{formatNumber(item.revenue ?? 0)}</td>
-              <td>{formatNumber(item.net_income ?? 0)}</td>
-              <td>{formatNumber(item.cash_flow ?? 0)}</td>
-              <td>{((item.roe ?? 0) * 100).toFixed(2)}%</td>
-              <td>{((item.debt_ratio ?? 0) * 100).toFixed(2)}%</td>
+              <td>{formatNullableNumber(item.revenue, 0)}</td>
+              <td>{formatNullableNumber(item.net_income, 0)}</td>
+              <td>{formatNullableNumber(item.cash_flow, 0)}</td>
+              <td>{formatSmartPercent(item.roe)}</td>
+              <td>{formatSmartPercent(item.debt_ratio)}</td>
             </tr>
           ))}
         </tbody>

@@ -5,7 +5,7 @@ from typing import Literal
 
 from app.services.live_market_service import get_live_kline
 
-KlinePeriod = Literal["day", "week", "month", "quarter", "year"]
+KlinePeriod = Literal["1m", "30m", "60m", "day", "week", "month", "quarter", "year"]
 
 
 def get_stock_kline(

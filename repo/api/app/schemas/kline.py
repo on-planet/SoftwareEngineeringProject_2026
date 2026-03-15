@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
 from pydantic import BaseModel
 
 
 class KlinePoint(BaseModel):
-    date: date
+    date: datetime | date
     open: float
     high: float
     low: float

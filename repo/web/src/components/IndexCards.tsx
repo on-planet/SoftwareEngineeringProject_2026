@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+﻿import React, { useEffect, useState } from "react";
 
 import { getIndices } from "../services/api";
 import { formatNumber, formatSigned } from "../utils/format";
@@ -15,6 +15,12 @@ type IndexPage = {
   total: number;
   limit: number;
   offset: number;
+};
+
+const INDEX_NAME_MAP: Record<string, string> = {
+  "000001.SH": "上证指数",
+  "399001.SZ": "深证成指",
+  "399006.SZ": "创业板指",
 };
 
 export function IndexCards({ asOf }: { asOf?: string }) {
@@ -38,7 +44,7 @@ export function IndexCards({ asOf }: { asOf?: string }) {
         if (!active) {
           return;
         }
-        setError(err.message || "Failed to load indices");
+        setError(err.message || "指数数据加载失败");
       })
       .finally(() => {
         if (active) {
@@ -51,15 +57,15 @@ export function IndexCards({ asOf }: { asOf?: string }) {
   }, [asOf]);
 
   if (loading) {
-    return <div className="helper">Loading indices...</div>;
+    return <div className="helper">指数数据加载中...</div>;
   }
 
   if (error) {
-    return <div className="helper">Indices failed: {error}</div>;
+    return <div className="helper">指数数据加载失败：{error}</div>;
   }
 
   if (data.length === 0) {
-    return <div className="helper">No index data available.</div>;
+    return <div className="helper">暂无指数数据。</div>;
   }
 
   return (
@@ -68,8 +74,11 @@ export function IndexCards({ asOf }: { asOf?: string }) {
         const changeColor = item.change >= 0 ? "#ef4444" : "#10b981";
         return (
           <div key={`${item.symbol}-${item.date}`} className="card">
-            <div className="card-title">{item.symbol}</div>
-            <div className="helper">{item.date}</div>
+            <div className="card-title">{INDEX_NAME_MAP[item.symbol] || item.symbol}</div>
+            <div className="helper">{item.symbol}</div>
+            <div className="helper" style={{ marginTop: 4 }}>
+              {item.date}
+            </div>
             <div style={{ marginTop: 8, fontSize: 20, fontWeight: 700 }}>{formatNumber(item.close)}</div>
             <div style={{ marginTop: 4, color: changeColor, fontWeight: 600 }}>{formatSigned(item.change)}</div>
           </div>

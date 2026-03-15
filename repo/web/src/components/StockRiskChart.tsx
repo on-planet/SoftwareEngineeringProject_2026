@@ -1,8 +1,9 @@
-import React, { useEffect, useMemo, useState } from "react";
+﻿import React, { useEffect, useMemo, useState } from "react";
 
 import ReactECharts from "echarts-for-react";
 
 import { getRisk, getRiskSeries } from "../services/api";
+import { formatPercent } from "../utils/format";
 
 type RiskSnapshot = {
   symbol: string;
@@ -66,7 +67,7 @@ export function StockRiskChart({ symbol }: Props) {
         if (!active) {
           return;
         }
-        setError(err.message || "加载风险指标失败");
+        setError(err.message || "风险指标加载失败");
       })
       .finally(() => {
         if (active) {
@@ -98,66 +99,53 @@ export function StockRiskChart({ symbol }: Props) {
   const cacheHitLabel = seriesCacheHit === undefined ? "未知" : seriesCacheHit ? "命中" : "未命中";
 
   return (
-    <div style={{ border: "1px solid #e2e8f0", borderRadius: 8, padding: 16, background: "#fff" }}>
+    <div>
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12, gap: 12, flexWrap: "wrap" }}>
-        <div style={{ fontWeight: 600 }}>风险指标</div>
-        <div style={{ display: "flex", gap: 12, fontSize: 12, color: "#718096" }}>
+        <div style={{ fontWeight: 600 }}>风险序列</div>
+        <div style={{ display: "flex", gap: 12, fontSize: 12, color: "#718096", flexWrap: "wrap" }}>
           <span>缓存：{cacheHitLabel}</span>
-          {snapshot?.as_of ? <span>截止 {new Date(snapshot.as_of).toLocaleDateString("zh-CN")}</span> : null}
+          {snapshot?.as_of ? <span>截至：{new Date(snapshot.as_of).toLocaleDateString("zh-CN")}</span> : null}
         </div>
       </div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
-        <label style={{ display: "flex", flexDirection: "column", fontSize: 12, gap: 6 }}>
-          窗口
-          <input
-            type="number"
-            min={2}
-            max={200}
-            value={windowSize}
-            onChange={(event) => setWindowSize(Number(event.target.value) || 20)}
-            style={{ width: 90, padding: "4px 8px" }}
-          />
-        </label>
-        <label style={{ display: "flex", flexDirection: "column", fontSize: 12, gap: 6 }}>
-          最大条数
-          <input
-            type="number"
-            min={20}
-            max={500}
-            value={limit}
-            onChange={(event) => setLimit(Number(event.target.value) || 200)}
-            style={{ width: 90, padding: "4px 8px" }}
-          />
-        </label>
-        <label style={{ display: "flex", flexDirection: "column", fontSize: 12, gap: 6 }}>
-          起始日期
-          <input
-            type="date"
-            value={start}
-            onChange={(event) => setStart(event.target.value)}
-            style={{ padding: "4px 8px" }}
-          />
-        </label>
-        <label style={{ display: "flex", flexDirection: "column", fontSize: 12, gap: 6 }}>
-          截止日期
-          <input
-            type="date"
-            value={end}
-            onChange={(event) => setEnd(event.target.value)}
-            style={{ padding: "4px 8px" }}
-          />
-        </label>
+        <input
+          className="input"
+          type="number"
+          min={2}
+          max={200}
+          value={windowSize}
+          onChange={(event) => setWindowSize(Number(event.target.value) || 20)}
+          placeholder="窗口"
+          style={{ width: 110 }}
+        />
+        <input
+          className="input"
+          type="number"
+          min={20}
+          max={500}
+          value={limit}
+          onChange={(event) => setLimit(Number(event.target.value) || 200)}
+          placeholder="条数"
+          style={{ width: 110 }}
+        />
+        <input className="input" type="date" value={start} onChange={(event) => setStart(event.target.value)} />
+        <input className="input" type="date" value={end} onChange={(event) => setEnd(event.target.value)} />
       </div>
       {loading ? (
-        <div>风险指标加载中...</div>
+        <div className="helper">风险指标加载中...</div>
       ) : error ? (
-        <div>风险指标加载失败：{error}</div>
-      ) : (
+        <div className="helper">风险指标加载失败：{error}</div>
+      ) : series.length ? (
         <ReactECharts option={chartOption} style={{ height: 240 }} />
+      ) : (
+        <div className="helper">暂无风险序列数据。</div>
       )}
       {snapshot ? (
-        <div style={{ marginTop: 8, fontSize: 12, color: "#4a5568" }}>
-          最大回撤：{snapshot.max_drawdown ?? "-"} · 波动率：{snapshot.volatility ?? "-"}
+        <div className="helper" style={{ marginTop: 12 }}>
+          最大回撤：{snapshot.max_drawdown !== null && snapshot.max_drawdown !== undefined ? formatPercent(snapshot.max_drawdown) : "--"}
+          <span style={{ marginLeft: 12 }}>
+            波动率：{snapshot.volatility !== null && snapshot.volatility !== undefined ? formatPercent(snapshot.volatility) : "--"}
+          </span>
         </div>
       ) : null}
     </div>

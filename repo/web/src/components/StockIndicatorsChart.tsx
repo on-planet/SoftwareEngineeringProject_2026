@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+﻿import React, { useEffect, useMemo, useState } from "react";
 
 import ReactECharts from "echarts-for-react";
 
@@ -55,7 +55,7 @@ export function StockIndicatorsChart({ symbol }: Props) {
         if (!active) {
           return;
         }
-        setError(err.message || "加载指标失败");
+        setError(err.message || "技术指标加载失败");
       })
       .finally(() => {
         if (active) {
@@ -74,63 +74,59 @@ export function StockIndicatorsChart({ symbol }: Props) {
       tooltip: { trigger: "axis" },
       xAxis: { type: "category", data: labels, boundaryGap: false },
       yAxis: { type: "value" },
-      series: [{ type: "line", data: values, smooth: true }],
+      series: [{ name: indicator.toUpperCase(), type: "line", data: values, smooth: true }],
       grid: { left: 40, right: 20, top: 30, bottom: 40 },
     };
-  }, [items]);
+  }, [indicator, items]);
 
   const cacheHitLabel = cacheHit === undefined ? "未知" : cacheHit ? "命中" : "未命中";
 
   return (
-    <div style={{ border: "1px solid #e2e8f0", borderRadius: 8, padding: 16, background: "#fff" }}>
+    <div>
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12, gap: 12, flexWrap: "wrap" }}>
         <div style={{ fontWeight: 600 }}>技术指标（{indicator.toUpperCase()}）</div>
         <div style={{ fontSize: 12, color: "#718096" }}>缓存：{cacheHitLabel}</div>
       </div>
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
         <select
+          className="select"
           value={indicator}
           onChange={(event) => setIndicator(event.target.value as "ma" | "rsi")}
-          style={{ padding: "4px 8px" }}
         >
-          <option value="ma">MA</option>
-          <option value="rsi">RSI</option>
+          <option value="ma">移动均线 MA</option>
+          <option value="rsi">相对强弱 RSI</option>
         </select>
         <input
+          className="input"
           type="number"
           min={2}
           max={200}
           value={window}
           onChange={(event) => setWindow(Number(event.target.value) || 14)}
-          style={{ width: 80, padding: "4px 8px" }}
+          placeholder="窗口"
+          style={{ width: 110 }}
         />
         <input
+          className="input"
           type="number"
           min={10}
           max={500}
           value={limit}
           onChange={(event) => setLimit(Number(event.target.value) || 200)}
-          style={{ width: 80, padding: "4px 8px" }}
+          placeholder="条数"
+          style={{ width: 110 }}
         />
-        <input
-          type="date"
-          value={start}
-          onChange={(event) => setStart(event.target.value)}
-          style={{ padding: "4px 8px" }}
-        />
-        <input
-          type="date"
-          value={end}
-          onChange={(event) => setEnd(event.target.value)}
-          style={{ padding: "4px 8px" }}
-        />
+        <input className="input" type="date" value={start} onChange={(event) => setStart(event.target.value)} />
+        <input className="input" type="date" value={end} onChange={(event) => setEnd(event.target.value)} />
       </div>
       {loading ? (
-        <div>指标加载中...</div>
+        <div className="helper">技术指标加载中...</div>
       ) : error ? (
-        <div>指标加载失败：{error}</div>
-      ) : (
+        <div className="helper">技术指标加载失败：{error}</div>
+      ) : items.length ? (
         <ReactECharts option={chartOption} style={{ height: 240 }} />
+      ) : (
+        <div className="helper">暂无技术指标数据。</div>
       )}
     </div>
   );
