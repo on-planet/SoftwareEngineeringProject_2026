@@ -57,9 +57,50 @@ const COUNTRY_LABELS: Record<string, string> = {
 };
 
 const DEFAULT_KEY = "";
+const SNAPSHOT_PAGE_LIMIT = 200;
+const SNAPSHOT_PAGE_MAX = 10;
+
+function parseMacroKey(key: string) {
+  const [indicator, country] = key.split(":");
+  return {
+    key,
+    indicator: indicator || "",
+    country: country || "",
+  };
+}
+
+function formatSeriesLabel(key: string): string {
+  const { indicator, country } = parseMacroKey(key);
+  const indicatorLabel = INDICATOR_LABELS[indicator] || indicator;
+  const countryLabel = COUNTRY_LABELS[country] || country;
+  return country ? `${indicatorLabel} - ${countryLabel}` : indicatorLabel;
+}
+
+async function loadMacroSnapshotItems(): Promise<MacroItem[]> {
+  const merged: MacroItem[] = [];
+  let offset = 0;
+  let total = Number.POSITIVE_INFINITY;
+
+  for (let page = 0; page < SNAPSHOT_PAGE_MAX && offset < total; page += 1) {
+    const response = (await getMacro({
+      limit: SNAPSHOT_PAGE_LIMIT,
+      offset,
+      sort: "desc",
+    })) as MacroPage;
+    const items = response.items ?? [];
+    merged.push(...items);
+    total = Number(response.total ?? merged.length);
+    if (items.length < SNAPSHOT_PAGE_LIMIT) {
+      break;
+    }
+    offset += SNAPSHOT_PAGE_LIMIT;
+  }
+
+  return merged;
+}
 
 export default function MacroPage() {
-  const [items, setItems] = useState<MacroItem[]>([]);
+  const [snapshotItems, setSnapshotItems] = useState<MacroItem[]>([]);
   const [selectedKey, setSelectedKey] = useState(DEFAULT_KEY);
   const [series, setSeries] = useState<MacroSeries | null>(null);
   const [loading, setLoading] = useState(true);
@@ -68,62 +109,59 @@ export default function MacroPage() {
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
   const [sort, setSort] = useState<SortOrder>("desc");
-  const [limit, setLimit] = useState(120);
+  const [limit, setLimit] = useState(40);
   const [page, setPage] = useState(1);
-  const [total, setTotal] = useState(0);
   const [indicator, setIndicator] = useState("");
   const [country, setCountry] = useState("");
-
-  const offset = useMemo(() => (page - 1) * limit, [page, limit]);
-  const maxPage = useMemo(() => Math.max(1, Math.ceil(total / limit)), [total, limit]);
 
   useEffect(() => {
     let active = true;
     setLoading(true);
-    getMacro({
-      limit,
-      offset,
-      sort,
-      start: start || undefined,
-      end: end || undefined,
-    })
+    loadMacroSnapshotItems()
       .then((res) => {
-        if (!active) return;
-        const pageData = res as MacroPage;
-        setItems(pageData.items ?? []);
-        setTotal(pageData.total ?? 0);
+        if (!active) {
+          return;
+        }
+        setSnapshotItems(res);
         setError(null);
       })
       .catch((err: Error) => {
-        if (!active) return;
+        if (!active) {
+          return;
+        }
+        setSnapshotItems([]);
         setError(err.message || "加载宏观指标失败");
       })
       .finally(() => {
-        if (active) setLoading(false);
+        if (active) {
+          setLoading(false);
+        }
       });
     return () => {
       active = false;
     };
-  }, [end, limit, offset, sort, start]);
-
-  const keys = useMemo(() => Array.from(new Set(items.map((item) => item.key))), [items]);
+  }, []);
 
   const parsedKeys = useMemo(() => {
-    return keys
-      .map((key) => {
-        const [indicatorPart, countryPart] = key.split(":");
-        return { key, indicator: indicatorPart || "", country: countryPart || "" };
-      })
-      .filter((item) => item.indicator && item.country);
-  }, [keys]);
+    const byKey = new Map<string, ReturnType<typeof parseMacroKey>>();
+    snapshotItems.forEach((item) => {
+      const parsed = parseMacroKey(item.key);
+      if (parsed.indicator && parsed.country) {
+        byKey.set(item.key, parsed);
+      }
+    });
+    return Array.from(byKey.values()).sort((left, right) => left.key.localeCompare(right.key));
+  }, [snapshotItems]);
 
-  const indicatorOptions = useMemo(() => {
-    return Array.from(new Set(parsedKeys.map((item) => item.indicator)));
-  }, [parsedKeys]);
+  const indicatorOptions = useMemo(
+    () => Array.from(new Set(parsedKeys.map((item) => item.indicator))).sort((left, right) => left.localeCompare(right)),
+    [parsedKeys],
+  );
 
-  const countryOptions = useMemo(() => {
-    return Array.from(new Set(parsedKeys.map((item) => item.country)));
-  }, [parsedKeys]);
+  const countryOptions = useMemo(
+    () => Array.from(new Set(parsedKeys.map((item) => item.country))).sort((left, right) => left.localeCompare(right)),
+    [parsedKeys],
+  );
 
   const filteredKeys = useMemo(() => {
     return parsedKeys
@@ -135,7 +173,7 @@ export default function MacroPage() {
   useEffect(() => {
     if (filteredKeys.length === 0) {
       if (selectedKey) {
-        setSelectedKey("");
+        setSelectedKey(DEFAULT_KEY);
       }
       return;
     }
@@ -143,6 +181,10 @@ export default function MacroPage() {
       setSelectedKey(filteredKeys[0]);
     }
   }, [filteredKeys, selectedKey]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [country, indicator, limit, sort]);
 
   useEffect(() => {
     if (!selectedKey) {
@@ -157,44 +199,76 @@ export default function MacroPage() {
       end: end || undefined,
     })
       .then((res) => {
-        if (!active) return;
+        if (!active) {
+          return;
+        }
         setSeries(res as MacroSeries);
         setError(null);
       })
       .catch((err: Error) => {
-        if (!active) return;
+        if (!active) {
+          return;
+        }
         setSeries(null);
         setError(err.message || "加载宏观序列失败");
       })
       .finally(() => {
-        if (active) setSeriesLoading(false);
+        if (active) {
+          setSeriesLoading(false);
+        }
       });
     return () => {
       active = false;
     };
   }, [end, selectedKey, start]);
 
-  const latestByKey = useMemo(() => {
-    const map = new Map<string, MacroItem>();
-    items.forEach((item) => {
-      const existing = map.get(item.key);
-      if (!existing || new Date(item.date) > new Date(existing.date)) {
-        map.set(item.key, item);
+  const filteredSnapshotItems = useMemo(() => {
+    return snapshotItems.filter((item) => {
+      const parsed = parseMacroKey(item.key);
+      if (indicator && parsed.indicator !== indicator) {
+        return false;
       }
+      if (country && parsed.country !== country) {
+        return false;
+      }
+      return true;
     });
-    return Array.from(map.values());
-  }, [items]);
+  }, [country, indicator, snapshotItems]);
 
-  const chartTitle = useMemo(() => {
-    if (!selectedKey) return "";
-    const [indicatorPart, countryPart] = selectedKey.split(":");
-    const indicatorLabel = INDICATOR_LABELS[indicatorPart] || indicatorPart;
-    const countryLabel = COUNTRY_LABELS[countryPart] || countryPart;
-    return countryPart ? `${indicatorLabel} - ${countryLabel}` : indicatorLabel;
-  }, [selectedKey]);
+  const sortedSnapshotItems = useMemo(() => {
+    const next = [...filteredSnapshotItems];
+    next.sort((left, right) => {
+      const dateCompare = left.date.localeCompare(right.date);
+      if (dateCompare !== 0) {
+        return sort === "asc" ? dateCompare : -dateCompare;
+      }
+      return sort === "asc" ? left.key.localeCompare(right.key) : right.key.localeCompare(left.key);
+    });
+    return next;
+  }, [filteredSnapshotItems, sort]);
+
+  const total = sortedSnapshotItems.length;
+  const maxPage = useMemo(() => Math.max(1, Math.ceil(total / limit)), [limit, total]);
+
+  useEffect(() => {
+    if (page > maxPage) {
+      setPage(maxPage);
+    }
+  }, [maxPage, page]);
+
+  const offset = useMemo(() => (page - 1) * limit, [page, limit]);
+
+  const pagedSnapshotItems = useMemo(
+    () => sortedSnapshotItems.slice(offset, offset + limit),
+    [limit, offset, sortedSnapshotItems],
+  );
+
+  const chartTitle = useMemo(() => (selectedKey ? formatSeriesLabel(selectedKey) : ""), [selectedKey]);
 
   const seriesOption = useMemo(() => {
-    if (!series || !series.items.length) return null;
+    if (!series || !series.items.length) {
+      return null;
+    }
     const labels = series.items.map((item) => item.date);
     const values = series.items.map((item) => item.value);
     const scores = series.items.map((item) => item.score ?? 0);
@@ -237,56 +311,26 @@ export default function MacroPage() {
         <div className="toolbar" style={{ flexWrap: "wrap", gap: 12 }}>
           <label style={{ display: "flex", flexDirection: "column", fontSize: 12, gap: 6 }}>
             开始日期
-            <input
-              className="input"
-              type="date"
-              value={start}
-              onChange={(event) => {
-                setStart(event.target.value);
-                setPage(1);
-              }}
-            />
+            <input className="input" type="date" value={start} onChange={(event) => setStart(event.target.value)} />
           </label>
           <label style={{ display: "flex", flexDirection: "column", fontSize: 12, gap: 6 }}>
             结束日期
-            <input
-              className="input"
-              type="date"
-              value={end}
-              onChange={(event) => {
-                setEnd(event.target.value);
-                setPage(1);
-              }}
-            />
+            <input className="input" type="date" value={end} onChange={(event) => setEnd(event.target.value)} />
           </label>
           <label style={{ display: "flex", flexDirection: "column", fontSize: 12, gap: 6 }}>
             排序
-            <select
-              className="select"
-              value={sort}
-              onChange={(event) => {
-                setSort(event.target.value as SortOrder);
-                setPage(1);
-              }}
-            >
+            <select className="select" value={sort} onChange={(event) => setSort(event.target.value as SortOrder)}>
               <option value="desc">倒序</option>
               <option value="asc">正序</option>
             </select>
           </label>
           <label style={{ display: "flex", flexDirection: "column", fontSize: 12, gap: 6 }}>
             每页
-            <select
-              className="select"
-              value={limit}
-              onChange={(event) => {
-                setLimit(Number(event.target.value) || 120);
-                setPage(1);
-              }}
-            >
-              <option value={50}>50</option>
+            <select className="select" value={limit} onChange={(event) => setLimit(Number(event.target.value) || 40)}>
+              <option value={20}>20</option>
+              <option value={40}>40</option>
               <option value={80}>80</option>
               <option value={120}>120</option>
-              <option value={200}>200</option>
             </select>
           </label>
           <div className="helper" style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 18 }}>
@@ -296,10 +340,18 @@ export default function MacroPage() {
             <span>
               第 {page} / {maxPage} 页 · 共 {total} 条
             </span>
-            <button type="button" onClick={() => setPage((prev) => Math.min(maxPage, prev + 1))} disabled={page >= maxPage} className="input">
+            <button
+              type="button"
+              onClick={() => setPage((prev) => Math.min(maxPage, prev + 1))}
+              disabled={page >= maxPage}
+              className="input"
+            >
               下一页
             </button>
           </div>
+        </div>
+        <div className="helper" style={{ marginTop: 12 }}>
+          日期范围只影响上方图表序列，国家和指标目录固定来自最新宏观快照。
         </div>
       </section>
 
@@ -314,7 +366,6 @@ export default function MacroPage() {
               value={indicator}
               onChange={(event) => {
                 setIndicator(event.target.value);
-                setPage(1);
               }}
             >
               <option value="">全部</option>
@@ -332,7 +383,6 @@ export default function MacroPage() {
               value={country}
               onChange={(event) => {
                 setCountry(event.target.value);
-                setPage(1);
               }}
             >
               <option value="">全部</option>
@@ -349,7 +399,7 @@ export default function MacroPage() {
               {filteredKeys.length === 0 ? <option value="">暂无指标</option> : null}
               {filteredKeys.map((key) => (
                 <option key={key} value={key}>
-                  {key}
+                  {formatSeriesLabel(key)}
                 </option>
               ))}
             </select>
@@ -363,21 +413,28 @@ export default function MacroPage() {
           ) : seriesOption ? (
             <ReactECharts option={seriesOption} style={{ height: 320 }} />
           ) : (
-            <div>暂无宏观序列数据</div>
+            <div>当前序列暂无历史数据，接口会在首次访问时自动回填。</div>
           )}
         </div>
       </section>
 
       <section>
         <h2 className="section-title">最新指标快照</h2>
-        {latestByKey.length === 0 ? (
+        {pagedSnapshotItems.length === 0 ? (
           <div className="helper">暂无宏观指标数据</div>
         ) : (
           <div className="grid grid-3">
-            {latestByKey.map((item) => {
-              const [indicatorPart, countryPart] = item.key.split(":");
+            {pagedSnapshotItems.map((item) => {
+              const { indicator: indicatorPart, country: countryPart } = parseMacroKey(item.key);
+              const isActive = item.key === selectedKey;
               return (
-                <div key={`${item.key}-${item.date}`} className="card">
+                <button
+                  key={`${item.key}-${item.date}`}
+                  type="button"
+                  className="card index-card index-card-button"
+                  data-active={isActive}
+                  onClick={() => setSelectedKey(item.key)}
+                >
                   <div className="card-title">{INDICATOR_LABELS[indicatorPart] || indicatorPart}</div>
                   <div className="helper">
                     {COUNTRY_LABELS[countryPart] || countryPart} · {item.date}
@@ -386,7 +443,7 @@ export default function MacroPage() {
                   <div className="helper" style={{ marginTop: 4 }}>
                     评分 {formatNumber(item.score ?? 0)}
                   </div>
-                </div>
+                </button>
               );
             })}
           </div>

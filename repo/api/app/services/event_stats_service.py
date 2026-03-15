@@ -1,21 +1,14 @@
 from __future__ import annotations
 
-from datetime import date
+from collections import Counter
+from datetime import date, timedelta
 
-from sqlalchemy import Date, func
 from sqlalchemy.orm import Session
 
 from app.core.cache import get_json, set_json
-from app.models.events import Event
 from app.schemas.event_stats import CountByDateItem, CountBySymbolItem, CountByTypeItem
-
-
-def _date_bucket(column, granularity: str):
-    if granularity == "week":
-        return func.date_trunc("week", column).cast(Date)
-    if granularity == "month":
-        return func.date_trunc("month", column).cast(Date)
-    return func.date_trunc("day", column).cast(Date)
+from app.services.cache_utils import item_to_dict
+from app.services.event_feed_service import load_or_backfill_event_feed
 
 
 def _cache_key(
@@ -33,6 +26,14 @@ def _cache_key(
     start_key = start.isoformat() if start else "none"
     end_key = end.isoformat() if end else "none"
     return f"events_stats:{symbols_key}:{types_key}:{start_key}:{end_key}:{granularity}:{top_date or 0}:{top_type or 0}:{top_symbol or 0}"
+
+
+def _date_bucket(value: date, granularity: str) -> date:
+    if granularity == "week":
+        return value - timedelta(days=value.weekday())
+    if granularity == "month":
+        return value.replace(day=1)
+    return value
 
 
 def get_event_stats(
@@ -53,57 +54,51 @@ def get_event_stats(
         by_type = cached.get("by_type")
         by_symbol = cached.get("by_symbol")
         if isinstance(by_date, list) and isinstance(by_type, list) and isinstance(by_symbol, list):
-            return (
-                [CountByDateItem(**item) for item in by_date],
-                [CountByTypeItem(**item) for item in by_type],
-                [CountBySymbolItem(**item) for item in by_symbol],
-            )
+            if by_date or by_type or by_symbol:
+                return (
+                    [CountByDateItem(**item) for item in by_date if isinstance(item, dict)],
+                    [CountByTypeItem(**item) for item in by_type if isinstance(item, dict)],
+                    [CountBySymbolItem(**item) for item in by_symbol if isinstance(item, dict)],
+                )
 
-    base_query = db.query(Event)
-    if symbols:
-        base_query = base_query.filter(Event.symbol.in_(symbols))
-    if event_types:
-        base_query = base_query.filter(Event.type.in_(event_types))
-    if start is not None:
-        base_query = base_query.filter(Event.date >= start)
-    if end is not None:
-        base_query = base_query.filter(Event.date <= end)
+    items = load_or_backfill_event_feed(
+        db,
+        symbols=symbols,
+        event_types=event_types,
+        start=start,
+        end=end,
+    )
 
-    bucket = _date_bucket(Event.date, granularity)
-    by_date_query = base_query.with_entities(
-        bucket.label("date"), func.count().label("count")
-    ).group_by(bucket)
+    date_counter: Counter[date] = Counter()
+    type_counter: Counter[str] = Counter()
+    symbol_counter: Counter[str] = Counter()
+    for item in items:
+        date_counter[_date_bucket(item.date, granularity)] += 1
+        type_counter[item.type] += 1
+        symbol_counter[item.symbol] += 1
+
     if top_date:
-        by_date_query = by_date_query.order_by(func.count().desc()).limit(top_date)
+        sorted_dates = sorted(date_counter.items(), key=lambda item: (-item[1], item[0]))[:top_date]
     else:
-        by_date_query = by_date_query.order_by(bucket.asc())
-    by_date_rows = by_date_query.all()
+        sorted_dates = sorted(date_counter.items(), key=lambda item: item[0])
+    by_date_items = [CountByDateItem(date=bucket, count=count) for bucket, count in sorted_dates]
 
-    by_type_query = base_query.with_entities(
-        Event.type.label("type"), func.count().label("count")
-    ).group_by(Event.type)
-    by_type_query = by_type_query.order_by(func.count().desc())
+    sorted_types = sorted(type_counter.items(), key=lambda item: (-item[1], item[0]))
     if top_type:
-        by_type_query = by_type_query.limit(top_type)
-    by_type_rows = by_type_query.all()
+        sorted_types = sorted_types[:top_type]
+    by_type_items = [CountByTypeItem(type=event_type, count=count) for event_type, count in sorted_types]
 
-    by_symbol_query = base_query.with_entities(
-        Event.symbol.label("symbol"), func.count().label("count")
-    ).group_by(Event.symbol)
-    by_symbol_query = by_symbol_query.order_by(func.count().desc())
+    sorted_symbols = sorted(symbol_counter.items(), key=lambda item: (-item[1], item[0]))
     if top_symbol:
-        by_symbol_query = by_symbol_query.limit(top_symbol)
-    by_symbol_rows = by_symbol_query.all()
+        sorted_symbols = sorted_symbols[:top_symbol]
+    by_symbol_items = [CountBySymbolItem(symbol=symbol, count=count) for symbol, count in sorted_symbols]
 
-    by_date_items = [CountByDateItem(date=row.date, count=row.count) for row in by_date_rows]
-    by_type_items = [CountByTypeItem(type=row.type, count=row.count) for row in by_type_rows]
-    by_symbol_items = [CountBySymbolItem(symbol=row.symbol, count=row.count) for row in by_symbol_rows]
     set_json(
         cache_key,
         {
-            "by_date": [item.dict() for item in by_date_items],
-            "by_type": [item.dict() for item in by_type_items],
-            "by_symbol": [item.dict() for item in by_symbol_items],
+            "by_date": [item_to_dict(item) for item in by_date_items],
+            "by_type": [item_to_dict(item) for item in by_type_items],
+            "by_symbol": [item_to_dict(item) for item in by_symbol_items],
         },
     )
-    return (by_date_items, by_type_items, by_symbol_items)
+    return by_date_items, by_type_items, by_symbol_items
