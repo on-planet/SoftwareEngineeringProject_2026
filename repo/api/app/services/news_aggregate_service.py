@@ -5,8 +5,12 @@ from datetime import date
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
+from app.core.cache import get_json, set_json
 from app.models.news import News
+from app.services.cache_utils import build_cache_key, item_to_dict
 from app.schemas.news import NewsOut
+
+NEWS_AGG_CACHE_TTL = 600
 
 
 def list_news_aggregate(
@@ -21,6 +25,23 @@ def list_news_aggregate(
     offset: int = 0,
     sort: str = "desc",
 ):
+    cache_key = build_cache_key(
+        "news:aggregate",
+        symbols=symbols,
+        start=start,
+        end=end,
+        sentiments=sentiments,
+        keyword=keyword,
+        sort_by=sort_by,
+        limit=limit,
+        offset=offset,
+        sort=sort,
+    )
+    cached = get_json(cache_key)
+    if isinstance(cached, dict) and isinstance(cached.get("items"), list) and isinstance(cached.get("total"), int):
+        items = [NewsOut(**item) for item in cached.get("items") if isinstance(item, dict)]
+        return items, cached.get("total")
+
     base_query = db.query(News)
     if symbols:
         base_query = base_query.filter(News.symbol.in_(symbols))
@@ -70,4 +91,9 @@ def list_news_aggregate(
         .all()
     )
     items = [NewsOut.from_orm(row) for row in rows]
+    set_json(
+        cache_key,
+        {"items": [item_to_dict(item) for item in items], "total": total},
+        ttl=NEWS_AGG_CACHE_TTL,
+    )
     return items, total

@@ -4,9 +4,13 @@ from datetime import date
 
 from sqlalchemy.orm import Session
 
+from app.core.cache import get_json, set_json
 from app.models.news import News
+from app.services.cache_utils import build_cache_key, items_to_dicts
 from app.schemas.news import NewsCreate, NewsUpdate
 from app.utils.query_params import SortOrder
+
+NEWS_CACHE_TTL = 600
 
 
 def list_news(
@@ -22,6 +26,22 @@ def list_news(
     sort: SortOrder = "desc",
 ):
     """List news by symbol."""
+    cache_key = build_cache_key(
+        "news:list",
+        symbol=symbol,
+        limit=limit,
+        offset=offset,
+        start=start,
+        end=end,
+        sentiments=sentiments,
+        keyword=keyword,
+        sort_by=sort_by,
+        sort=sort,
+    )
+    cached = get_json(cache_key)
+    if isinstance(cached, dict) and isinstance(cached.get("items"), list) and isinstance(cached.get("total"), int):
+        return cached["items"], cached["total"]
+
     query = db.query(News).filter(News.symbol == symbol)
     if sentiments:
         query = query.filter(News.sentiment.in_(sentiments))
@@ -51,6 +71,7 @@ def list_news(
         .limit(limit)
         .all()
     )
+    set_json(cache_key, {"items": items_to_dicts(items), "total": total}, ttl=NEWS_CACHE_TTL)
     return items, total
 
 

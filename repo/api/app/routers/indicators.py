@@ -2,10 +2,8 @@ from __future__ import annotations
 
 from datetime import date
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, HTTPException, Query
 
-from app.core.db import get_db
 from app.schemas.error import ErrorResponse
 from app.schemas.examples import ERROR_EXAMPLE, INDICATOR_SERIES_EXAMPLE
 from app.schemas.indicators import IndicatorSeriesOut
@@ -30,13 +28,12 @@ def get_indicators_route(
     limit: int = Query(200, ge=10, le=500),
     end: date | None = Query(None),
     start: date | None = Query(None),
-    db: Session = Depends(get_db),
 ):
     """获取技术指标序列（MA/RSI）。"""
     indicator = indicator.lower()
     if indicator not in {"ma", "rsi"}:
         raise HTTPException(status_code=400, detail="Unsupported indicator")
-    items, cache_hit = get_indicator_series(db, symbol, indicator, window, limit, end, start)
+    items, cache_hit = get_indicator_series(symbol, indicator, window, limit, end, start)
     return {
         "symbol": symbol,
         "indicator": indicator,

@@ -190,4 +190,43 @@ SECTOR_EXPOSURE_EXAMPLE = {
     ],
 }
 
+FUTURES_PAGE_EXAMPLE = {
+    "items": [
+        {
+            "symbol": "GOLD",
+            "name": "GOLD",
+            "date": "2026-03-10",
+            "open": 2150.0,
+            "high": 2172.3,
+            "low": 2140.1,
+            "close": 2165.4,
+            "volume": 183245.0,
+            "source": "Snowball",
+        },
+        {
+            "symbol": "WTI",
+            "name": "WTI",
+            "date": "2026-03-10",
+            "open": 78.2,
+            "high": 79.1,
+            "low": 77.5,
+            "close": 78.6,
+            "volume": 96540.0,
+            "source": "Snowball",
+        },
+    ],
+    "total": 2,
+    "limit": 20,
+    "offset": 0,
+}
+
+FUTURES_SERIES_EXAMPLE = {
+    "symbol": "GOLD",
+    "items": [
+        {"date": "2026-03-06", "open": 2128.0, "high": 2140.6, "low": 2121.5, "close": 2138.4, "volume": 172300.0, "source": "Snowball"},
+        {"date": "2026-03-07", "open": 2138.4, "high": 2154.1, "low": 2131.7, "close": 2148.9, "volume": 176020.0, "source": "Snowball"},
+        {"date": "2026-03-10", "open": 2150.0, "high": 2172.3, "low": 2140.1, "close": 2165.4, "volume": 183245.0, "source": "Snowball"},
+    ],
+}
+
 ERROR_EXAMPLE = {"code": "NOT_FOUND", "message": "Not found"}

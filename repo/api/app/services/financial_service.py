@@ -4,36 +4,27 @@ from sqlalchemy.orm import Session
 
 from app.models.financials import Financial
 from app.schemas.financials import FinancialCreate, FinancialUpdate
-from app.utils.query_params import SortOrder
+from app.services.live_market_service import get_live_financials
 
 
 def list_financials(
-    db: Session,
     symbol: str,
     limit: int = 50,
     offset: int = 0,
     period: str | None = None,
     min_revenue: float | None = None,
     min_net_income: float | None = None,
-    sort: SortOrder = "desc",
+    sort: str = "desc",
 ):
-    """List financial statements by symbol."""
-    query = db.query(Financial).filter(Financial.symbol == symbol)
-    if period:
-        query = query.filter(Financial.period == period)
-    if min_revenue is not None:
-        query = query.filter(Financial.revenue >= min_revenue)
-    if min_net_income is not None:
-        query = query.filter(Financial.net_income >= min_net_income)
-    total = query.count()
-    ordering = Financial.period.asc() if sort == "asc" else Financial.period.desc()
-    items = (
-        query.order_by(ordering)
-        .offset(offset)
-        .limit(limit)
-        .all()
+    return get_live_financials(
+        symbol,
+        limit=limit,
+        offset=offset,
+        period=period,
+        min_revenue=min_revenue,
+        min_net_income=min_net_income,
+        sort=sort,
     )
-    return items, total
 
 
 def create_financial(db: Session, payload: FinancialCreate):

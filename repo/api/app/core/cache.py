@@ -42,7 +42,7 @@ def get_json(key: str):
         return None
 
 
-def set_json(key: str, payload: dict, ttl: int | None = None) -> bool:
+def set_json(key: str, payload, ttl: int | None = None) -> bool:
     client = get_redis_client()
     if client is None:
         return False

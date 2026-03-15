@@ -38,7 +38,7 @@ export function IndexCards({ asOf }: { asOf?: string }) {
         if (!active) {
           return;
         }
-        setError(err.message || "加载指数失败");
+        setError(err.message || "Failed to load indices");
       })
       .finally(() => {
         if (active) {
@@ -51,21 +51,21 @@ export function IndexCards({ asOf }: { asOf?: string }) {
   }, [asOf]);
 
   if (loading) {
-    return <div className="helper">指数加载中...</div>;
+    return <div className="helper">Loading indices...</div>;
   }
 
   if (error) {
-    return <div className="helper">指数加载失败：{error}</div>;
+    return <div className="helper">Indices failed: {error}</div>;
   }
 
   if (data.length === 0) {
-    return <div className="helper">暂无指数数据</div>;
+    return <div className="helper">No index data available.</div>;
   }
 
   return (
     <div className="grid grid-3">
       {data.map((item) => {
-        const changeColor = item.change >= 0 ? "#f87171" : "#34d399";
+        const changeColor = item.change >= 0 ? "#ef4444" : "#10b981";
         return (
           <div key={`${item.symbol}-${item.date}`} className="card">
             <div className="card-title">{item.symbol}</div>

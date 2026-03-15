@@ -2,8 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from etl.fetchers.stock_basic_client import get_stock_basic
-from etl.fetchers.tushare_client import get_financials
+from etl.fetchers.market_client import get_stock_basic, get_financials
 from etl.loaders.pg_loader import upsert_financials, upsert_fundamental_score
 from etl.transformers.fundamentals import (
     build_fundamental_score_row,

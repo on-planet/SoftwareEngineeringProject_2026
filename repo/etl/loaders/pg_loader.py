@@ -206,6 +206,24 @@ def upsert_macro(rows: Iterable[dict]) -> int:
     return _get_loader().execute_many(sql, payload)
 
 
+def upsert_futures_prices(rows: Iterable[dict]) -> int:
+    sql = """
+    INSERT INTO futures_prices (symbol, name, date, open, high, low, close, volume, source)
+    VALUES (:symbol, :name, :date, :open, :high, :low, :close, :volume, :source)
+    ON CONFLICT (symbol, date)
+    DO UPDATE SET
+        name = EXCLUDED.name,
+        open = EXCLUDED.open,
+        high = EXCLUDED.high,
+        low = EXCLUDED.low,
+        close = EXCLUDED.close,
+        volume = EXCLUDED.volume,
+        source = EXCLUDED.source
+    """
+    payload = _validate_rows(rows, ["symbol", "date"], "futures_prices")
+    return _get_loader().execute_many(sql, payload)
+
+
 def delete_macro_before(cutoff: date) -> int:
     sql = "DELETE FROM macro WHERE date < :cutoff"
     return _get_loader().execute_many(sql, [{"cutoff": cutoff}])

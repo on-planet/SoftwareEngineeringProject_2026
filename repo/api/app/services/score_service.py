@@ -1,20 +1,14 @@
 from __future__ import annotations
 
-from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
 from app.models.fundamental_score import FundamentalScore
 from app.schemas.fundamental import FundamentalCreate, FundamentalUpdate
+from app.services.live_market_service import get_live_fundamental
 
 
-def get_fundamental_score(db: Session, symbol: str):
-    """Get fundamental score for a symbol."""
-    return (
-        db.query(FundamentalScore)
-        .filter(FundamentalScore.symbol == symbol)
-        .order_by(desc(FundamentalScore.updated_at))
-        .first()
-    )
+def get_fundamental_score(symbol: str):
+    return get_live_fundamental(symbol)
 
 
 def create_fundamental_score(db: Session, payload: FundamentalCreate):

@@ -121,6 +121,19 @@ CREATE TABLE IF NOT EXISTS fund_holdings (
     PRIMARY KEY (fund_code, symbol, report_date)
 );
 
+CREATE TABLE IF NOT EXISTS futures_prices (
+    symbol VARCHAR(32) NOT NULL,
+    name VARCHAR(128),
+    date DATE NOT NULL,
+    open DOUBLE PRECISION,
+    high DOUBLE PRECISION,
+    low DOUBLE PRECISION,
+    close DOUBLE PRECISION,
+    volume DOUBLE PRECISION,
+    source VARCHAR(64),
+    PRIMARY KEY (symbol, date)
+);
+
 CREATE INDEX IF NOT EXISTS idx_indices_date ON indices(date);
 CREATE INDEX IF NOT EXISTS idx_daily_prices_date ON daily_prices(date);
 CREATE INDEX IF NOT EXISTS idx_daily_prices_symbol ON daily_prices(symbol);
@@ -141,3 +154,5 @@ CREATE INDEX IF NOT EXISTS idx_index_constituents_symbol ON index_constituents(s
 CREATE INDEX IF NOT EXISTS idx_fund_holdings_fund_code ON fund_holdings(fund_code);
 CREATE INDEX IF NOT EXISTS idx_fund_holdings_symbol ON fund_holdings(symbol);
 CREATE INDEX IF NOT EXISTS idx_fund_holdings_report_date ON fund_holdings(report_date);
+CREATE INDEX IF NOT EXISTS idx_futures_prices_date ON futures_prices(date);
+CREATE INDEX IF NOT EXISTS idx_futures_prices_symbol ON futures_prices(symbol);

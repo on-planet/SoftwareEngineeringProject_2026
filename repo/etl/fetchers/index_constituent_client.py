@@ -1,116 +1,124 @@
 from __future__ import annotations
 
-from datetime import date, datetime
-from typing import List
+from datetime import date
+from typing import Iterable, List
+import os
+import re
 
+from etl.fetchers.snowball_client import normalize_symbol
 from etl.utils.logging import get_logger
 from etl.utils.normalize import ensure_required
 
 LOGGER = get_logger(__name__)
 
 try:
-    import akshare as ak  # type: ignore
+    import pysnowball as ball  # type: ignore
 except Exception as exc:  # pragma: no cover - runtime env dependent
-    ak = None
-    LOGGER.warning("akshare import failed: %s", exc)
+    ball = None
+    LOGGER.warning("pysnowball import failed: %s", exc)
 
 
-def _df_to_records(df) -> List[dict]:
-    if df is None:
-        return []
-    try:
-        return df.to_dict("records")
-    except Exception:
-        return []
-
-
-def _to_date(value) -> date | None:
+def _safe_float(value) -> float | None:
     if value is None:
         return None
-    if isinstance(value, date) and not isinstance(value, datetime):
-        return value
-    if isinstance(value, datetime):
-        return value.date()
+    if isinstance(value, bool):
+        return None
+    text = str(value).strip().replace(",", "")
+    if not text:
+        return None
+    if text.endswith("%"):
+        text = text[:-1]
     try:
-        text = str(value)
-        if len(text) >= 10 and "-" in text:
-            return datetime.strptime(text[:10], "%Y-%m-%d").date()
-        if len(text) >= 8:
-            return datetime.strptime(text[:8], "%Y%m%d").date()
+        number = float(text)
     except Exception:
         return None
-    return None
-
-
-def _normalize_symbol(symbol: str) -> str:
-    if symbol.endswith(".SH") or symbol.endswith(".SZ") or symbol.endswith(".HK"):
-        return symbol
-    if symbol.startswith(("5", "6", "9")):
-        return f"{symbol}.SH"
-    return f"{symbol}.SZ"
-
-
-def _strip_suffix(symbol: str) -> str:
-    if symbol.endswith(".SH") or symbol.endswith(".SZ") or symbol.endswith(".HK"):
-        return symbol.split(".")[0]
-    return symbol
-
-
-def _detect_index_market(index_symbol: str) -> str | None:
-    if index_symbol.endswith(".SH"):
-        return "sh"
-    if index_symbol.endswith(".SZ"):
-        return "sz"
-    if index_symbol.endswith(".CSI"):
-        return "csi"
-    return None
-
-
-def _call_index_cons(index_symbol: str):
-    if ak is None:
+    if number != number:
         return None
-    market = _detect_index_market(index_symbol)
-    symbol = _strip_suffix(index_symbol)
-    if hasattr(ak, "index_stock_cons"):
-        try:
-            if market:
-                try:
-                    return ak.index_stock_cons(index=market, symbol=symbol)
-                except TypeError:
-                    try:
-                        return ak.index_stock_cons(market=market, symbol=symbol)
-                    except TypeError:
-                        return ak.index_stock_cons(symbol=symbol)
-            return ak.index_stock_cons(symbol=symbol)
-        except Exception as exc:
-            LOGGER.warning("index_stock_cons failed for %s: %s", index_symbol, exc)
+    return number
+
+
+def _extract_dict_rows(payload) -> list[dict]:
+    rows: list[dict] = []
+    stack = [payload]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            rows.append(node)
+            stack.extend(node.values())
+            continue
+        if isinstance(node, list):
+            stack.extend(node)
+    return [row for row in rows if row]
+
+
+def _pick(record: dict, keys: Iterable[str]):
+    for key in keys:
+        if key in record and record.get(key) not in (None, ""):
+            return record.get(key)
     return None
+
+
+def _index_code_map() -> dict[str, str]:
+    raw = os.getenv(
+        "SNOWBALL_INDEX_CONS_MAP",
+        "000001.SH=000001,399001.SZ=399001,399006.SZ=399006",
+    )
+    output: dict[str, str] = {}
+    for item in raw.split(","):
+        if "=" not in item:
+            continue
+        left, right = item.split("=", 1)
+        index_symbol = normalize_symbol(left.strip())
+        index_code = re.sub(r"\D", "", right.strip())
+        if index_symbol and index_code:
+            output[index_symbol] = index_code
+    return output
 
 
 def get_index_constituents(index_symbol: str, as_of: date) -> List[dict]:
-    """Fetch index constituents for a given date using AkShare."""
-    if ak is None:
-        LOGGER.warning("akshare unavailable, skip index constituents")
+    if ball is None:
+        LOGGER.warning("pysnowball unavailable, skip index constituents")
         return []
 
-    df = _call_index_cons(index_symbol)
-    rows: List[dict] = []
-    for record in _df_to_records(df):
-        symbol = record.get("成分券代码") or record.get("证券代码") or record.get("symbol")
-        if not symbol:
+    local_symbol = normalize_symbol(index_symbol)
+    index_code = _index_code_map().get(local_symbol, re.sub(r"\D", "", local_symbol))
+    if not index_code:
+        return []
+
+    try:
+        payload = ball.index_weight_top10(index_code)
+    except Exception as exc:
+        LOGGER.warning("snowball index_weight_top10 failed [%s]: %s", index_code, exc)
+        return []
+
+    rows: list[dict] = []
+    for record in _extract_dict_rows(payload):
+        raw_symbol = _pick(
+            record,
+            (
+                "stockCode",
+                "stock_code",
+                "consCode",
+                "cons_code",
+                "secu_code",
+                "symbol",
+                "code",
+            ),
+        )
+        if raw_symbol in (None, ""):
             continue
-        weight = record.get("权重") or record.get("weight") or record.get("权重(%)")
-        try:
-            weight_val = float(weight) / 100.0 if weight is not None else 0.0
-        except Exception:
-            weight_val = 0.0
+        symbol = normalize_symbol(str(raw_symbol))
+        if not symbol.endswith((".SH", ".SZ", ".HK", ".US")):
+            continue
+        weight = _safe_float(_pick(record, ("weight", "weightValue", "iweight", "weight_rate", "ratio"))) or 0.0
+        if weight > 1:
+            weight = weight / 100.0
         rows.append(
             {
-                "index_symbol": index_symbol,
-                "symbol": _normalize_symbol(str(symbol)),
+                "index_symbol": local_symbol,
+                "symbol": symbol,
                 "date": as_of,
-                "weight": weight_val,
+                "weight": weight,
             }
         )
-
     return ensure_required(rows, ["index_symbol", "symbol", "date", "weight"], "index.constituents")

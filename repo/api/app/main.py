@@ -2,6 +2,8 @@ from fastapi import FastAPI, HTTPException
 
 from app.core.handlers import http_error_handler, http_exception_handler
 from app.core.middleware import RequestLogMiddleware
+from app.core.schema import init_schema
+from etl.utils.env import load_project_env
 from app.routers import (
     index,
     stock,
@@ -24,6 +26,7 @@ from app.routers import (
     index_constituents,
     sector,
     fund_holdings,
+    futures,
 )
 
 app = FastAPI(title="KiloQuant API", version="0.1.0")
@@ -32,6 +35,12 @@ app.add_exception_handler(Exception, http_error_handler)
 app.add_exception_handler(HTTPException, http_exception_handler)
 
 app.add_middleware(RequestLogMiddleware)
+
+
+@app.on_event("startup")
+def startup() -> None:
+    load_project_env()
+    init_schema()
 
 app.include_router(index.router, prefix="/api")
 app.include_router(stock.router, prefix="/api")
@@ -54,3 +63,4 @@ app.include_router(kline.router, prefix="/api")
 app.include_router(index_constituents.router, prefix="/api")
 app.include_router(sector.router, prefix="/api")
 app.include_router(fund_holdings.router, prefix="/api")
+app.include_router(futures.router, prefix="/api")

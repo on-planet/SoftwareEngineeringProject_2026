@@ -2,8 +2,12 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
+from app.core.cache import get_json, set_json
 from app.models.user_portfolio import UserPortfolio
+from app.services.cache_utils import build_cache_key, items_to_dicts
 from app.schemas.user import PortfolioCreate, PortfolioUpdate, PortfolioBatchItem
+
+USER_PORTFOLIO_CACHE_TTL = 600
 
 
 def get_user_portfolio(
@@ -16,6 +20,19 @@ def get_user_portfolio(
     offset: int = 0,
 ):
     """Get user portfolio holdings."""
+    cache_key = build_cache_key(
+        "user:portfolio:list",
+        user_id=user_id,
+        symbol=symbol,
+        min_shares=min_shares,
+        max_shares=max_shares,
+        limit=limit,
+        offset=offset,
+    )
+    cached = get_json(cache_key)
+    if isinstance(cached, dict) and isinstance(cached.get("items"), list) and isinstance(cached.get("total"), int):
+        return cached["items"], cached["total"]
+
     query = db.query(UserPortfolio).filter(UserPortfolio.user_id == user_id)
     if symbol:
         query = query.filter(UserPortfolio.symbol == symbol)
@@ -30,6 +47,7 @@ def get_user_portfolio(
         .limit(limit)
         .all()
     )
+    set_json(cache_key, {"items": items_to_dicts(items), "total": total}, ttl=USER_PORTFOLIO_CACHE_TTL)
     return items, total
 
 

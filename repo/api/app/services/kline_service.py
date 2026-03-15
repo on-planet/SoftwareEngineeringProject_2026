@@ -1,41 +1,30 @@
 from __future__ import annotations
 
 from datetime import date
+from typing import Literal
 
-from sqlalchemy.orm import Session
+from app.services.live_market_service import get_live_kline
 
-from app.models.daily_prices import DailyPrice
-from app.schemas.kline import KlinePoint
-
-
-def _select_index_prices(db: Session, symbol: str, end: date | None, limit: int):
-    query = db.query(DailyPrice).filter(DailyPrice.symbol == symbol)
-    if end is not None:
-        query = query.filter(DailyPrice.date <= end)
-    return (
-        query.order_by(DailyPrice.date.desc())
-        .limit(limit)
-        .all()[::-1]
-    )
+KlinePeriod = Literal["day", "week", "month", "quarter", "year"]
 
 
-def get_index_kline(
-    db: Session,
+def get_stock_kline(
     symbol: str,
+    *,
+    period: KlinePeriod = "day",
     limit: int = 200,
     end: date | None = None,
     start: date | None = None,
 ):
-    rows = _select_index_prices(db, symbol, end, limit)
-    if start is not None:
-        rows = [row for row in rows if row.date >= start]
-    return [
-        KlinePoint(
-            date=row.date,
-            open=float(row.open),
-            high=float(row.high),
-            low=float(row.low),
-            close=float(row.close),
-        )
-        for row in rows
-    ]
+    return get_live_kline(symbol, period=period, limit=limit, end=end, start=start, is_index=False)
+
+
+def get_index_kline(
+    symbol: str,
+    *,
+    period: KlinePeriod = "day",
+    limit: int = 200,
+    end: date | None = None,
+    start: date | None = None,
+):
+    return get_live_kline(symbol, period=period, limit=limit, end=end, start=start, is_index=True)

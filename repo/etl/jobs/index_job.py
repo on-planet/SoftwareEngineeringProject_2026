@@ -2,8 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from etl.fetchers.stock_basic_client import get_stock_basic
-from etl.fetchers.tushare_client import get_index_daily, get_daily_prices
+from etl.fetchers.market_client import get_stock_basic, get_index_daily, get_daily_prices
 from etl.loaders.pg_loader import upsert_stocks, upsert_indices, upsert_daily_prices
 from etl.loaders.redis_cache import cache_heatmap, cache_risk
 from etl.transformers.heatmap import build_heatmap, normalize_daily_rows

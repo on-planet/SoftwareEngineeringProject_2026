@@ -17,6 +17,83 @@ export async function getIndices(params?: { as_of?: string; sort?: "asc" | "desc
   return request(`/api/index${suffix ? `?${suffix}` : ""}`);
 }
 
+export async function getStocks(params?: {
+  market?: "A" | "HK" | "US";
+  keyword?: string;
+  sort?: "asc" | "desc";
+  limit?: number;
+  offset?: number;
+}) {
+  const query = new URLSearchParams();
+  if (params?.market) query.set("market", params.market);
+  if (params?.keyword) query.set("keyword", params.keyword);
+  if (params?.sort) query.set("sort", params.sort);
+  if (params?.limit !== undefined) query.set("limit", String(params.limit));
+  if (params?.offset !== undefined) query.set("offset", String(params.offset));
+  const suffix = query.toString();
+  return request(`/api/stocks${suffix ? `?${suffix}` : ""}`);
+}
+
+export async function getIndexKline(symbol: string, params?: {
+  period?: "day" | "week" | "month" | "quarter" | "year";
+  limit?: number;
+  start?: string;
+  end?: string;
+}) {
+  const query = new URLSearchParams();
+  if (params?.period) query.set("period", params.period);
+  if (params?.limit !== undefined) query.set("limit", String(params.limit));
+  if (params?.start) query.set("start", params.start);
+  if (params?.end) query.set("end", params.end);
+  const suffix = query.toString();
+  return request(`/api/index/${encodeURIComponent(symbol)}/kline${suffix ? `?${suffix}` : ""}`);
+}
+
+export async function getStockKline(symbol: string, params?: {
+  period?: "day" | "week" | "month" | "quarter" | "year";
+  limit?: number;
+  start?: string;
+  end?: string;
+}) {
+  const query = new URLSearchParams();
+  if (params?.period) query.set("period", params.period);
+  if (params?.limit !== undefined) query.set("limit", String(params.limit));
+  if (params?.start) query.set("start", params.start);
+  if (params?.end) query.set("end", params.end);
+  const suffix = query.toString();
+  return request(`/api/stock/${encodeURIComponent(symbol)}/kline${suffix ? `?${suffix}` : ""}`);
+}
+
+export async function getFutures(params?: {
+  symbol?: string;
+  start?: string;
+  end?: string;
+  sort?: "asc" | "desc";
+  limit?: number;
+  offset?: number;
+}) {
+  const query = new URLSearchParams();
+  if (params?.symbol) query.set("symbol", params.symbol);
+  if (params?.start) query.set("start", params.start);
+  if (params?.end) query.set("end", params.end);
+  if (params?.sort) query.set("sort", params.sort);
+  if (params?.limit !== undefined) query.set("limit", String(params.limit));
+  if (params?.offset !== undefined) query.set("offset", String(params.offset));
+  const suffix = query.toString();
+  return request(`/api/futures${suffix ? `?${suffix}` : ""}`);
+}
+
+export async function getFuturesSeries(
+  symbol: string,
+  params?: { start?: string; end?: string }
+) {
+  const query = new URLSearchParams();
+  if (params?.start) query.set("start", params.start);
+  if (params?.end) query.set("end", params.end);
+  const suffix = query.toString();
+  return request(`/api/futures/${encodeURIComponent(symbol)}/series${suffix ? `?${suffix}` : ""}`);
+}
+
 export async function getRisk(symbol: string) {
   return request(`/api/risk/${symbol}`);
 }
@@ -135,6 +212,36 @@ export async function getStock(symbol: string) {
 
 export async function getFundamental(symbol: string) {
   return request(`/api/stock/${symbol}/fundamental`);
+}
+
+export async function getStockFinancials(symbol: string, params?: {
+  period?: string;
+  min_revenue?: number;
+  min_net_income?: number;
+  sort?: "asc" | "desc";
+  limit?: number;
+  offset?: number;
+}) {
+  const query = new URLSearchParams();
+  if (params?.period) query.set("period", params.period);
+  if (params?.min_revenue !== undefined) query.set("min_revenue", String(params.min_revenue));
+  if (params?.min_net_income !== undefined) query.set("min_net_income", String(params.min_net_income));
+  if (params?.sort) query.set("sort", params.sort);
+  if (params?.limit !== undefined) query.set("limit", String(params.limit));
+  if (params?.offset !== undefined) query.set("offset", String(params.offset));
+  const suffix = query.toString();
+  return request(`/api/stock/${encodeURIComponent(symbol)}/financials${suffix ? `?${suffix}` : ""}`);
+}
+
+export async function getStockResearch(symbol: string, params?: {
+  report_limit?: number;
+  forecast_limit?: number;
+}) {
+  const query = new URLSearchParams();
+  if (params?.report_limit !== undefined) query.set("report_limit", String(params.report_limit));
+  if (params?.forecast_limit !== undefined) query.set("forecast_limit", String(params.forecast_limit));
+  const suffix = query.toString();
+  return request(`/api/stock/${encodeURIComponent(symbol)}/research${suffix ? `?${suffix}` : ""}`);
 }
 
 export async function getNews(symbol: string, params?: { limit?: number; offset?: number }) {

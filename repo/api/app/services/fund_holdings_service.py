@@ -5,9 +5,13 @@ from datetime import date
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.core.cache import get_json, set_json
 from app.models.fund_holdings import FundHolding
+from app.services.cache_utils import build_cache_key, items_to_dicts
 from app.schemas.fund_holdings import FundHoldingCreate, FundHoldingUpdate
 from app.utils.query_params import SortOrder
+
+FUND_HOLDINGS_CACHE_TTL = 1800
 
 
 def _resolve_report_date(db: Session, report_date: date | None) -> date | None:
@@ -27,6 +31,20 @@ def list_fund_holdings(
     offset: int = 0,
     sort: SortOrder = "desc",
 ):
+    cache_key = build_cache_key(
+        "fund_holdings:list",
+        fund_code=fund_code,
+        symbol=symbol,
+        start=start,
+        end=end,
+        limit=limit,
+        offset=offset,
+        sort=sort,
+    )
+    cached = get_json(cache_key)
+    if isinstance(cached, dict) and isinstance(cached.get("items"), list) and isinstance(cached.get("total"), int):
+        return cached["items"], cached["total"]
+
     query = db.query(FundHolding)
     if fund_code:
         query = query.filter(FundHolding.fund_code == fund_code)
@@ -39,6 +57,7 @@ def list_fund_holdings(
     total = query.count()
     ordering = FundHolding.report_date.asc() if sort == "asc" else FundHolding.report_date.desc()
     items = query.order_by(ordering).offset(offset).limit(limit).all()
+    set_json(cache_key, {"items": items_to_dicts(items), "total": total}, ttl=FUND_HOLDINGS_CACHE_TTL)
     return items, total
 
 
@@ -46,6 +65,11 @@ def list_fund_stats(
     db: Session,
     report_date: date | None = None,
 ):
+    cache_key = build_cache_key("fund_holdings:stats:fund", report_date=report_date)
+    cached = get_json(cache_key)
+    if isinstance(cached, list):
+        return cached
+
     target_date = _resolve_report_date(db, report_date)
     if target_date is None:
         return []
@@ -62,6 +86,7 @@ def list_fund_stats(
         .order_by(FundHolding.fund_code.asc())
         .all()
     )
+    set_json(cache_key, items_to_dicts(rows), ttl=FUND_HOLDINGS_CACHE_TTL)
     return rows
 
 
@@ -69,6 +94,11 @@ def list_stock_stats(
     db: Session,
     report_date: date | None = None,
 ):
+    cache_key = build_cache_key("fund_holdings:stats:stock", report_date=report_date)
+    cached = get_json(cache_key)
+    if isinstance(cached, list):
+        return cached
+
     target_date = _resolve_report_date(db, report_date)
     if target_date is None:
         return []
@@ -85,6 +115,7 @@ def list_stock_stats(
         .order_by(FundHolding.symbol.asc())
         .all()
     )
+    set_json(cache_key, items_to_dicts(rows), ttl=FUND_HOLDINGS_CACHE_TTL)
     return rows
 
 
@@ -92,6 +123,11 @@ def list_fund_series(
     db: Session,
     fund_code: str,
 ):
+    cache_key = build_cache_key("fund_holdings:series:fund", fund_code=fund_code)
+    cached = get_json(cache_key)
+    if isinstance(cached, list):
+        return cached
+
     rows = (
         db.query(
             FundHolding.report_date.label("report_date"),
@@ -104,6 +140,7 @@ def list_fund_series(
         .order_by(FundHolding.report_date.asc())
         .all()
     )
+    set_json(cache_key, items_to_dicts(rows), ttl=FUND_HOLDINGS_CACHE_TTL)
     return rows
 
 
@@ -111,6 +148,11 @@ def list_stock_series(
     db: Session,
     symbol: str,
 ):
+    cache_key = build_cache_key("fund_holdings:series:stock", symbol=symbol)
+    cached = get_json(cache_key)
+    if isinstance(cached, list):
+        return cached
+
     rows = (
         db.query(
             FundHolding.report_date.label("report_date"),
@@ -123,6 +165,7 @@ def list_stock_series(
         .order_by(FundHolding.report_date.asc())
         .all()
     )
+    set_json(cache_key, items_to_dicts(rows), ttl=FUND_HOLDINGS_CACHE_TTL)
     return rows
 
 

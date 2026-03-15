@@ -4,23 +4,34 @@ from datetime import date
 
 from sqlalchemy.orm import Session
 
-from app.core.cache import get_json
+from app.core.cache import get_json, set_json
 from app.models.macro import Macro
+from app.services.cache_utils import build_cache_key, item_to_dict, items_to_dicts
 from app.schemas.macro import MacroCreate, MacroUpdate
 from app.schemas.macro_series import MacroPoint
 from app.utils.query_params import SortOrder
 
+MACRO_QUERY_CACHE_TTL = 900
+
 
 def list_macro(db: Session, start: date | None = None, end: date | None = None, sort: SortOrder = "desc"):
     """List macro indicators."""
+    cache_key = build_cache_key("macro:list", start=start, end=end, sort=sort)
+    cached = get_json(cache_key)
+    if isinstance(cached, list):
+        return cached
+
     query = db.query(Macro)
     if start is not None:
         query = query.filter(Macro.date >= start)
     if end is not None:
         query = query.filter(Macro.date <= end)
     if sort == "asc":
-        return query.order_by(Macro.date.asc()).all()
-    return query.order_by(Macro.date.desc()).all()
+        items = query.order_by(Macro.date.asc()).all()
+    else:
+        items = query.order_by(Macro.date.desc()).all()
+    set_json(cache_key, items_to_dicts(items), ttl=MACRO_QUERY_CACHE_TTL)
+    return items
 
 
 def get_cached_macro(
@@ -70,13 +81,24 @@ def get_cached_macro(
 
 def get_macro_series(db: Session, key: str, start: date | None = None, end: date | None = None):
     """Get macro time series by key."""
+    cache_key = build_cache_key("macro:series", key=key, start=start, end=end)
+    cached = get_json(cache_key)
+    if isinstance(cached, list):
+        items: list[MacroPoint] = []
+        for row in cached:
+            if isinstance(row, dict):
+                items.append(MacroPoint(**row))
+        return items
+
     query = db.query(Macro).filter(Macro.key == key)
     if start is not None:
         query = query.filter(Macro.date >= start)
     if end is not None:
         query = query.filter(Macro.date <= end)
     rows = query.order_by(Macro.date.asc()).all()
-    return [MacroPoint(date=row.date, value=float(row.value or 0), score=row.score) for row in rows]
+    items = [MacroPoint(date=row.date, value=float(row.value or 0), score=row.score) for row in rows]
+    set_json(cache_key, [item_to_dict(item) for item in items], ttl=MACRO_QUERY_CACHE_TTL)
+    return items
 
 
 def create_macro(db: Session, payload: MacroCreate):

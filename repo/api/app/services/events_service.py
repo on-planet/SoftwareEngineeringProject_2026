@@ -4,9 +4,13 @@ from datetime import date
 
 from sqlalchemy.orm import Session
 
+from app.core.cache import get_json, set_json
 from app.models.events import Event
+from app.services.cache_utils import build_cache_key, items_to_dicts
 from app.schemas.events import EventCreate, EventUpdate
 from app.utils.query_params import SortOrder
+
+EVENTS_CACHE_TTL = 600
 
 
 def list_events(
@@ -22,6 +26,22 @@ def list_events(
     sort: SortOrder = "desc",
 ):
     """List events by symbol."""
+    cache_key = build_cache_key(
+        "events:list",
+        symbol=symbol,
+        limit=limit,
+        offset=offset,
+        start=start,
+        end=end,
+        event_types=event_types,
+        keyword=keyword,
+        sort_by=sort_by,
+        sort=sort,
+    )
+    cached = get_json(cache_key)
+    if isinstance(cached, dict) and isinstance(cached.get("items"), list) and isinstance(cached.get("total"), int):
+        return cached["items"], cached["total"]
+
     query = db.query(Event).filter(Event.symbol == symbol)
     if event_types:
         query = query.filter(Event.type.in_(event_types))
@@ -51,6 +71,7 @@ def list_events(
         .limit(limit)
         .all()
     )
+    set_json(cache_key, {"items": items_to_dicts(items), "total": total}, ttl=EVENTS_CACHE_TTL)
     return items, total
 
 

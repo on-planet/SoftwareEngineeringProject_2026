@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
-
-from app.core.db import get_db
+from fastapi import APIRouter
 from app.schemas.error import ErrorResponse
 from app.schemas.examples import ERROR_EXAMPLE, RISK_EXAMPLE
 from app.schemas.risk import RiskOut
@@ -21,9 +18,9 @@ router = APIRouter(tags=["risk"])
         500: {"model": ErrorResponse, "content": {"application/json": {"example": ERROR_EXAMPLE}}},
     },
 )
-def get_risk(symbol: str, db: Session = Depends(get_db)):
+def get_risk(symbol: str):
     """获取风险指标缓存。"""
-    payload = get_risk_snapshot(db, symbol) or get_risk_snapshot(db, "ALL")
+    payload = get_risk_snapshot(symbol)
     if not payload:
         return RiskOut(symbol=symbol, max_drawdown=None, volatility=None, as_of=None)
     return RiskOut(

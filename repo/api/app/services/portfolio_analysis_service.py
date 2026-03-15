@@ -5,9 +5,11 @@ from collections import defaultdict
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.core.cache import get_json, set_json
 from app.models.daily_prices import DailyPrice
 from app.models.stocks import Stock
 from app.models.user_portfolio import UserPortfolio
+from app.services.cache_utils import build_cache_key, item_to_dict
 from app.schemas.portfolio_analysis import (
     ConcentrationItem,
     ExposureItem,
@@ -15,6 +17,8 @@ from app.schemas.portfolio_analysis import (
     PortfolioItemAnalysis,
     PortfolioSummary,
 )
+
+PORTFOLIO_ANALYSIS_CACHE_TTL = 600
 
 
 def _latest_prices_map(db: Session, symbols: list[str]):
@@ -39,6 +43,14 @@ def _latest_prices_map(db: Session, symbols: list[str]):
 
 
 def get_portfolio_analysis(db: Session, user_id: int, top_n: int = 5) -> PortfolioAnalysisOut:
+    cache_key = build_cache_key("user:portfolio:analysis", user_id=user_id, top_n=top_n)
+    cached = get_json(cache_key)
+    if isinstance(cached, dict):
+        try:
+            return PortfolioAnalysisOut(**cached)
+        except Exception:
+            pass
+
     holdings = (
         db.query(UserPortfolio)
         .filter(UserPortfolio.user_id == user_id)
@@ -106,7 +118,7 @@ def get_portfolio_analysis(db: Session, user_id: int, top_n: int = 5) -> Portfol
     concentration.sort(key=lambda x: x.weight, reverse=True)
     top_holdings = concentration[:top_n]
 
-    return PortfolioAnalysisOut(
+    output = PortfolioAnalysisOut(
         user_id=user_id,
         items=items,
         summary=PortfolioSummary(
@@ -118,3 +130,5 @@ def get_portfolio_analysis(db: Session, user_id: int, top_n: int = 5) -> Portfol
         sector_exposure=sector_exposure,
         top_holdings=top_holdings,
     )
+    set_json(cache_key, item_to_dict(output), ttl=PORTFOLIO_ANALYSIS_CACHE_TTL)
+    return output

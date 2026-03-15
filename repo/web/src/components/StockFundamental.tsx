@@ -43,7 +43,7 @@ export function StockFundamental({ symbol }: Props) {
         if (!active) {
           return;
         }
-        setError(err.message || "加载基本面失败");
+        setError(err.message || "Failed to load stock profile");
       })
       .finally(() => {
         if (active) {
@@ -56,41 +56,39 @@ export function StockFundamental({ symbol }: Props) {
   }, [symbol]);
 
   if (loading) {
-    return <div className="helper">基本面加载中...</div>;
+    return <div className="card helper">Loading stock profile...</div>;
   }
 
   if (error) {
-    return <div className="helper">基本面加载失败：{error}</div>;
+    return <div className="card helper">Stock profile failed: {error}</div>;
   }
 
   if (!profile) {
-    return <div className="helper">暂无股票信息</div>;
+    return <div className="card helper">No stock profile available.</div>;
   }
 
   return (
     <div className="card">
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
+      <div className="stock-profile-header">
         <div>
-          <div style={{ fontSize: 18, fontWeight: 600 }}>{profile.name}</div>
-          <div className="helper">{profile.symbol} · {profile.market}</div>
+          <div className="stock-profile-title">{profile.name || profile.symbol}</div>
+          <div className="helper">
+            {profile.symbol} · {profile.market}
+          </div>
         </div>
-        <div style={{ textAlign: "right" }}>
-          <div className="helper">行业</div>
-          <div>{profile.sector}</div>
-        </div>
-      </div>
-      <div style={{ marginTop: 12 }}>
-        <div className="helper">综合评分</div>
-        <div style={{ fontSize: 28, fontWeight: 700 }}>
-          {fundamental ? formatNumber(fundamental.score) : "-"}
+        <div className="stock-profile-meta">
+          <div className="helper">Sector</div>
+          <div>{profile.sector || "Unknown"}</div>
         </div>
       </div>
-      <div style={{ marginTop: 12, color: "#cbd5f5", lineHeight: 1.6 }}>
-        {fundamental?.summary ?? "暂无评分摘要"}
+      <div className="stock-profile-score">
+        <div className="helper">Fundamental Score</div>
+        <div className="stock-score-value">{fundamental ? formatNumber(fundamental.score) : "-"}</div>
       </div>
+      <div className="stock-summary">{fundamental?.summary ?? "No summary available."}</div>
       {fundamental?.updated_at ? (
-        <div className="helper" style={{ marginTop: 8 }}>
-          更新时间：{new Date(fundamental.updated_at).toLocaleString("zh-CN")}
+        <div className="helper" style={{ marginTop: 12 }}>
+          Updated at {new Date(fundamental.updated_at).toLocaleString("zh-CN")}
         </div>
       ) : null}
     </div>

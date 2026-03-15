@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from etl.config.loader import load_config
 from etl.jobs.events_job import run_events_job
 from etl.jobs.financial_job import run_financial_job
+from etl.jobs.futures_job import run_futures_job
 from etl.jobs.index_job import run_index_job
 from etl.jobs.macro_job import run_macro_job
 from etl.jobs.news_job import run_news_job
@@ -156,6 +157,7 @@ def run_once(
             JobConfig("index_constituent_job", config.raw.get("etl", {}).get("schedules", {}).get("index_constituent_job", "03:00"), run_index_constituent_job),
             JobConfig("sector_exposure_job", config.raw.get("etl", {}).get("schedules", {}).get("sector_exposure_job", "03:30"), run_sector_exposure_job),
             JobConfig("fund_holdings_job", config.raw.get("etl", {}).get("schedules", {}).get("fund_holdings_job", "04:00"), run_fund_holdings_job),
+            JobConfig("futures_job", config.raw.get("etl", {}).get("schedules", {}).get("futures_job", "04:30"), run_futures_job),
         ]
         errors = []
         for job in jobs:

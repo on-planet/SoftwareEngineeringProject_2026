@@ -2,10 +2,8 @@ from __future__ import annotations
 
 from datetime import date
 
-from etl.fetchers.baostock_client import baostock_session
-from etl.fetchers.stock_basic_client import get_stock_basic
-from etl.fetchers.tushare_client import get_daily_prices
-from etl.loaders.pg_loader import upsert_sector_exposure
+from etl.fetchers.market_client import market_data_session, get_stock_basic, get_daily_prices
+from etl.loaders.pg_loader import upsert_daily_prices, upsert_sector_exposure
 from etl.loaders.redis_cache import cache_sector_exposure
 from etl.transformers.sector_exposure import build_sector_exposure
 from etl.utils.dates import date_range
@@ -23,7 +21,7 @@ def run_sector_exposure_job(start: date, end: date) -> int:
     meta = {row.get("symbol"): row for row in stock_rows}
     symbols = [row.get("symbol") for row in stock_rows if row.get("symbol")]
     LOGGER.info("sector_exposure_job stock count=%s", len(symbols))
-    with baostock_session():
+    with market_data_session():
         for as_of in date_range(start, end):
             LOGGER.info("sector_exposure_job fetching daily prices for %s", as_of)
             daily_rows = get_daily_prices(symbols, as_of)
@@ -31,6 +29,7 @@ def run_sector_exposure_job(start: date, end: date) -> int:
             if not daily_rows:
                 LOGGER.info("sector_exposure_job empty for %s", as_of)
                 continue
+            upsert_daily_prices(daily_rows)
             payload = []
             for row in daily_rows:
                 symbol = row.get("symbol")

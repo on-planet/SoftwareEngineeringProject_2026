@@ -36,11 +36,9 @@ def list_financials_route(
     min_net_income: float | None = Query(None),
     paging: dict = Depends(pagination_params),
     sorting: dict = Depends(sort_params),
-    db: Session = Depends(get_db),
 ):
     """获取财务报表。"""
     items, total = list_financials(
-        db,
         symbol,
         limit=paging["limit"],
         offset=paging["offset"],

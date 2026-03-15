@@ -4,42 +4,34 @@ from datetime import date
 
 from sqlalchemy.orm import Session
 
-from app.core.cache import get_json
 from app.models.stocks import Stock
-from app.models.daily_prices import DailyPrice
 from app.schemas.stock import StockCreate, StockUpdate
-from app.utils.query_params import SortOrder
+from app.services.live_market_service import get_live_stock_daily, get_live_stock_profile, list_live_stocks
 
 
-def get_stock_profile(db: Session, symbol: str):
-    """Get stock basic profile."""
-    return db.query(Stock).filter(Stock.symbol == symbol).first()
+def list_stocks(
+    *,
+    market: str | None = None,
+    keyword: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+    sort: str = "asc",
+):
+    return list_live_stocks(market=market, keyword=keyword, limit=limit, offset=offset, sort=sort)
+
+
+def get_stock_profile(symbol: str):
+    return get_live_stock_profile(symbol)
 
 
 def get_stock_daily(
-    db: Session,
     symbol: str,
     start: date | None = None,
     end: date | None = None,
-    sort: SortOrder = "asc",
+    sort: str = "asc",
     min_volume: float | None = None,
 ):
-    """Get daily price series for a symbol."""
-    query = db.query(DailyPrice).filter(DailyPrice.symbol == symbol)
-    if start is not None:
-        query = query.filter(DailyPrice.date >= start)
-    if end is not None:
-        query = query.filter(DailyPrice.date <= end)
-    if min_volume is not None:
-        query = query.filter(DailyPrice.volume >= min_volume)
-    if sort == "desc":
-        return query.order_by(DailyPrice.date.desc()).all()
-    return query.order_by(DailyPrice.date.asc()).all()
-
-
-def get_risk_snapshot(symbol: str) -> dict | None:
-    """Get cached risk metrics from Redis if available."""
-    return get_json(f"risk:{symbol}")
+    return get_live_stock_daily(symbol, start=start, end=end, sort=sort, min_volume=min_volume)
 
 
 def create_stock(db: Session, payload: StockCreate):

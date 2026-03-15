@@ -15,4 +15,5 @@ class KlinePoint(BaseModel):
 
 class KlineSeriesOut(BaseModel):
     symbol: str
+    period: str
     items: list[KlinePoint]
