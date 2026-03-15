@@ -2,6 +2,7 @@
 
 import { getFundamental, getStock } from "../services/api";
 import { formatNullableNumber, formatNumber, formatSigned, formatSmartPercent } from "../utils/format";
+import { getPrimaryStockName, getSecondaryStockName } from "../utils/stockNames";
 
 type Quote = {
   current?: number | null;
@@ -159,12 +160,19 @@ export function StockFundamental({ symbol }: Props) {
   const quote = profile.quote ?? null;
   const detail = profile.quote_detail ?? null;
   const pankou = profile.pankou ?? null;
+  const primaryName = getPrimaryStockName(profile.symbol, profile.name);
+  const secondaryName = getSecondaryStockName(profile.symbol, profile.name);
 
   return (
     <div className="card">
       <div className="stock-profile-header">
         <div>
-          <div className="stock-profile-title">{profile.name || profile.symbol}</div>
+          <div className="stock-profile-title">{primaryName}</div>
+          {secondaryName ? (
+            <div className="helper" style={{ marginTop: 6 }}>
+              {secondaryName}
+            </div>
+          ) : null}
           <div className="helper" style={{ marginTop: 6 }}>
             {profile.symbol} · {profile.market} · {profile.sector || "未分类"}
           </div>
@@ -231,3 +239,4 @@ export function StockFundamental({ symbol }: Props) {
     </div>
   );
 }
+

@@ -1,10 +1,11 @@
-﻿import React from "react";
+import React, { useMemo, useState } from "react";
 import { useRouter } from "next/router";
 
 import { FuturesCards } from "../components/FuturesCards";
 import { Heatmap } from "../components/Heatmap";
 import { IndexCards } from "../components/IndexCards";
 import { IndexKlinePanel } from "../components/IndexKlinePanel";
+import { INDEX_OPTIONS, inferIndexMarket } from "../constants/indices";
 
 const heroCards = [
   { label: "市场覆盖", value: "A 股 + 港股", hint: "默认实时股票池各 100 只，可直接进入独立详情页" },
@@ -41,6 +42,23 @@ const actionCards = [
 
 export default function HomePage() {
   const router = useRouter();
+  const [selectedIndexSymbol, setSelectedIndexSymbol] = useState<string>(INDEX_OPTIONS[0]?.symbol ?? "000001.SH");
+  const selectedIndex = useMemo(
+    () => INDEX_OPTIONS.find((item) => item.symbol === selectedIndexSymbol) ?? null,
+    [selectedIndexSymbol],
+  );
+  const activeIndexMarket = selectedIndex?.market ?? inferIndexMarket(selectedIndexSymbol);
+
+  const handleIndexSymbolChange = (symbol: string) => {
+    setSelectedIndexSymbol(symbol);
+  };
+
+  const handleIndexMarketChange = (market: "A" | "HK") => {
+    const nextSymbol = INDEX_OPTIONS.find((item) => item.market === market)?.symbol;
+    if (nextSymbol) {
+      setSelectedIndexSymbol(nextSymbol);
+    }
+  };
 
   return (
     <div className="page">
@@ -81,13 +99,23 @@ export default function HomePage() {
       <section>
         <h2 className="section-title">指数快照</h2>
         <div className="card">
-          <IndexCards />
+          <IndexCards
+            activeMarket={activeIndexMarket}
+            selectedSymbol={selectedIndexSymbol}
+            onMarketChange={handleIndexMarketChange}
+            onSymbolChange={handleIndexSymbolChange}
+          />
         </div>
       </section>
 
       <section>
         <h2 className="section-title">指数 K 线</h2>
-        <IndexKlinePanel />
+        <IndexKlinePanel
+          symbol={selectedIndexSymbol}
+          activeMarket={activeIndexMarket}
+          onMarketChange={handleIndexMarketChange}
+          onSymbolChange={handleIndexSymbolChange}
+        />
       </section>
 
       <section>

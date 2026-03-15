@@ -4,9 +4,10 @@ from datetime import date, datetime
 
 INDEX_PAGE_EXAMPLE = {
     "items": [
-        {"symbol": "000001.SH", "date": "2026-03-10", "close": 3123.45, "change": 12.34}
+        {"symbol": "000001.SH", "name": "上证指数", "market": "A", "date": "2026-03-10", "close": 3123.45, "change": 12.34},
+        {"symbol": "HKHSI", "name": "恒生指数", "market": "HK", "date": "2026-03-10", "close": 25465.6, "change": -251.16},
     ],
-    "total": 1,
+    "total": 2,
     "limit": 20,
     "offset": 0,
 }
@@ -175,7 +176,17 @@ MACRO_SERIES_EXAMPLE = {
 
 INDEX_CONSTITUENTS_EXAMPLE = {
     "items": [
-        {"index_symbol": "000001.SH", "symbol": "000001.SH", "date": "2026-03-10", "weight": 0.02}
+        {
+            "index_symbol": "HKHSI",
+            "symbol": "00005.HK",
+            "date": "2026-03-10",
+            "weight": None,
+            "name": "汇丰控股",
+            "market": "HK",
+            "rank": 1,
+            "contribution_change": -97.0,
+            "source": "Hang Seng Indexes",
+        }
     ],
     "total": 1,
     "limit": 20,

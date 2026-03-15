@@ -7,6 +7,8 @@ from pydantic import BaseModel, Field
 
 class IndexOut(BaseModel):
     symbol: str
+    name: str | None = None
+    market: str | None = None
     date: date
     close: float
     change: float

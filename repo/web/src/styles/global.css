@@ -290,6 +290,99 @@ a {
   color: #ffffff;
 }
 
+.index-snapshot {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.index-snapshot-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.index-market-switch {
+  display: inline-flex;
+  gap: 10px;
+  padding: 6px;
+  border-radius: 20px;
+  border: 1px solid rgba(37, 99, 235, 0.14);
+  background: linear-gradient(145deg, #eef4ff 0%, #ffffff 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+
+.index-market-button {
+  appearance: none;
+  position: relative;
+  border: none;
+  border-radius: 14px;
+  padding: 10px 16px;
+  min-width: 88px;
+  background: transparent;
+  color: #334155;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.18s ease, background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.index-market-button:hover {
+  transform: translateY(-1px);
+}
+
+.index-market-button[data-active="true"] {
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-strong) 100%);
+  color: #ffffff;
+  box-shadow: 0 12px 24px rgba(37, 99, 235, 0.24);
+}
+
+.index-market-button[data-active="true"]::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -10px;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 8px solid transparent;
+  border-right: 8px solid transparent;
+  border-top: 10px solid var(--accent-strong);
+}
+
+.index-card {
+  background: linear-gradient(180deg, #ffffff 0%, #f7fbff 100%);
+}
+
+.index-card-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.index-card-market {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 42px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.1);
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.index-card-close {
+  margin-top: 10px;
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
 .grid {
   display: grid;
   gap: 16px;
@@ -579,6 +672,14 @@ a {
 
   .app-header {
     padding: 14px 16px;
+  }
+
+  .index-market-switch {
+    width: 100%;
+  }
+
+  .index-market-button {
+    flex: 1;
   }
 
   .data-table {

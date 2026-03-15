@@ -21,7 +21,7 @@ export default function InsightsPage() {
         </div>
       </section>
       <section>
-        <h2 className="section-title">指数成分股</h2>
+        <h2 className="section-title">港股指数成分股</h2>
         <div className="card">
           <IndexConstituentList />
         </div>

@@ -25,5 +25,11 @@
   },
   "futures_job": {
     "last_success_date": "2026-03-13"
+  },
+  "metrics_cache_job": {
+    "last_success_date": "2026-03-13"
+  },
+  "macro_remote_refresh": {
+    "last_success_date": "2026-03-13"
   }
 }

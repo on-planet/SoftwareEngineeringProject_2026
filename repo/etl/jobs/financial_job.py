@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 from etl.fetchers.market_client import get_stock_basic, get_financials
-from etl.loaders.pg_loader import upsert_financials, upsert_fundamental_score
+from etl.loaders.pg_loader import get_latest_financial_periods, upsert_financials, upsert_fundamental_score
 from etl.transformers.fundamentals import (
     build_fundamental_score_row,
     calc_profit_quality,
@@ -25,18 +25,47 @@ def _iter_symbols() -> list[str]:
     return symbols or ["000001.SH"]
 
 
+def _latest_quarter_period(as_of: date) -> str:
+    month = ((as_of.month - 1) // 3 + 1) * 3
+    quarter_end_year = as_of.year
+    quarter_end = date(quarter_end_year, month, 1)
+    if month == 12:
+        quarter_end = quarter_end.replace(day=31)
+    else:
+        quarter_end = date(quarter_end.year, quarter_end.month + 1, 1) - timedelta(days=1)
+    if quarter_end > as_of:
+        month -= 3
+        if month <= 0:
+            month += 12
+            quarter_end_year -= 1
+    return f"{quarter_end_year:04d}{month:02d}"
+
+
 def run_financial_job(start: date, end: date) -> int:
     """Run financial job: fetch financials, calculate score, store into DB (incremental)."""
     total = 0
     symbols = _iter_symbols()
+    latest_periods = get_latest_financial_periods(symbols)
     for as_of in date_range(start, end):
-        period = as_of.strftime("%Y%m")
+        target_period = _latest_quarter_period(as_of)
+        financial_payload: list[dict] = []
+        score_payload: list[dict] = []
         for symbol in symbols:
-            data = get_financials(symbol, period=period)
+            latest_period = str(latest_periods.get(symbol) or "")
+            if latest_period and latest_period >= target_period:
+                continue
+
+            data = get_financials(symbol, period=target_period)
             if not data:
                 continue
+            actual_period = str(data.get("period") or "")
+            if latest_period and actual_period and actual_period <= latest_period:
+                continue
+
             financial_rows = normalize_financials([data])
-            upsert_financials(financial_rows)
+            if not financial_rows:
+                continue
+            financial_payload.extend(financial_rows)
 
             profit_quality = calc_profit_quality(data.get("net_income", 0), data.get("cash_flow", 0))
             growth = calc_growth(data.get("revenue", 0), data.get("revenue", 0) * 0.9)
@@ -44,10 +73,15 @@ def run_financial_job(start: date, end: date) -> int:
             score = calc_fundamental_score(profit_quality, growth, risk)
 
             summary = generate_summary(symbol, score, profit_quality, growth, risk)
-            score_row = build_fundamental_score_row(symbol, score, summary, as_of)
-            total += upsert_fundamental_score([score_row])
+            score_payload.append(build_fundamental_score_row(symbol, score, summary, as_of))
+            if actual_period:
+                latest_periods[symbol] = actual_period
 
-        if not total:
-            LOGGER.info("financial_job empty for %s", as_of)
+        if financial_payload:
+            upsert_financials(financial_payload)
+        if score_payload:
+            total += upsert_fundamental_score(score_payload)
+        if not financial_payload:
+            LOGGER.info("financial_job up-to-date for %s target_period=%s", as_of, target_period)
 
     return total

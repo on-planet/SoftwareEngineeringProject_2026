@@ -158,7 +158,7 @@ def run_bootstrap(
     counters["stocks"] += len(target_symbols)
 
     with market_data_session():
-        fetched_rows = get_stock_basic()
+        fetched_rows = get_stock_basic(target_symbols)
         stock_rows = _merge_stock_rows(target_symbols, fetched_rows)
         counters["stocks"] += upsert_stocks(stock_rows)
 

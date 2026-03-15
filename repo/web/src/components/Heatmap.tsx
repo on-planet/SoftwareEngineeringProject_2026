@@ -18,6 +18,10 @@ type HeatmapPage = {
 
 type SortOrder = "asc" | "desc";
 
+function displaySectorName(value: string) {
+  return value === "Unknown" ? "未知" : value;
+}
+
 export function Heatmap({
   asOf,
   market: initialMarket,
@@ -158,10 +162,11 @@ export function Heatmap({
       ) : (
         <div className="grid grid-3">
           {items.map((item) => {
-            const bgColor = item.avg_change >= 0 ? "rgba(248, 113, 113, 0.2)" : "rgba(52, 211, 153, 0.2)";
+            const bgColor =
+              item.avg_change >= 0 ? "rgba(248, 113, 113, 0.2)" : "rgba(52, 211, 153, 0.2)";
             return (
               <div key={item.sector} className="card" style={{ background: bgColor }}>
-                <div className="card-title">{item.sector}</div>
+                <div className="card-title">{displaySectorName(item.sector)}</div>
                 <div className="helper">均价 {formatNumber(item.avg_close)}</div>
                 <div style={{ marginTop: 4, fontWeight: 600 }}>变动 {formatSigned(item.avg_change)}</div>
               </div>

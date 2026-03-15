@@ -28,8 +28,49 @@ _TOKEN_BLOCKED = False
 _TOKEN_BLOCKED_VALUE = ""
 _TOKEN_BLOCK_WARNING_SHOWN = False
 _SYMBOL_RE = re.compile(r"^[A-Z]{2}\d{6}$")
-_HK_SYMBOL_RE = re.compile(r"^HK\d{4,5}$")
+_HK_SYMBOL_RE = re.compile(r"^HK\d{1,5}$")
 _US_SYMBOL_RE = re.compile(r"^US[A-Z.]+$")
+_DEFAULT_INDEX_SPECS = (
+    {"symbol": "000001.SH", "snowball_symbol": "SH000001", "name": "\u4e0a\u8bc1\u6307\u6570", "market": "A"},
+    {"symbol": "399001.SZ", "snowball_symbol": "SZ399001", "name": "\u6df1\u8bc1\u6210\u6307", "market": "A"},
+    {"symbol": "399006.SZ", "snowball_symbol": "SZ399006", "name": "\u521b\u4e1a\u677f\u6307", "market": "A"},
+    {"symbol": "000016.SH", "snowball_symbol": "SH000016", "name": "\u4e0a\u8bc150", "market": "A"},
+    {"symbol": "000300.SH", "snowball_symbol": "SH000300", "name": "\u6caa\u6df1300", "market": "A"},
+    {"symbol": "000688.SH", "snowball_symbol": "SH000688", "name": "\u79d1\u521b50", "market": "A"},
+    {"symbol": "899050.BJ", "snowball_symbol": "BJ899050", "name": "\u5317\u8bc150", "market": "A"},
+    {"symbol": "HKHSI", "snowball_symbol": "HKHSI", "name": "\u6052\u751f\u6307\u6570", "market": "HK"},
+    {"symbol": "HKHSCEI", "snowball_symbol": "HKHSCEI", "name": "\u56fd\u4f01\u6307\u6570", "market": "HK"},
+    {"symbol": "HKHSTECH", "snowball_symbol": "HKHSTECH", "name": "\u6052\u751f\u79d1\u6280\u6307\u6570", "market": "HK"},
+)
+_INDEX_ALIAS_MAP = {
+    "000001": "000001.SH",
+    "000001.SH": "000001.SH",
+    "SH000001": "000001.SH",
+    "399001": "399001.SZ",
+    "399001.SZ": "399001.SZ",
+    "SZ399001": "399001.SZ",
+    "399006": "399006.SZ",
+    "399006.SZ": "399006.SZ",
+    "SZ399006": "399006.SZ",
+    "000016": "000016.SH",
+    "000016.SH": "000016.SH",
+    "SH000016": "000016.SH",
+    "000300": "000300.SH",
+    "000300.SH": "000300.SH",
+    "SH000300": "000300.SH",
+    "000688": "000688.SH",
+    "000688.SH": "000688.SH",
+    "SH000688": "000688.SH",
+    "899050": "899050.BJ",
+    "899050.BJ": "899050.BJ",
+    "BJ899050": "899050.BJ",
+    "HSI": "HKHSI",
+    "HKHSI": "HKHSI",
+    "HSCEI": "HKHSCEI",
+    "HKHSCEI": "HKHSCEI",
+    "HSTECH": "HKHSTECH",
+    "HKHSTECH": "HKHSTECH",
+}
 
 
 def _safe_float(value) -> float | None:
@@ -112,8 +153,8 @@ def normalize_symbol(symbol: str) -> str:
     if _US_SYMBOL_RE.match(upper):
         return f"{upper[2:]}.US"
     digits = re.sub(r"\D", "", upper)
-    if len(digits) == 5:
-        return f"{digits}.HK"
+    if 1 <= len(digits) <= 5:
+        return f"{digits.zfill(5)}.HK"
     if len(digits) == 6 and digits.startswith(("5", "6", "9")):
         return f"{digits}.SH"
     if len(digits) == 6:
@@ -123,8 +164,39 @@ def normalize_symbol(symbol: str) -> str:
     return upper
 
 
+def normalize_index_symbol(symbol: str) -> str:
+    upper = symbol.strip().upper()
+    if not upper:
+        return upper
+    if upper in _INDEX_ALIAS_MAP:
+        return _INDEX_ALIAS_MAP[upper]
+    normalized = normalize_symbol(upper)
+    if normalized in {str(item["symbol"]) for item in _DEFAULT_INDEX_SPECS}:
+        return normalized
+    return upper
+
+
+def supported_index_specs() -> list[dict]:
+    return [dict(spec) for spec in _index_specs_by_symbol().values()]
+
+
+def index_name(symbol: str) -> str:
+    canonical = normalize_index_symbol(symbol)
+    spec = _index_specs_by_symbol().get(canonical)
+    return str(spec.get("name") or canonical) if spec else canonical
+
+
+def index_market(symbol: str) -> str:
+    canonical = normalize_index_symbol(symbol)
+    spec = _index_specs_by_symbol().get(canonical)
+    return str(spec.get("market") or "") if spec else ""
+
+
 def to_snowball_symbol(symbol: str) -> str:
     upper = symbol.strip().upper()
+    canonical_index = _INDEX_ALIAS_MAP.get(upper)
+    if canonical_index:
+        return _index_map().get(canonical_index, upper)
     if _SYMBOL_RE.match(upper) or _HK_SYMBOL_RE.match(upper) or _US_SYMBOL_RE.match(upper):
         if _HK_SYMBOL_RE.match(upper):
             return f"HK{upper[2:].zfill(5)}"
@@ -141,8 +213,58 @@ def to_snowball_symbol(symbol: str) -> str:
     return normalized
 
 
+def _snowball_symbol_candidates(symbol: str, *, is_index: bool = False) -> list[str]:
+    candidates: list[str] = []
+    seen: set[str] = set()
+
+    def _add(value: str | None) -> None:
+        if value in (None, ""):
+            return
+        token = str(value).strip().upper()
+        if not token or token in seen:
+            return
+        seen.add(token)
+        candidates.append(token)
+
+    raw = str(symbol).strip().upper()
+    if is_index:
+        canonical = normalize_index_symbol(raw)
+        _add(_index_map().get(canonical))
+        _add(canonical)
+        _add(raw)
+        return candidates
+
+    normalized = normalize_symbol(raw)
+    _add(to_snowball_symbol(normalized))
+    _add(normalized)
+    _add(raw)
+    if normalized.endswith(".HK"):
+        code = normalized[:-3]
+        digits = re.sub(r"\D", "", code)
+        if digits:
+            padded = digits.zfill(5)
+            unpadded = str(int(digits))
+            _add(f"HK{padded}")
+            _add(f"HK{unpadded}")
+            _add(padded)
+            _add(unpadded)
+    elif normalized.endswith((".SH", ".SZ")):
+        market = normalized[-2:]
+        code = normalized[:-3]
+        _add(f"{market}{code}")
+        _add(code)
+    elif normalized.endswith(".US"):
+        code = normalized[:-3]
+        _add(f"US{code}")
+        _add(code)
+    return candidates
+
+
 def from_snowball_symbol(symbol: str) -> str:
     upper = symbol.strip().upper()
+    reverse_index_map = {snowball_symbol: local_symbol for local_symbol, snowball_symbol in _index_map().items()}
+    if upper in reverse_index_map:
+        return reverse_index_map[upper]
     if upper.startswith(("SH", "SZ")) and len(upper) == 8 and upper[2:].isdigit():
         return f"{upper[2:]}.{upper[:2]}"
     if upper.startswith("HK") and len(upper) >= 6:
@@ -153,7 +275,7 @@ def from_snowball_symbol(symbol: str) -> str:
 
 
 def market_from_symbol(symbol: str) -> str:
-    normalized = normalize_symbol(symbol)
+    normalized = normalize_index_symbol(symbol) if symbol in _index_specs_by_symbol() else normalize_symbol(symbol)
     if normalized.endswith(".HK"):
         return "HK"
     if normalized.endswith((".SH", ".SZ")):
@@ -358,7 +480,7 @@ def _token_candidates() -> list[str]:
 
 def _is_auth_error(exc: Exception) -> bool:
     text = _exception_text(exc)
-    return "400016" in text or "重新登录" in text or "重新登录账号后再试" in text
+    return "400016" in text or "重新登录" in text or "登录" in text
 
 
 def _call_kline_with_retry(
@@ -507,6 +629,36 @@ def _latest_kline_row_on_or_before(rows: list[dict], as_of: date) -> tuple[dict,
     return best_row, best_date
 
 
+def _extract_row_symbol(item: dict) -> str | None:
+    raw_symbol = _pick(item, ("symbol", "code", "ticker", "stock_symbol", "quote_symbol"))
+    if raw_symbol in (None, ""):
+        return None
+    return normalize_symbol(str(raw_symbol))
+
+
+def _call_quotec_single(symbol: str) -> dict | None:
+    if ball is None:
+        return None
+    normalized = normalize_symbol(symbol)
+    for candidate in _snowball_symbol_candidates(normalized):
+        try:
+            payload = ball.quotec(candidate)
+        except Exception:
+            continue
+        rows = _extract_payload_items(payload)
+        if not rows:
+            continue
+        record = _extract_primary_record(
+            {"data": rows},
+            symbol=normalized,
+            preferred_keys=("current", "price", "volume", "high", "low"),
+        )
+        if record:
+            return record
+        return rows[0]
+    return None
+
+
 def _call_quotec(symbols: list[str]) -> list[dict]:
     if ball is None:
         return []
@@ -520,7 +672,16 @@ def _call_quotec(symbols: list[str]) -> list[dict]:
         except Exception as exc:
             LOGGER.warning("snowball quotec failed for batch size=%s: %s", len(chunk), exc)
             continue
-        output.extend(_extract_payload_items(payload))
+        rows = _extract_payload_items(payload)
+        output.extend(rows)
+        found = {normalized for normalized in (_extract_row_symbol(item) for item in rows) if normalized}
+        for symbol in chunk:
+            normalized = normalize_symbol(symbol)
+            if normalized in found:
+                continue
+            recovered = _call_quotec_single(normalized)
+            if recovered:
+                output.append(recovered)
     return output
 
 
@@ -569,6 +730,18 @@ def _search_seed_queries(market: str) -> list[str]:
     return _parse_env_keywords("SNOWBALL_US_POOL_SEEDS") or ["USA", "USB", "USC", "USD"]
 
 
+
+
+def _has_hk_market_hint(*values) -> bool:
+    for value in values:
+        text = str(value or "").strip().upper()
+        if not text:
+            continue
+        if any(token in text for token in ("HK", "HKG", "SEHK", "HONG KONG")):
+            return True
+    return False
+
+
 def _normalize_search_symbol(item: dict) -> str | None:
     raw_symbol = _pick(item, ("symbol", "ticker", "stock_symbol", "quote_symbol"))
     if raw_symbol not in (None, ""):
@@ -586,18 +759,19 @@ def _normalize_search_symbol(item: dict) -> str | None:
         return normalize_symbol(code_text)
 
     digits = re.sub(r"\D", "", code_text)
+    market_hint = _pick(item, ("market", "exchange", "exch", "region", "market_type", "label", "type"))
+    name_hint = _pick(item, ("name", "title"))
     hints = " ".join(
         str(value).upper()
-        for value in (
-            _pick(item, ("market", "exchange", "exch", "region", "market_type", "label", "type")),
-            _pick(item, ("name", "title")),
-        )
+        for value in (market_hint, name_hint)
         if value not in (None, "")
     )
     if len(digits) in {4, 5}:
         return f"{digits.zfill(5)}.HK"
     if len(digits) == 6:
-        if "SH" in hints or "沪" in hints or digits.startswith(("5", "6", "9")):
+        if digits.startswith("0") and _has_hk_market_hint(market_hint, name_hint, hints):
+            return f"{digits[-5:]}.HK"
+        if "SH" in hints or digits.startswith(("5", "6", "9")):
             return f"{digits}.SH"
         return f"{digits}.SZ"
     return None
@@ -618,55 +792,78 @@ def _normalize_search_row(item: dict) -> dict | None:
 def _daily_kline_row(symbol: str, as_of: date) -> dict | None:
     if ball is None or not _ensure_token():
         return None
-    snow_symbol = to_snowball_symbol(symbol)
     count = max(30, int(os.getenv("SNOWBALL_DAILY_LOOKBACK", "120")))
-    payload = _call_kline_with_retry(
-        snow_symbol,
-        period="day",
-        count=count,
-        context="snowball kline",
-    )
-    if payload is None:
-        return None
-    latest = _latest_kline_row_on_or_before(_extract_kline_rows(payload), as_of)
-    if latest is None:
-        return None
-    best, row_date = latest
-    open_val = _safe_float(best.get("open"))
-    high_val = _safe_float(best.get("high"))
-    low_val = _safe_float(best.get("low"))
-    close_val = _safe_float(best.get("close"))
-    volume_val = _safe_float(best.get("volume"))
-    if None in (open_val, high_val, low_val, close_val, volume_val):
-        return None
-    return {
-        "symbol": normalize_symbol(symbol),
-        "date": row_date,
-        "open": open_val,
-        "high": high_val,
-        "low": low_val,
-        "close": close_val,
-        "volume": volume_val,
-        "preclose": _safe_float(best.get("prev_close") or best.get("preclose")),
-    }
+    for snow_symbol in _snowball_symbol_candidates(symbol):
+        payload = _call_kline_with_retry(
+            snow_symbol,
+            period="day",
+            count=count,
+            context="snowball kline",
+        )
+        if payload is None:
+            continue
+        latest = _latest_kline_row_on_or_before(_extract_kline_rows(payload), as_of)
+        if latest is None:
+            continue
+        best, row_date = latest
+        open_val = _safe_float(best.get("open"))
+        high_val = _safe_float(best.get("high"))
+        low_val = _safe_float(best.get("low"))
+        close_val = _safe_float(best.get("close"))
+        volume_val = _safe_float(best.get("volume"))
+        if None in (open_val, high_val, low_val, close_val, volume_val):
+            continue
+        return {
+            "symbol": normalize_symbol(symbol),
+            "date": row_date,
+            "open": open_val,
+            "high": high_val,
+            "low": low_val,
+            "close": close_val,
+            "volume": volume_val,
+            "preclose": _safe_float(best.get("prev_close") or best.get("preclose")),
+        }
+    return None
 
 
-def _index_map() -> dict[str, str]:
+def _index_specs_by_symbol() -> dict[str, dict]:
     raw = os.getenv(
         "SNOWBALL_INDEX_MAP",
-        "000001.SH=SH000001,399001.SZ=SZ399001,399006.SZ=SZ399006",
+        ",".join(f"{item['symbol']}={item['snowball_symbol']}" for item in _DEFAULT_INDEX_SPECS),
     ).strip()
-    output: dict[str, str] = {}
+    specs: dict[str, dict] = {
+        str(item["symbol"]): {
+            "symbol": str(item["symbol"]),
+            "snowball_symbol": str(item["snowball_symbol"]),
+            "name": str(item["name"]),
+            "market": str(item["market"]),
+        }
+        for item in _DEFAULT_INDEX_SPECS
+    }
     for item in raw.split(","):
         if "=" not in item:
             continue
         local_symbol, snow_symbol = item.split("=", 1)
-        local_symbol = normalize_symbol(local_symbol.strip())
-        snow_symbol = snow_symbol.strip().upper()
-        if not local_symbol or not snow_symbol:
+        canonical = normalize_index_symbol(local_symbol.strip())
+        upper_snow_symbol = snow_symbol.strip().upper()
+        if not canonical or not upper_snow_symbol:
             continue
-        output[local_symbol] = snow_symbol
-    return output
+        current = specs.get(canonical, {})
+        specs[canonical] = {
+            "symbol": canonical,
+            "snowball_symbol": upper_snow_symbol,
+            "name": str(current.get("name") or canonical),
+            "market": str(current.get("market") or ("HK" if canonical.startswith("HK") else "A")),
+        }
+    return specs
+
+
+def _index_map() -> dict[str, str]:
+    return {
+        symbol: str(spec["snowball_symbol"])
+        for symbol, spec in _index_specs_by_symbol().items()
+        if spec.get("snowball_symbol")
+    }
 
 
 def _select_finance_record(records: list[dict], period: str) -> dict:
@@ -724,7 +921,7 @@ def _parse_kline_history_rows(
     preserve_time: bool = False,
 ) -> list[dict]:
     output: list[dict] = []
-    normalized = normalize_symbol(symbol)
+    normalized = normalize_index_symbol(symbol) if symbol in _index_specs_by_symbol() else normalize_symbol(symbol)
     for row in rows:
         row_time = _to_datetime(row.get("timestamp") or row.get("time") or row.get("date"))
         row_date = row_time.date() if row_time is not None else None
@@ -879,13 +1076,19 @@ def _order_book_levels(record: dict, *, side: str) -> list[dict]:
 def get_stock_quote(symbol: str) -> dict:
     normalized = normalize_symbol(symbol)
     rows = _call_quotec([normalized])
-    if not rows:
-        return {}
-    record = _extract_primary_record(
-        {"data": rows},
-        symbol=normalized,
-        preferred_keys=("current", "price", "volume", "high", "low"),
+    record = (
+        _extract_primary_record(
+            {"data": rows},
+            symbol=normalized,
+            preferred_keys=("current", "price", "volume", "high", "low"),
+        )
+        if rows
+        else {}
     )
+    if not record:
+        recovered = _call_quotec_single(normalized)
+        if recovered:
+            record = recovered
     if not record:
         return {}
     return _quote_from_record(normalized, record)
@@ -893,47 +1096,50 @@ def get_stock_quote(symbol: str) -> dict:
 
 def get_stock_quote_detail(symbol: str) -> dict:
     normalized = normalize_symbol(symbol)
-    payload = _call_with_token_retry(
-        lambda: ball.quote_detail(to_snowball_symbol(normalized)),
-        context="snowball quote_detail",
-        ref=normalized,
-    )
-    if payload is None:
-        return {}
-    record = _extract_primary_record(
-        payload,
-        symbol=normalized,
-        preferred_keys=("pe_ttm", "pb", "ps_ttm", "pcf", "market_capital", "turnover_rate"),
-    )
-    if not record:
-        return {}
-    return _quote_detail_from_record(normalized, record)
+    for snow_symbol in _snowball_symbol_candidates(normalized):
+        payload = _call_with_token_retry(
+            lambda symbol_code=snow_symbol: ball.quote_detail(symbol_code),
+            context="snowball quote_detail",
+            ref=f"{normalized}:{snow_symbol}",
+        )
+        if payload is None:
+            continue
+        record = _extract_primary_record(
+            payload,
+            symbol=normalized,
+            preferred_keys=("pe_ttm", "pb", "ps_ttm", "pcf", "market_capital", "turnover_rate"),
+        )
+        if record:
+            return _quote_detail_from_record(normalized, record)
+    return {}
 
 
 def get_stock_pankou(symbol: str) -> dict:
     normalized = normalize_symbol(symbol)
-    payload = _call_with_token_retry(
-        lambda: ball.pankou(to_snowball_symbol(normalized)),
-        context="snowball pankou",
-        ref=normalized,
-    )
-    if payload is None:
-        return {}
-    record = _extract_primary_record(
-        payload,
-        symbol=normalized,
-        preferred_keys=("diff", "ratio", "bp1", "sp1", "bids", "asks"),
-    )
-    if not record:
-        return {}
-    return {
-        "symbol": normalized,
-        "diff": _safe_float(_pick(record, ("diff", "difference"))),
-        "ratio": _safe_float(_pick(record, ("ratio", "diff_percent", "percent"))),
-        "timestamp": _to_datetime(_pick(record, ("timestamp", "time", "update_time"))),
-        "bids": _order_book_levels(record, side="bid"),
-        "asks": _order_book_levels(record, side="ask"),
-    }
+    for snow_symbol in _snowball_symbol_candidates(normalized):
+        payload = _call_with_token_retry(
+            lambda symbol_code=snow_symbol: ball.pankou(symbol_code),
+            context="snowball pankou",
+            ref=f"{normalized}:{snow_symbol}",
+        )
+        if payload is None:
+            continue
+        record = _extract_primary_record(
+            payload,
+            symbol=normalized,
+            preferred_keys=("diff", "ratio", "bp1", "sp1", "bids", "asks"),
+        )
+        if not record:
+            continue
+        return {
+            "symbol": normalized,
+            "diff": _safe_float(_pick(record, ("diff", "difference"))),
+            "ratio": _safe_float(_pick(record, ("ratio", "diff_percent", "percent"))),
+            "timestamp": _to_datetime(_pick(record, ("timestamp", "time", "update_time"))),
+            "bids": _order_book_levels(record, side="bid"),
+            "asks": _order_book_levels(record, side="ask"),
+        }
+    return {}
 
 
 def search_stocks(keyword: str, market: str | None = None, limit: int = 50) -> List[dict]:
@@ -1026,7 +1232,7 @@ def get_index_daily(as_of: date) -> List[dict]:
             raw_symbol = item.get("symbol") or item.get("code") or item.get("ticker")
             if raw_symbol in (None, ""):
                 continue
-            quote_map[normalize_symbol(str(raw_symbol))] = item
+            quote_map[from_snowball_symbol(str(raw_symbol))] = item
 
         for symbol in missing_symbols:
             item = quote_map.get(symbol)
@@ -1052,7 +1258,7 @@ def get_index_daily(as_of: date) -> List[dict]:
     return ensure_required(rows, ["symbol", "date", "close", "change"], "snowball.index_daily")
 
 
-def get_daily_prices(symbols, as_of: date) -> List[dict]:
+def get_daily_prices(symbols, as_of: date, *, workers: int | None = None) -> List[dict]:
     unique_symbols: list[str] = []
     seen: set[str] = set()
     for symbol in symbols or []:
@@ -1064,17 +1270,17 @@ def get_daily_prices(symbols, as_of: date) -> List[dict]:
     if not unique_symbols:
         return []
 
-    workers = max(1, int(os.getenv("SNOWBALL_WORKERS", "8")))
+    resolved_workers = max(1, int(workers if workers is not None else os.getenv("SNOWBALL_WORKERS", "8")))
     rows: list[dict] = []
-    if workers <= 1:
+    if resolved_workers <= 1:
         for symbol in unique_symbols:
             row = _daily_kline_row(symbol, as_of)
             if row:
                 rows.append(row)
         return ensure_required(rows, ["symbol", "date", "open", "high", "low", "close", "volume"], "snowball.daily")
 
-    LOGGER.info("snowball daily workers=%s total=%s date=%s", workers, len(unique_symbols), as_of)
-    with ThreadPoolExecutor(max_workers=workers) as executor:
+    LOGGER.info("snowball daily workers=%s total=%s date=%s", resolved_workers, len(unique_symbols), as_of)
+    with ThreadPoolExecutor(max_workers=resolved_workers) as executor:
         future_map = {executor.submit(_daily_kline_row, symbol, as_of): symbol for symbol in unique_symbols}
         done = 0
         for future in as_completed(future_map):
@@ -1105,25 +1311,29 @@ def get_kline_history(
 ) -> List[dict]:
     if ball is None or not _ensure_token():
         return []
-    normalized = normalize_symbol(symbol)
-    snow_symbol = _index_map().get(normalized) if is_index else None
-    if not snow_symbol:
-        snow_symbol = to_snowball_symbol(normalized)
-    payload = _call_kline_with_retry(
-        snow_symbol,
-        period=period,
-        count=max(30, count),
-        context="snowball kline history",
-    )
-    if payload is None:
-        return []
-    rows = _parse_kline_history_rows(
-        normalized,
-        _extract_kline_rows(payload),
-        as_of=as_of,
-        preserve_time=period in {"1m", "30m", "60m"},
-    )
-    return ensure_required(rows, ["symbol", "date", "open", "high", "low", "close", "volume"], "snowball.kline_history")
+    normalized = normalize_index_symbol(symbol) if is_index else normalize_symbol(symbol)
+    for snow_symbol in _snowball_symbol_candidates(normalized, is_index=is_index):
+        payload = _call_kline_with_retry(
+            snow_symbol,
+            period=period,
+            count=max(30, count),
+            context="snowball kline history",
+        )
+        if payload is None:
+            continue
+        rows = _parse_kline_history_rows(
+            normalized,
+            _extract_kline_rows(payload),
+            as_of=as_of,
+            preserve_time=period in {"1m", "30m", "60m"},
+        )
+        if rows:
+            return ensure_required(
+                rows,
+                ["symbol", "date", "open", "high", "low", "close", "volume"],
+                "snowball.kline_history",
+            )
+    return []
 
 
 def get_index_history(symbol: str, *, count: int = 480, as_of: date | None = None) -> List[dict]:
@@ -1139,57 +1349,90 @@ def get_monthly_prices(symbols, as_of: date) -> List[dict]:
         normalized = normalize_symbol(str(symbol))
         if not normalized:
             continue
-        payload = _call_kline_with_retry(
-            to_snowball_symbol(normalized),
-            period="month",
-            count=lookback,
-            context="snowball monthly kline",
-        )
-        if payload is None:
-            continue
-        latest = None
-        latest_date = None
-        for row in _extract_kline_rows(payload):
-            row_date = _to_date(row.get("timestamp") or row.get("time") or row.get("date"))
-            if row_date is None or row_date > as_of:
+        for snow_symbol in _snowball_symbol_candidates(normalized):
+            payload = _call_kline_with_retry(
+                snow_symbol,
+                period="month",
+                count=lookback,
+                context="snowball monthly kline",
+            )
+            if payload is None:
                 continue
-            if latest is None or (latest_date is not None and row_date > latest_date) or latest_date is None:
-                latest = row
-                latest_date = row_date
-        if latest is None or latest_date is None:
-            continue
-        open_val = _safe_float(latest.get("open"))
-        high_val = _safe_float(latest.get("high"))
-        low_val = _safe_float(latest.get("low"))
-        close_val = _safe_float(latest.get("close"))
-        volume_val = _safe_float(latest.get("volume"))
-        if None in (open_val, high_val, low_val, close_val, volume_val):
-            continue
-        rows.append(
-            {
-                "symbol": normalized,
-                "date": latest_date,
-                "open": open_val,
-                "high": high_val,
-                "low": low_val,
-                "close": close_val,
-                "volume": volume_val,
-            }
-        )
+            latest = None
+            latest_date = None
+            for row in _extract_kline_rows(payload):
+                row_date = _to_date(row.get("timestamp") or row.get("time") or row.get("date"))
+                if row_date is None or row_date > as_of:
+                    continue
+                if latest is None or (latest_date is not None and row_date > latest_date) or latest_date is None:
+                    latest = row
+                    latest_date = row_date
+            if latest is None or latest_date is None:
+                continue
+            open_val = _safe_float(latest.get("open"))
+            high_val = _safe_float(latest.get("high"))
+            low_val = _safe_float(latest.get("low"))
+            close_val = _safe_float(latest.get("close"))
+            volume_val = _safe_float(latest.get("volume"))
+            if None in (open_val, high_val, low_val, close_val, volume_val):
+                continue
+            rows.append(
+                {
+                    "symbol": normalized,
+                    "date": latest_date,
+                    "open": open_val,
+                    "high": high_val,
+                    "low": low_val,
+                    "close": close_val,
+                    "volume": volume_val,
+                }
+            )
+            break
     return ensure_required(rows, ["symbol", "date", "open", "high", "low", "close", "volume"], "snowball.monthly")
 
 
 def get_financials(symbol: str, period: str) -> dict:
     if ball is None or not _ensure_token():
         return {}
-    snow_symbol = to_snowball_symbol(symbol)
-    try:
-        income_payload = ball.income(snow_symbol, 0, 8)
-        balance_payload = ball.balance(snow_symbol, 0, 8)
-        cash_payload = ball.cash_flow(snow_symbol, 0, 8)
-        indicator_payload = ball.indicator(snow_symbol, 0, 8)
-    except Exception as exc:
-        LOGGER.warning("snowball financials failed [%s]: %s", snow_symbol, exc)
+    normalized_symbol = normalize_symbol(symbol)
+    income_payload = None
+    balance_payload = None
+    cash_payload = None
+    indicator_payload = None
+
+    for snow_symbol in _snowball_symbol_candidates(normalized_symbol):
+        candidate_income = _call_with_token_retry(
+            lambda symbol_code=snow_symbol: ball.income(symbol_code, 0, 8),
+            context="snowball income",
+            ref=f"{normalized_symbol}:{snow_symbol}",
+        )
+        candidate_balance = _call_with_token_retry(
+            lambda symbol_code=snow_symbol: ball.balance(symbol_code, 0, 8),
+            context="snowball balance",
+            ref=f"{normalized_symbol}:{snow_symbol}",
+        )
+        candidate_cash = _call_with_token_retry(
+            lambda symbol_code=snow_symbol: ball.cash_flow(symbol_code, 0, 8),
+            context="snowball cash_flow",
+            ref=f"{normalized_symbol}:{snow_symbol}",
+        )
+        candidate_indicator = _call_with_token_retry(
+            lambda symbol_code=snow_symbol: ball.indicator(symbol_code, 0, 8),
+            context="snowball indicator",
+            ref=f"{normalized_symbol}:{snow_symbol}",
+        )
+        if any(
+            _extract_payload_items(payload)
+            for payload in (candidate_income, candidate_balance, candidate_cash, candidate_indicator)
+            if payload is not None
+        ):
+            income_payload = candidate_income
+            balance_payload = candidate_balance
+            cash_payload = candidate_cash
+            indicator_payload = candidate_indicator
+            break
+
+    if all(payload is None for payload in (income_payload, balance_payload, cash_payload, indicator_payload)):
         return {}
 
     income_row = _select_finance_record(_extract_payload_items(income_payload), period)
@@ -1340,23 +1583,54 @@ def _extract_disclosure_items(payload, *, source: str, limit: int) -> List[dict]
 
 def get_stock_reports(symbol: str, *, limit: int = 10) -> List[dict]:
     normalized = normalize_symbol(symbol)
+    primary = to_snowball_symbol(normalized)
     payload = _call_with_token_retry(
-        lambda: ball.report(to_snowball_symbol(normalized)),
+        lambda: ball.report(primary),
         context="snowball report",
         ref=normalized,
     )
-    if payload is None:
-        return []
-    return _extract_disclosure_items(payload, source="雪球研报", limit=limit)
-
+    if payload is not None:
+        rows = _extract_disclosure_items(payload, source="雪球研报", limit=limit)
+        if rows:
+            return rows
+    for snow_symbol in _snowball_symbol_candidates(normalized):
+        if snow_symbol == primary:
+            continue
+        payload = _call_with_token_retry(
+            lambda symbol_code=snow_symbol: ball.report(symbol_code),
+            context="snowball report",
+            ref=f"{normalized}:{snow_symbol}",
+        )
+        if payload is None:
+            continue
+        rows = _extract_disclosure_items(payload, source="雪球研报", limit=limit)
+        if rows:
+            return rows
+    return []
 
 def get_stock_earning_forecasts(symbol: str, *, limit: int = 10) -> List[dict]:
     normalized = normalize_symbol(symbol)
+    primary = to_snowball_symbol(normalized)
     payload = _call_with_token_retry(
-        lambda: ball.earningforecast(to_snowball_symbol(normalized)),
+        lambda: ball.earningforecast(primary),
         context="snowball earningforecast",
         ref=normalized,
     )
-    if payload is None:
-        return []
-    return _extract_disclosure_items(payload, source="雪球业绩预告", limit=limit)
+    if payload is not None:
+        rows = _extract_disclosure_items(payload, source="雪球业绩预告", limit=limit)
+        if rows:
+            return rows
+    for snow_symbol in _snowball_symbol_candidates(normalized):
+        if snow_symbol == primary:
+            continue
+        payload = _call_with_token_retry(
+            lambda symbol_code=snow_symbol: ball.earningforecast(symbol_code),
+            context="snowball earningforecast",
+            ref=f"{normalized}:{snow_symbol}",
+        )
+        if payload is None:
+            continue
+        rows = _extract_disclosure_items(payload, source="雪球业绩预告", limit=limit)
+        if rows:
+            return rows
+    return []

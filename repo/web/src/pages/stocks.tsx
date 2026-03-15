@@ -1,7 +1,8 @@
-﻿import Link from "next/link";
+import Link from "next/link";
 import React, { useEffect, useState } from "react";
 
 import { getStocks } from "../services/api";
+import { getPrimaryStockName, getSecondaryStockName } from "../utils/stockNames";
 
 type StockItem = {
   symbol: string;
@@ -62,16 +63,21 @@ function MarketSection({ market, keyword }: { market: "A" | "HK"; keyword: strin
       {!loading && error ? <div className="helper">股票列表加载失败：{error}</div> : null}
       {!loading && !error ? (
         <div className="stock-grid">
-          {items.map((item) => (
-            <Link key={item.symbol} href={`/stock/${encodeURIComponent(item.symbol)}`} className="stock-card">
-              <div className="stock-card-title">{item.name || item.symbol}</div>
-              <div className="helper">{item.symbol}</div>
-              <div className="stock-card-meta">
-                <span>{item.market}</span>
-                <span>{item.sector || "未分类"}</span>
-              </div>
-            </Link>
-          ))}
+          {items.map((item) => {
+            const primaryName = getPrimaryStockName(item.symbol, item.name);
+            const secondaryName = getSecondaryStockName(item.symbol, item.name);
+            return (
+              <Link key={item.symbol} href={`/stock/${encodeURIComponent(item.symbol)}`} className="stock-card">
+                <div className="stock-card-title">{primaryName}</div>
+                {secondaryName ? <div className="helper">{secondaryName}</div> : null}
+                <div className="helper">{item.symbol}</div>
+                <div className="stock-card-meta">
+                  <span>{item.market}</span>
+                  <span>{item.sector || "未分类"}</span>
+                </div>
+              </Link>
+            );
+          })}
         </div>
       ) : null}
     </section>

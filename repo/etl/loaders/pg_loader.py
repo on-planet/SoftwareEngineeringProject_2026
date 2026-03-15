@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterable
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import bindparam, create_engine, text
 from datetime import date
 
 from etl.config.loader import load_config
@@ -64,6 +64,24 @@ class PgLoader:
             LOGGER.exception("PgLoader batch write failed: %s", exc, exc_info=exc)
             raise
         return total
+
+    def query_all(self, sql: str, params: dict | None = None) -> list[dict]:
+        try:
+            with self.engine.connect() as conn:
+                result = conn.execute(text(sql), params or {})
+                return [dict(row._mapping) for row in result]
+        except Exception as exc:
+            LOGGER.exception("PgLoader query failed: %s", exc, exc_info=exc)
+            raise
+
+    def query_all_text(self, statement, params: dict | None = None) -> list[dict]:
+        try:
+            with self.engine.connect() as conn:
+                result = conn.execute(statement, params or {})
+                return [dict(row._mapping) for row in result]
+        except Exception as exc:
+            LOGGER.exception("PgLoader query failed: %s", exc, exc_info=exc)
+            raise
 
 
 def _get_loader() -> PgLoader:
@@ -224,6 +242,47 @@ def upsert_futures_prices(rows: Iterable[dict]) -> int:
     return _get_loader().execute_many(sql, payload)
 
 
+def list_daily_price_rows(as_of: date) -> list[dict]:
+    sql = """
+    SELECT symbol, date, open, high, low, close, volume
+    FROM daily_prices
+    WHERE date = :as_of
+    ORDER BY symbol ASC
+    """
+    return _get_loader().query_all(sql, {"as_of": as_of})
+
+
+def list_latest_macro_rows() -> list[dict]:
+    sql = """
+    SELECT m.key, m.date, m.value, m.score
+    FROM macro AS m
+    INNER JOIN (
+        SELECT key, MAX(date) AS date
+        FROM macro
+        GROUP BY key
+    ) AS latest
+        ON latest.key = m.key
+       AND latest.date = m.date
+    ORDER BY m.key ASC
+    """
+    return _get_loader().query_all(sql)
+
+
+def count_latest_macro_rows() -> int:
+    sql = """
+    SELECT COUNT(*) AS total
+    FROM (
+        SELECT key, MAX(date) AS date
+        FROM macro
+        GROUP BY key
+    ) AS latest
+    """
+    rows = _get_loader().query_all(sql)
+    if not rows:
+        return 0
+    return int(rows[0].get("total") or 0)
+
+
 def delete_macro_before(cutoff: date) -> int:
     sql = "DELETE FROM macro WHERE date < :cutoff"
     return _get_loader().execute_many(sql, [{"cutoff": cutoff}])
@@ -263,3 +322,34 @@ def upsert_fund_holdings(rows: Iterable[dict]) -> int:
     """
     payload = _validate_rows(rows, ["fund_code", "symbol", "report_date"], "fund_holdings")
     return _get_loader().execute_many(sql, payload)
+
+
+def list_stock_rows(*, limit: int | None = None) -> list[dict]:
+    sql = "SELECT symbol, name, market, sector FROM stocks ORDER BY symbol ASC"
+    if limit is not None and limit > 0:
+        sql += " LIMIT :limit"
+        return _get_loader().query_all(sql, {"limit": limit})
+    return _get_loader().query_all(sql)
+
+
+def get_latest_financial_periods(symbols: Iterable[str] | None = None) -> dict[str, str]:
+    base_sql = "SELECT symbol, MAX(period) AS period FROM financials"
+    params: dict = {}
+    if symbols:
+        normalized = [str(symbol) for symbol in symbols if str(symbol).strip()]
+        if normalized:
+            statement = text(f"{base_sql} WHERE symbol IN :symbols GROUP BY symbol").bindparams(
+                bindparam("symbols", expanding=True)
+            )
+            rows = _get_loader().query_all_text(statement, {"symbols": normalized})
+            return {
+                str(row["symbol"]): str(row["period"])
+                for row in rows
+                if row.get("symbol") and row.get("period")
+            }
+    rows = _get_loader().query_all(f"{base_sql} GROUP BY symbol", params)
+    return {
+        str(row["symbol"]): str(row["period"])
+        for row in rows
+        if row.get("symbol") and row.get("period")
+    }

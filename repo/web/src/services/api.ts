@@ -203,7 +203,7 @@ export async function getIndexConstituents(symbol: string, params?: { as_of?: st
   if (params?.limit !== undefined) query.set("limit", String(params.limit));
   if (params?.offset !== undefined) query.set("offset", String(params.offset));
   const suffix = query.toString();
-  return request(`/api/index/${symbol}/constituents${suffix ? `?${suffix}` : ""}`);
+  return request(`/api/index/${encodeURIComponent(symbol)}/constituents${suffix ? `?${suffix}` : ""}`);
 }
 
 export async function getStock(symbol: string) {
@@ -381,3 +381,4 @@ export async function getPortfolioAnalysis(userId: number, params?: { top_n?: nu
   const suffix = query.toString();
   return request(`/api/user/${userId}/portfolio/analysis${suffix ? `?${suffix}` : ""}`);
 }
+

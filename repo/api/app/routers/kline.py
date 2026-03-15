@@ -8,6 +8,7 @@ from app.schemas.error import ErrorResponse
 from app.schemas.examples import ERROR_EXAMPLE, KLINE_SERIES_EXAMPLE
 from app.schemas.kline import KlineSeriesOut
 from app.services.kline_service import get_index_kline, get_stock_kline
+from etl.fetchers.snowball_client import normalize_index_symbol
 
 router = APIRouter(tags=["kline"])
 
@@ -28,7 +29,7 @@ def get_index_kline_route(
     start: date | None = Query(None),
 ):
     items = get_index_kline(symbol, period=period, limit=limit, end=end, start=start)
-    return {"symbol": symbol.upper(), "period": period, "items": items}
+    return {"symbol": normalize_index_symbol(symbol), "period": period, "items": items}
 
 
 @router.get(

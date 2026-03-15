@@ -1,9 +1,11 @@
-﻿import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 
 import ReactECharts from "echarts-for-react";
 
+import { INDEX_NAME_MAP, INDEX_OPTIONS } from "../constants/indices";
 import { getIndexKline } from "../services/api";
 
+type IndexMarket = "A" | "HK";
 type KlinePeriod = "1m" | "30m" | "60m" | "day" | "week" | "month" | "quarter" | "year";
 
 type KlinePoint = {
@@ -20,12 +22,6 @@ type KlineSeries = {
   items: KlinePoint[];
 };
 
-const INDEX_OPTIONS = [
-  { symbol: "000001.SH", label: "上证指数" },
-  { symbol: "399001.SZ", label: "深证成指" },
-  { symbol: "399006.SZ", label: "创业板指" },
-] as const;
-
 const PERIOD_OPTIONS: KlinePeriod[] = ["1m", "30m", "60m", "day", "week", "month", "quarter", "year"];
 
 const PERIOD_LABELS: Record<KlinePeriod, string> = {
@@ -37,6 +33,18 @@ const PERIOD_LABELS: Record<KlinePeriod, string> = {
   month: "月 K",
   quarter: "季 K",
   year: "年 K",
+};
+
+const MARKET_OPTIONS: Array<{ key: IndexMarket; label: string }> = [
+  { key: "A", label: "A 股" },
+  { key: "HK", label: "港股" },
+];
+
+type Props = {
+  symbol: string;
+  activeMarket: IndexMarket;
+  onMarketChange: (market: IndexMarket) => void;
+  onSymbolChange: (symbol: string) => void;
 };
 
 function formatAxisLabel(value: string, period: KlinePeriod) {
@@ -52,8 +60,14 @@ function formatAxisLabel(value: string, period: KlinePeriod) {
   return String(value).slice(0, 10);
 }
 
-export function IndexKlinePanel() {
-  const [symbol, setSymbol] = useState<string>(INDEX_OPTIONS[0].symbol);
+export function IndexKlinePanel({ symbol, activeMarket, onMarketChange, onSymbolChange }: Props) {
+  const marketOptions = useMemo(() => INDEX_OPTIONS.filter((item) => item.market === activeMarket), [activeMarket]);
+  const selectOptions = useMemo(() => {
+    if (marketOptions.some((item) => item.symbol === symbol)) {
+      return marketOptions;
+    }
+    return [{ symbol, label: INDEX_NAME_MAP[symbol] || symbol, market: activeMarket }, ...marketOptions];
+  }, [activeMarket, marketOptions, symbol]);
   const [period, setPeriod] = useState<KlinePeriod>("day");
   const [items, setItems] = useState<KlinePoint[]>([]);
   const [loading, setLoading] = useState(true);
@@ -120,27 +134,44 @@ export function IndexKlinePanel() {
   return (
     <div className="card">
       <div className="panel-header">
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <select className="select" value={symbol} onChange={(event) => setSymbol(event.target.value)}>
-            {INDEX_OPTIONS.map((item) => (
-              <option key={item.symbol} value={item.symbol}>
-                {item.label}
-              </option>
-            ))}
-          </select>
-          <div className="chip-group">
-            {PERIOD_OPTIONS.map((item) => (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div className="index-market-switch" role="tablist" aria-label="K 线市场切换">
+            {MARKET_OPTIONS.map((item) => (
               <button
-                key={item}
+                key={item.key}
                 type="button"
-                className="chip-button"
-                data-active={item === period}
-                onClick={() => setPeriod(item)}
+                role="tab"
+                aria-selected={item.key === activeMarket}
+                className="index-market-button"
+                data-active={item.key === activeMarket}
+                onClick={() => onMarketChange(item.key)}
               >
-                {PERIOD_LABELS[item]}
+                {item.label}
               </button>
             ))}
           </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <select className="select" value={symbol} onChange={(event) => onSymbolChange(event.target.value)}>
+              {selectOptions.map((item) => (
+                <option key={item.symbol} value={item.symbol}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+        <div className="chip-group">
+          {PERIOD_OPTIONS.map((item) => (
+            <button
+              key={item}
+              type="button"
+              className="chip-button"
+              data-active={item === period}
+              onClick={() => setPeriod(item)}
+            >
+              {PERIOD_LABELS[item]}
+            </button>
+          ))}
         </div>
       </div>
       {loading ? <div className="helper">指数 K 线加载中...</div> : null}

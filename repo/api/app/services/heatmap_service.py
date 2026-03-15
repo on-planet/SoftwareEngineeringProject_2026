@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from datetime import date
 
 from sqlalchemy import func
@@ -10,11 +11,79 @@ from app.models.daily_prices import DailyPrice
 from app.models.stocks import Stock
 from app.utils.query_params import SortOrder
 
+UNKNOWN_SECTOR = "Unknown"
+UNKNOWN_SECTOR_ALIASES = {
+    "",
+    "unknown",
+    "unkown",
+    "none",
+    "null",
+    "delta-unknown",
+    "delta-zh",
+}
+RAW_UNKNOWN_SECTORS = {"Unknown", "鏈煡", "δ֪", "未知"}
+
 
 def _format_as_of(value) -> str:
     if isinstance(value, date):
         return value.isoformat()
     return str(value)
+
+
+def _normalize_sector_name(value: str | None) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return UNKNOWN_SECTOR
+    lowered = raw.lower()
+    if lowered in UNKNOWN_SECTOR_ALIASES:
+        return UNKNOWN_SECTOR
+    if raw in RAW_UNKNOWN_SECTORS:
+        return UNKNOWN_SECTOR
+    return raw
+
+
+def _coerce_float(value) -> float:
+    return float(value or 0.0)
+
+
+def _coerce_int(value) -> int:
+    return int(value or 0)
+
+
+def _normalize_cached_item(item: dict) -> dict:
+    return {
+        **item,
+        "sector": _normalize_sector_name(item.get("sector")),
+        "avg_close": _coerce_float(item.get("avg_close")),
+        "avg_change": _coerce_float(item.get("avg_change")),
+        "close_sum": _coerce_float(item.get("close_sum")),
+        "change_sum": _coerce_float(item.get("change_sum")),
+        "count": _coerce_int(item.get("count")),
+    }
+
+
+def _aggregate_cached_items(items: list[dict]) -> list[dict] | None:
+    buckets: dict[str, dict[str, float]] = defaultdict(lambda: {"close_sum": 0.0, "change_sum": 0.0, "count": 0.0})
+    for item in items:
+        if item.get("count") is None or item.get("close_sum") is None or item.get("change_sum") is None:
+            return None
+        sector_name = item["sector"]
+        bucket = buckets[sector_name]
+        bucket["close_sum"] += _coerce_float(item.get("close_sum"))
+        bucket["change_sum"] += _coerce_float(item.get("change_sum"))
+        bucket["count"] += float(_coerce_int(item.get("count")))
+
+    aggregated: list[dict] = []
+    for sector_name, bucket in buckets.items():
+        count = bucket["count"] or 0.0
+        aggregated.append(
+            {
+                "sector": sector_name,
+                "avg_close": (bucket["close_sum"] / count) if count else 0.0,
+                "avg_change": (bucket["change_sum"] / count) if count else 0.0,
+            }
+        )
+    return aggregated
 
 
 def get_heatmap(
@@ -24,42 +93,55 @@ def get_heatmap(
     market: str | None = None,
     min_change: float | None = None,
     max_change: float | None = None,
+    as_of: date | None = None,
 ):
-    """Get industry heatmap data.
-
-    Aggregate latest close and average change by sector.
-    """
-    latest_date = db.query(func.max(DailyPrice.date)).scalar()
+    """Get industry heatmap data aggregated from stock daily prices."""
+    sector_filter = _normalize_sector_name(sector) if sector else None
+    latest_date_query = db.query(func.max(DailyPrice.date)).join(Stock, DailyPrice.symbol == Stock.symbol)
+    if market:
+        latest_date_query = latest_date_query.filter(Stock.market == market)
+    if as_of is not None:
+        latest_date_query = latest_date_query.filter(DailyPrice.date <= as_of)
+    latest_date = latest_date_query.scalar()
     if latest_date is None:
         return []
+
     query = (
         db.query(
             Stock.sector,
-            func.avg(DailyPrice.close).label("avg_close"),
-            func.avg(DailyPrice.close - DailyPrice.open).label("avg_change"),
+            func.sum(DailyPrice.close).label("close_sum"),
+            func.sum(DailyPrice.close - DailyPrice.open).label("change_sum"),
+            func.count(DailyPrice.symbol).label("symbol_count"),
         )
         .join(DailyPrice, DailyPrice.symbol == Stock.symbol)
         .filter(DailyPrice.date == latest_date)
         .group_by(Stock.sector)
     )
-    if sector:
-        query = query.filter(Stock.sector == sector)
     if market:
         query = query.filter(Stock.market == market)
-    if min_change is not None:
-        query = query.having(func.avg(DailyPrice.close - DailyPrice.open) >= min_change)
-    if max_change is not None:
-        query = query.having(func.avg(DailyPrice.close - DailyPrice.open) <= max_change)
     rows = query.all()
-    results = [
-        {
-            "sector": sector_name,
-            "avg_close": float(avg_close or 0),
-            "avg_change": float(avg_change or 0),
-        }
-        for sector_name, avg_close, avg_change in rows
-    ]
-    return sorted(results, key=lambda x: x["avg_change"], reverse=(sort == "desc"))
+
+    buckets: dict[str, dict[str, float]] = defaultdict(lambda: {"close_sum": 0.0, "change_sum": 0.0, "count": 0.0})
+    for sector_name, close_sum, change_sum, symbol_count in rows:
+        normalized_sector = _normalize_sector_name(sector_name)
+        bucket = buckets[normalized_sector]
+        bucket["close_sum"] += float(close_sum or 0.0)
+        bucket["change_sum"] += float(change_sum or 0.0)
+        bucket["count"] += float(symbol_count or 0.0)
+
+    results = []
+    for sector_name, bucket in buckets.items():
+        count = bucket["count"] or 0.0
+        avg_close = (bucket["close_sum"] / count) if count else 0.0
+        avg_change = (bucket["change_sum"] / count) if count else 0.0
+        if sector_filter and sector_name != sector_filter:
+            continue
+        if min_change is not None and avg_change < min_change:
+            continue
+        if max_change is not None and avg_change > max_change:
+            continue
+        results.append({"sector": sector_name, "avg_close": avg_close, "avg_change": avg_change})
+    return sorted(results, key=lambda item: item["avg_change"], reverse=(sort == "desc"))
 
 
 def get_cached_heatmap(
@@ -70,7 +152,7 @@ def get_cached_heatmap(
     max_change: float | None = None,
     sort: SortOrder = "desc",
 ) -> list[dict] | None:
-    """Get cached heatmap data from Redis (if any)."""
+    """Get cached heatmap data from Redis."""
     key = "heatmap:latest" if as_of is None else f"heatmap:{_format_as_of(as_of)}"
     payload = get_json(key)
     if not payload:
@@ -82,23 +164,22 @@ def get_cached_heatmap(
         return None
     if items and any("avg_close" not in item for item in items):
         return None
-    if sector:
-        items = [item for item in items if item.get("sector") == sector]
-    if min_change is not None:
-        items = [item for item in items if (item.get("avg_change") or 0) >= min_change]
-    if max_change is not None:
-        items = [item for item in items if (item.get("avg_change") or 0) <= max_change]
+
+    sector_filter = _normalize_sector_name(sector) if sector else None
+    normalized = [_normalize_cached_item(item) for item in items]
     if market:
-        items = [item for item in items if item.get("market") == market]
-    if not items:
-        return items
-    normalized = []
-    for item in items:
-        normalized.append(
-            {
-                **item,
-                "avg_close": float(item.get("avg_close") or 0),
-                "avg_change": float(item.get("avg_change") or 0),
-            }
-        )
-    return sorted(normalized, key=lambda x: x["avg_change"], reverse=(sort == "desc"))
+        normalized = [item for item in normalized if item.get("market") == market]
+    elif any(item.get("market") for item in normalized):
+        aggregated = _aggregate_cached_items(normalized)
+        if aggregated is None:
+            return None
+        normalized = aggregated
+    if sector_filter:
+        normalized = [item for item in normalized if item["sector"] == sector_filter]
+    if min_change is not None:
+        normalized = [item for item in normalized if item["avg_change"] >= min_change]
+    if max_change is not None:
+        normalized = [item for item in normalized if item["avg_change"] <= max_change]
+    if normalized and all(item["sector"] == UNKNOWN_SECTOR for item in normalized):
+        return None
+    return sorted(normalized, key=lambda item: item["avg_change"], reverse=(sort == "desc"))

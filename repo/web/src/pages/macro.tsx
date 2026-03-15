@@ -68,7 +68,7 @@ export default function MacroPage() {
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
   const [sort, setSort] = useState<SortOrder>("desc");
-  const [limit, setLimit] = useState(30);
+  const [limit, setLimit] = useState(120);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [indicator, setIndicator] = useState("");
@@ -279,14 +279,14 @@ export default function MacroPage() {
               className="select"
               value={limit}
               onChange={(event) => {
-                setLimit(Number(event.target.value) || 30);
+                setLimit(Number(event.target.value) || 120);
                 setPage(1);
               }}
             >
-              <option value={10}>10</option>
-              <option value={20}>20</option>
-              <option value={30}>30</option>
               <option value={50}>50</option>
+              <option value={80}>80</option>
+              <option value={120}>120</option>
+              <option value={200}>200</option>
             </select>
           </label>
           <div className="helper" style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 18 }}>
