@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pydantic_settings import BaseSettings
+try:
+    from pydantic_settings import BaseSettings
+except Exception:  # pragma: no cover - dependency/version compatibility
+    from pydantic.v1 import BaseSettings
 
 try:
     import yaml

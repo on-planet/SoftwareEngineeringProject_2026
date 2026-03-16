@@ -6,7 +6,13 @@ from sqlalchemy.orm import Session
 
 from app.models.stocks import Stock
 from app.schemas.stock import StockCreate, StockUpdate
-from app.services.live_market_service import get_live_stock_daily, get_live_stock_profile, list_live_stocks
+from app.services.live_market_service import (
+    get_live_stock_daily,
+    get_live_stock_overview_profile,
+    get_live_stock_profile,
+    get_live_stock_profile_extras,
+    list_live_stocks,
+)
 
 
 def list_stocks(
@@ -22,6 +28,14 @@ def list_stocks(
 
 def get_stock_profile(symbol: str):
     return get_live_stock_profile(symbol)
+
+
+def get_stock_overview_profile(symbol: str):
+    return get_live_stock_overview_profile(symbol)
+
+
+def get_stock_profile_extras(symbol: str):
+    return get_live_stock_profile_extras(symbol)
 
 
 def get_stock_daily(

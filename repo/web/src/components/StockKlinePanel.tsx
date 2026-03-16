@@ -3,6 +3,7 @@
 import ReactECharts from "echarts-for-react";
 
 import { getStockKline } from "../services/api";
+import { readPersistentCache, writePersistentCache } from "../utils/persistentCache";
 
 type KlinePeriod = "1m" | "30m" | "60m" | "day" | "week" | "month" | "quarter" | "year";
 
@@ -37,6 +38,24 @@ const PERIOD_LABELS: Record<KlinePeriod, string> = {
   year: "年 K",
 };
 
+const INTRADAY_CACHE_MAX_AGE_MS = 2 * 60 * 1000;
+const DAILY_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
+const LONG_TERM_CACHE_MAX_AGE_MS = 60 * 60 * 1000;
+
+function getCacheMaxAge(period: KlinePeriod) {
+  if (period === "1m" || period === "30m" || period === "60m") {
+    return INTRADAY_CACHE_MAX_AGE_MS;
+  }
+  if (period === "day" || period === "week") {
+    return DAILY_CACHE_MAX_AGE_MS;
+  }
+  return LONG_TERM_CACHE_MAX_AGE_MS;
+}
+
+function buildKlineCacheKey(symbol: string, period: KlinePeriod, limit: number) {
+  return `stock:kline:${symbol.trim().toUpperCase()}:${period}:${limit}`;
+}
+
 function formatAxisLabel(value: string, period: KlinePeriod) {
   if (period === "1m" || period === "30m" || period === "60m") {
     return new Date(value).toLocaleString("zh-CN", {
@@ -50,21 +69,39 @@ function formatAxisLabel(value: string, period: KlinePeriod) {
   return String(value).slice(0, 10);
 }
 
+function getDefaultLimit(period: KlinePeriod) {
+  if (period === "1m") {
+    return 120;
+  }
+  if (period === "day") {
+    return 180;
+  }
+  return 120;
+}
+
 export function StockKlinePanel({ symbol }: Props) {
   const [period, setPeriod] = useState<KlinePeriod>("day");
   const [items, setItems] = useState<KlinePoint[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
-    getStockKline(symbol, { period, limit: period === "1m" ? 180 : 240 })
+    const limit = getDefaultLimit(period);
+    const cacheKey = buildKlineCacheKey(symbol, period, limit);
+    const cached = readPersistentCache<KlineSeries>(cacheKey, getCacheMaxAge(period));
+    setItems(cached?.items ?? []);
+    setLoading(!cached?.items?.length);
+    setRefreshing(!!cached?.items?.length);
+    setError(null);
+    getStockKline(symbol, { period, limit })
       .then((res) => {
         if (!active) {
           return;
         }
         const payload = res as KlineSeries;
+        writePersistentCache(cacheKey, payload);
         setItems(payload.items ?? []);
         setError(null);
       })
@@ -72,12 +109,15 @@ export function StockKlinePanel({ symbol }: Props) {
         if (!active) {
           return;
         }
-        setItems([]);
-        setError(err.message || "K 线加载失败");
+        if (!cached?.items?.length) {
+          setItems([]);
+          setError(err.message || "K 线加载失败");
+        }
       })
       .finally(() => {
         if (active) {
           setLoading(false);
+          setRefreshing(false);
         }
       });
     return () => {
@@ -139,6 +179,7 @@ export function StockKlinePanel({ symbol }: Props) {
         </div>
       </div>
       {loading ? <div className="helper">K 线加载中...</div> : null}
+      {!loading && refreshing ? <div className="helper">K 线刷新中...</div> : null}
       {!loading && error ? <div className="helper">K 线加载失败：{error}</div> : null}
       {!loading && !error && option ? <ReactECharts option={option} style={{ height: 360 }} /> : null}
       {!loading && !error && !option ? <div className="helper">暂无 K 线数据。</div> : null}

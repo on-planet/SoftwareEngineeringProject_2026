@@ -9,10 +9,14 @@ class FuturesOut(BaseModel):
     symbol: str
     name: str | None = None
     date: date
+    contract_month: str | None = None
     open: float | None = None
     high: float | None = None
     low: float | None = None
     close: float | None = None
+    settlement: float | None = None
+    open_interest: float | None = None
+    turnover: float | None = None
     volume: float | None = None
     source: str | None = None
 
@@ -22,10 +26,14 @@ class FuturesOut(BaseModel):
 
 class FuturesPoint(BaseModel):
     date: date
+    contract_month: str | None = None
     open: float | None = None
     high: float | None = None
     low: float | None = None
     close: float | None = None
+    settlement: float | None = None
+    open_interest: float | None = None
+    turnover: float | None = None
     volume: float | None = None
     source: str | None = None
 

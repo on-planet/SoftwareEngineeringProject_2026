@@ -1,7 +1,7 @@
 ﻿import React, { useEffect, useState } from "react";
 
 import { getStockFinancials } from "../services/api";
-import { formatNullableNumber, formatSmartPercent } from "../utils/format";
+import { formatLoosePercent, formatNullableNumber } from "../utils/format";
 
 type FinancialItem = {
   symbol: string;
@@ -90,8 +90,8 @@ export function StockFinancialTable({ symbol }: Props) {
               <td>{formatNullableNumber(item.revenue, 0)}</td>
               <td>{formatNullableNumber(item.net_income, 0)}</td>
               <td>{formatNullableNumber(item.cash_flow, 0)}</td>
-              <td>{formatSmartPercent(item.roe)}</td>
-              <td>{formatSmartPercent(item.debt_ratio)}</td>
+              <td>{formatLoosePercent(item.roe)}</td>
+              <td>{formatLoosePercent(item.debt_ratio)}</td>
             </tr>
           ))}
         </tbody>

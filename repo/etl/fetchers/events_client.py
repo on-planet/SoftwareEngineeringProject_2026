@@ -3,10 +3,12 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timezone
 from email.utils import parsedate_to_datetime
+from pathlib import Path
 from typing import Iterable, List
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import ProxyHandler, Request, build_opener, urlopen
+import json
 import os
 import time
 import xml.etree.ElementTree as ET
@@ -15,8 +17,13 @@ from etl.fetchers.snowball_client import normalize_symbol, to_snowball_symbol
 from etl.loaders.redis_cache import get_cache_string
 from etl.utils.logging import get_logger
 from etl.utils.normalize import ensure_required
+from etl.utils.stock_basics_cache import list_cached_symbols
 
 LOGGER = get_logger(__name__)
+CACHE_DIR = Path(__file__).resolve().parents[1] / "state" / "rss_cache"
+CACHE_DIR.mkdir(parents=True, exist_ok=True)
+CACHE_TTL_SECONDS = int(os.getenv("RSS_CACHE_TTL", "1800"))
+CACHE_STALE_ON_ERROR_SECONDS = int(os.getenv("RSS_CACHE_STALE_ON_ERROR_SECONDS", str(48 * 3600)))
 RSS_TIMEOUT_SECONDS = int(os.getenv("RSS_TIMEOUT_SECONDS", "12"))
 RSS_MAX_WORKERS = int(os.getenv("RSS_MAX_WORKERS", "8"))
 RSS_RETRY_COUNT = int(os.getenv("RSS_RETRY_COUNT", "2"))
@@ -112,31 +119,59 @@ def _extract_dict_rows(payload) -> list[dict]:
 
 def _event_symbols() -> list[str]:
     raw = os.getenv("SNOWBALL_EVENT_SYMBOLS", "").strip() or os.getenv("SNOWBALL_STOCK_SYMBOLS", "").strip()
-    if not raw:
-        return ["600000.SH", "000001.SZ", "600519.SH", "00700.HK"]
     output: list[str] = []
     seen: set[str] = set()
-    for item in raw.split(","):
-        symbol = normalize_symbol(item.strip())
-        if not symbol or symbol in seen:
+    if raw:
+        for item in raw.split(","):
+            symbol = normalize_symbol(item.strip())
+            if not symbol or symbol in seen:
+                continue
+            seen.add(symbol)
+            output.append(symbol)
+        return output
+
+    for symbol in ("600000.SH", "000001.SZ", "600519.SH"):
+        if symbol in seen:
+            continue
+        seen.add(symbol)
+        output.append(symbol)
+
+    cached_limit = max(1, int(os.getenv("SNOWBALL_HK_EVENT_LIMIT", "200")))
+    cached_hk_symbols = list_cached_symbols(markets=("HK",), limit=cached_limit) or ["00700.HK", "00005.HK", "00941.HK"]
+    for symbol in cached_hk_symbols:
+        if symbol in seen:
             continue
         seen.add(symbol)
         output.append(symbol)
     return output
 
 
-def _rsshub_base() -> str:
-    base = os.getenv("RSSHUB_BASE")
-    if base:
-        return base.rstrip("/")
-    return "https://rsshub.liumingye.cn"
+def _rsshub_bases() -> list[str]:
+    configured = os.getenv("RSSHUB_BASES", "").strip()
+    if configured:
+        raw_items = configured.split(",")
+    else:
+        raw_items = [
+            os.getenv("RSSHUB_BASE", "").strip(),
+            "https://rsshub.liumingye.cn",
+            "https://rsshub.app",
+        ]
+    bases: list[str] = []
+    seen: set[str] = set()
+    for item in raw_items:
+        base = str(item or "").strip().rstrip("/")
+        if not base or base in seen:
+            continue
+        seen.add(base)
+        bases.append(base)
+    return bases
 
 
 def _rsshub_hk_symbols() -> list[str]:
     raw = get_cache_string("hk_rss_symbols") or os.getenv("RSSHUB_HK_SYMBOLS", "")
-    if not raw:
-        return []
     output: list[str] = []
+    if not raw:
+        return list_cached_symbols(markets=("HK",), limit=max(1, int(os.getenv("RSSHUB_HK_LIMIT", "200"))))
     for item in raw.split(","):
         symbol = normalize_symbol(item.strip())
         if symbol.endswith(".HK"):
@@ -144,8 +179,9 @@ def _rsshub_hk_symbols() -> list[str]:
     return output
 
 
-def _rsshub_xueqiu_announcement(symbol: str) -> str:
-    return f"{_rsshub_base()}/xueqiu/stock_info/{to_snowball_symbol(symbol)}/announcement"
+def _rsshub_xueqiu_announcement_urls(symbol: str) -> list[str]:
+    snow_symbol = to_snowball_symbol(symbol)
+    return [f"{base}/xueqiu/stock_info/{snow_symbol}/announcement" for base in _rsshub_bases()]
 
 
 def _is_buyback_title(title: str) -> bool:
@@ -218,7 +254,65 @@ def _sleep_before_retry(attempt: int) -> None:
     time.sleep(delay)
 
 
-def _fetch_rss(url: str) -> List[dict]:
+def _cache_key(url: str) -> str:
+    safe = url.replace("/", "_").replace(":", "_").replace("?", "_").replace("&", "_")
+    return f"{safe}.json"
+
+
+def _load_cache(url: str, *, allow_stale: bool = False) -> List[dict] | None:
+    path = CACHE_DIR / _cache_key(url)
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    ts = payload.get("ts")
+    items = payload.get("items")
+    if not isinstance(ts, (int, float)) or not isinstance(items, list):
+        return None
+    age = time.time() - ts
+    max_age = CACHE_STALE_ON_ERROR_SECONDS if allow_stale else CACHE_TTL_SECONDS
+    if age > max_age:
+        return None
+    output = []
+    for item in items:
+        published_at = item.get("published_at")
+        if isinstance(published_at, str):
+            try:
+                published_at = datetime.fromisoformat(published_at)
+            except Exception:
+                published_at = None
+        output.append(
+            {
+                "title": item.get("title") or "",
+                "link": item.get("link") or "",
+                "published_at": published_at,
+            }
+        )
+    return output
+
+
+def _save_cache(url: str, items: List[dict]) -> None:
+    path = CACHE_DIR / _cache_key(url)
+    payload = {
+        "ts": time.time(),
+        "items": [
+            {
+                "title": item.get("title") or "",
+                "link": item.get("link") or "",
+                "published_at": item.get("published_at").isoformat() if item.get("published_at") else None,
+            }
+            for item in items
+        ],
+    }
+    try:
+        path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    except Exception as exc:
+        LOGGER.warning("write rss cache failed [%s]: %s", url, exc)
+
+
+def _download_rss(url: str) -> bytes | None:
     data = None
     for attempt in range(RSS_RETRY_COUNT + 1):
         try:
@@ -228,17 +322,25 @@ def _fetch_rss(url: str) -> List[dict]:
         except HTTPError as exc:
             LOGGER.warning("fetch rss failed [%s]: %s", url, exc)
             if attempt >= RSS_RETRY_COUNT or not _should_retry_http(exc):
-                return []
+                return None
         except (URLError, TimeoutError) as exc:
             LOGGER.warning("fetch rss failed [%s]: %s", url, exc)
             if attempt >= RSS_RETRY_COUNT:
-                return []
+                return None
         except Exception as exc:
             LOGGER.warning("fetch rss failed [%s]: %s", url, exc)
-            return []
+            return None
         _sleep_before_retry(attempt + 1)
+    return data
+
+
+def _fetch_rss(url: str) -> List[dict]:
+    cached = _load_cache(url)
+    if cached is not None:
+        return cached
+    data = _download_rss(url)
     if data is None:
-        return []
+        return _load_cache(url, allow_stale=True) or []
 
     try:
         root = ET.fromstring(data)
@@ -255,7 +357,20 @@ def _fetch_rss(url: str) -> List[dict]:
                 "published_at": _parse_pub_date(item.findtext("pubDate") or ""),
             }
         )
+    _save_cache(url, items)
     return items
+
+
+def _fetch_rss_with_fallback(urls: Iterable[str]) -> List[dict]:
+    for url in urls:
+        items = _fetch_rss(url)
+        if items:
+            return items
+    for url in urls:
+        cached = _load_cache(url, allow_stale=True)
+        if cached:
+            return cached
+    return []
 
 
 def _fetch_rss_batch(urls: list[str]) -> dict[str, List[dict]]:
@@ -324,11 +439,23 @@ def get_events(as_of: date) -> List[dict]:
 def get_buyback(as_of: date) -> List[dict]:
     rows: list[dict] = []
     symbols = _rsshub_hk_symbols()
-    url_map = {symbol: _rsshub_xueqiu_announcement(symbol) for symbol in symbols}
-    fetched = _fetch_rss_batch(list(url_map.values()))
+    symbol_urls = {symbol: _rsshub_xueqiu_announcement_urls(symbol) for symbol in symbols}
+    with ThreadPoolExecutor(max_workers=max(1, min(RSS_MAX_WORKERS, len(symbol_urls)))) as executor:
+        future_map = {
+            executor.submit(_fetch_rss_with_fallback, urls): symbol
+            for symbol, urls in symbol_urls.items()
+        }
+        fetched_by_symbol: dict[str, List[dict]] = {}
+        for future in as_completed(future_map):
+            symbol = future_map[future]
+            try:
+                fetched_by_symbol[symbol] = future.result()
+            except Exception as exc:
+                LOGGER.warning("fetch rss batch failed [%s]: %s", symbol, exc)
+                fetched_by_symbol[symbol] = []
 
-    for symbol, url in url_map.items():
-        for item in fetched.get(url, []):
+    for symbol, items in fetched_by_symbol.items():
+        for item in items:
             published_at = item.get("published_at")
             if not published_at:
                 continue

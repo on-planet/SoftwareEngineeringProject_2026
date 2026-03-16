@@ -3,6 +3,9 @@ uvicorn
 sqlalchemy
 psycopg2-binary
 pydantic
+pydantic-settings
 redis
 pyyaml
 pysnowball
+xlrd
+baostock

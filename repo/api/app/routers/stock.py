@@ -8,7 +8,15 @@ from sqlalchemy.orm import Session
 from app.core.db import get_db
 from app.schemas.common import IdOut
 from app.schemas.risk import RiskOut
-from app.schemas.stock import StockOut, StockWithRiskOut, DailyPriceOut, StockCreate, StockUpdate
+from app.schemas.stock import (
+    DailyPriceOut,
+    StockCreate,
+    StockExtrasOut,
+    StockOut,
+    StockOverviewOut,
+    StockUpdate,
+    StockWithRiskOut,
+)
 from app.schemas.fundamental import FundamentalOut, FundamentalCreate, FundamentalUpdate
 from app.schemas.pagination import Page
 from app.schemas.research import ResearchPanelOut
@@ -17,6 +25,8 @@ from app.schemas.examples import ERROR_EXAMPLE, STOCK_WITH_RISK_EXAMPLE
 from app.services.stock_service import (
     list_stocks,
     get_stock_profile,
+    get_stock_overview_profile,
+    get_stock_profile_extras,
     get_stock_daily,
     create_stock,
     update_stock,
@@ -87,6 +97,40 @@ def get_stock(symbol: str):
             cache_hit=risk_payload.get("cache_hit"),
         )
     return result
+
+
+@router.get(
+    "/stock/{symbol}/overview",
+    response_model=StockOverviewOut,
+    responses={
+        404: {"model": ErrorResponse, "content": {"application/json": {"example": ERROR_EXAMPLE}}},
+        500: {"model": ErrorResponse, "content": {"application/json": {"example": ERROR_EXAMPLE}}},
+    },
+)
+def get_stock_overview(symbol: str):
+    stock = ensure_found(get_stock_overview_profile(symbol), "Stock not found")
+    risk_payload = get_risk_snapshot(symbol)
+    fundamental = get_fundamental_score(symbol)
+    payload = dict(stock) if isinstance(stock, dict) else StockOverviewOut.from_orm(stock).model_dump()
+    if risk_payload:
+        payload["risk"] = RiskOut(
+            symbol=symbol,
+            max_drawdown=risk_payload.get("max_drawdown"),
+            volatility=risk_payload.get("volatility"),
+            as_of=risk_payload.get("as_of"),
+            cache_hit=risk_payload.get("cache_hit"),
+        )
+    payload["fundamental"] = fundamental
+    return StockOverviewOut(**payload)
+
+
+@router.get(
+    "/stock/{symbol}/extras",
+    response_model=StockExtrasOut,
+    responses={500: {"model": ErrorResponse, "content": {"application/json": {"example": ERROR_EXAMPLE}}}},
+)
+def get_stock_extras(symbol: str):
+    return get_stock_profile_extras(symbol)
 
 
 @router.post(

@@ -1,10 +1,37 @@
+const REQUEST_CACHE_TTL_MS = 5000;
+const responseCache = new Map<string, { expiresAt: number; value: unknown }>();
+const inflightRequests = new Map<string, Promise<unknown>>();
+
 async function request<T = any>(url: string): Promise<T> {
-  const res = await fetch(url);
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || `请求失败: ${res.status}`);
+  const now = Date.now();
+  const cached = responseCache.get(url);
+  if (cached && cached.expiresAt > now) {
+    return cached.value as T;
   }
-  return res.json() as Promise<T>;
+
+  const inflight = inflightRequests.get(url);
+  if (inflight) {
+    return inflight as Promise<T>;
+  }
+
+  const promise = fetch(url)
+    .then(async (res) => {
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || `请求失败: ${res.status}`);
+      }
+      return res.json() as Promise<T>;
+    })
+    .then((payload) => {
+      responseCache.set(url, { expiresAt: Date.now() + REQUEST_CACHE_TTL_MS, value: payload });
+      return payload;
+    })
+    .finally(() => {
+      inflightRequests.delete(url);
+    });
+
+  inflightRequests.set(url, promise);
+  return promise;
 }
 
 export async function getIndices(params?: { as_of?: string; sort?: "asc" | "desc"; limit?: number; offset?: number }) {
@@ -68,6 +95,8 @@ export async function getFutures(params?: {
   symbol?: string;
   start?: string;
   end?: string;
+  as_of?: string;
+  frequency?: "day" | "week";
   sort?: "asc" | "desc";
   limit?: number;
   offset?: number;
@@ -76,6 +105,8 @@ export async function getFutures(params?: {
   if (params?.symbol) query.set("symbol", params.symbol);
   if (params?.start) query.set("start", params.start);
   if (params?.end) query.set("end", params.end);
+  if (params?.as_of) query.set("as_of", params.as_of);
+  if (params?.frequency) query.set("frequency", params.frequency);
   if (params?.sort) query.set("sort", params.sort);
   if (params?.limit !== undefined) query.set("limit", String(params.limit));
   if (params?.offset !== undefined) query.set("offset", String(params.offset));
@@ -85,11 +116,12 @@ export async function getFutures(params?: {
 
 export async function getFuturesSeries(
   symbol: string,
-  params?: { start?: string; end?: string }
+  params?: { start?: string; end?: string; frequency?: "day" | "week" }
 ) {
   const query = new URLSearchParams();
   if (params?.start) query.set("start", params.start);
   if (params?.end) query.set("end", params.end);
+  if (params?.frequency) query.set("frequency", params.frequency);
   const suffix = query.toString();
   return request(`/api/futures/${encodeURIComponent(symbol)}/series${suffix ? `?${suffix}` : ""}`);
 }
@@ -210,6 +242,14 @@ export async function getStock(symbol: string) {
     return request(`/api/stock/${symbol}`);
 }
 
+export async function getStockOverview(symbol: string) {
+  return request(`/api/stock/${encodeURIComponent(symbol)}/overview`);
+}
+
+export async function getStockExtras(symbol: string) {
+  return request(`/api/stock/${encodeURIComponent(symbol)}/extras`);
+}
+
 export async function getFundamental(symbol: string) {
   return request(`/api/stock/${symbol}/fundamental`);
 }
@@ -285,6 +325,14 @@ export async function getNewsAggregate(params?: {
   symbols?: string[];
   sentiment?: string;
   sentiments?: string[];
+  source_site?: string;
+  source_sites?: string[];
+  source_category?: string;
+  source_categories?: string[];
+  topic_category?: string;
+  topic_categories?: string[];
+  time_bucket?: string;
+  time_buckets?: string[];
   keyword?: string;
   sort_by?: string[];
   start?: string;
@@ -298,6 +346,14 @@ export async function getNewsAggregate(params?: {
   params?.symbols?.forEach((item) => query.append("symbols", item));
   if (params?.sentiment) query.set("sentiment", params.sentiment);
   params?.sentiments?.forEach((item) => query.append("sentiments", item));
+  if (params?.source_site) query.set("source_site", params.source_site);
+  params?.source_sites?.forEach((item) => query.append("source_sites", item));
+  if (params?.source_category) query.set("source_category", params.source_category);
+  params?.source_categories?.forEach((item) => query.append("source_categories", item));
+  if (params?.topic_category) query.set("topic_category", params.topic_category);
+  params?.topic_categories?.forEach((item) => query.append("topic_categories", item));
+  if (params?.time_bucket) query.set("time_bucket", params.time_bucket);
+  params?.time_buckets?.forEach((item) => query.append("time_buckets", item));
   if (params?.keyword) query.set("keyword", params.keyword);
   params?.sort_by?.forEach((item) => query.append("sort_by", item));
   if (params?.start) query.set("start", params.start);
@@ -360,6 +416,7 @@ export async function getMacroSeries(key: string, params?: { start?: string; end
 
 export async function getSectorExposure(params?: {
   market?: string;
+  basis?: string;
   limit?: number;
   offset?: number;
   sort?: "asc" | "desc";
@@ -367,6 +424,7 @@ export async function getSectorExposure(params?: {
 }) {
   const query = new URLSearchParams();
   if (params?.market) query.set("market", params.market);
+  if (params?.basis) query.set("basis", params.basis);
   if (params?.limit !== undefined) query.set("limit", String(params.limit));
   if (params?.offset !== undefined) query.set("offset", String(params.offset));
   if (params?.sort) query.set("sort", params.sort);

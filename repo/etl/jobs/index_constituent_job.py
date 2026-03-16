@@ -9,7 +9,7 @@ from etl.utils.logging import get_logger
 
 LOGGER = get_logger(__name__)
 
-INDEX_SYMBOLS = ["000001.SH", "399001.SZ"]
+INDEX_SYMBOLS = ["000016.SH", "000300.SH", "000688.SH", "899050.BJ"]
 
 
 def run_index_constituent_job(start: date, end: date) -> int:

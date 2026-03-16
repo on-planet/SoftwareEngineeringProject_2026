@@ -2,11 +2,13 @@ import React, { useEffect, useMemo, useState } from "react";
 
 import { getFutures } from "../services/api";
 import { formatNumber, formatPercent, formatSigned } from "../utils/format";
+import { formatContractMonth, FUTURES_LABELS, sortPreferredFutures } from "../utils/futures";
 
 type FuturesItem = {
   symbol: string;
   name?: string | null;
   date: string;
+  contract_month?: string | null;
   open?: number | null;
   high?: number | null;
   low?: number | null;
@@ -22,15 +24,6 @@ type FuturesPage = {
   offset: number;
 };
 
-const LABELS: Record<string, string> = {
-  GOLD: "Gold",
-  SILVER: "Silver",
-  WTI: "WTI",
-  BRENT: "Brent",
-  NATGAS: "NatGas",
-  COPPER: "Copper",
-};
-
 function toLatestBySymbol(items: FuturesItem[]): FuturesItem[] {
   const map = new Map<string, FuturesItem>();
   for (const item of items) {
@@ -42,7 +35,7 @@ function toLatestBySymbol(items: FuturesItem[]): FuturesItem[] {
       map.set(item.symbol, item);
     }
   }
-  return Array.from(map.values()).sort((a, b) => a.symbol.localeCompare(b.symbol));
+  return sortPreferredFutures(Array.from(map.values()));
 }
 
 export function FuturesCards() {
@@ -100,7 +93,7 @@ export function FuturesCards() {
         const delta = close - open;
         const pct = open !== 0 ? delta / open : 0;
         const trendColor = delta >= 0 ? "#f87171" : "#34d399";
-        const label = LABELS[item.symbol] || item.name || item.symbol;
+        const label = FUTURES_LABELS[item.symbol] || item.name || item.symbol;
 
         return (
           <div key={`${item.symbol}-${item.date}`} className="card">
@@ -108,6 +101,7 @@ export function FuturesCards() {
             <div className="helper">
               {item.symbol} | {item.date}
             </div>
+            <div className="helper">主力合约: {formatContractMonth(item.contract_month)}</div>
             <div style={{ marginTop: 8, fontSize: 20, fontWeight: 700 }}>
               {formatNumber(close)}
             </div>

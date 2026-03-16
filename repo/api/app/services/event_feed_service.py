@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+from threading import Lock, Thread
 import os
 
 from sqlalchemy.orm import Session
@@ -14,6 +15,8 @@ from etl.jobs.events_job import run_events_job
 
 EVENT_REMOTE_LOOKBACK_DAYS = max(1, int(os.getenv("EVENT_REMOTE_LOOKBACK_DAYS", "30")))
 EVENT_REMOTE_MAX_RANGE_DAYS = max(1, int(os.getenv("EVENT_REMOTE_MAX_RANGE_DAYS", "31")))
+_EVENT_BACKFILL_LOCK = Lock()
+_EVENT_BACKFILL_INFLIGHT: set[tuple[date, date]] = set()
 
 
 def _matches_filters(
@@ -250,6 +253,24 @@ def _remote_range(start: date | None = None, end: date | None = None) -> tuple[d
     return range_start, range_end
 
 
+def _schedule_remote_backfill(start: date, end: date) -> bool:
+    task = (start, end)
+    with _EVENT_BACKFILL_LOCK:
+        if task in _EVENT_BACKFILL_INFLIGHT:
+            return False
+        _EVENT_BACKFILL_INFLIGHT.add(task)
+
+    def _runner() -> None:
+        try:
+            run_events_job(start, end)
+        finally:
+            with _EVENT_BACKFILL_LOCK:
+                _EVENT_BACKFILL_INFLIGHT.discard(task)
+
+    Thread(target=_runner, name=f"events-backfill-{start.isoformat()}-{end.isoformat()}", daemon=True).start()
+    return True
+
+
 def load_or_backfill_event_feed(
     db: Session,
     *,
@@ -258,6 +279,7 @@ def load_or_backfill_event_feed(
     keyword: str | None = None,
     start: date | None = None,
     end: date | None = None,
+    backfill_mode: str = "sync",
 ) -> list[EventTimelineItem]:
     preloaded = load_preloaded_event_feed(
         symbols=symbols,
@@ -290,6 +312,12 @@ def load_or_backfill_event_feed(
         end=remote_range[1],
     )
     if existing_items:
+        return items
+
+    if backfill_mode == "off":
+        return items
+    if backfill_mode == "async":
+        _schedule_remote_backfill(*remote_range)
         return items
 
     run_events_job(*remote_range)

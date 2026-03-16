@@ -34,6 +34,14 @@ def list_news(
     end: date | None = Query(None),
     sentiment: str | None = Query(None),
     sentiments: list[str] | None = Query(None),
+    source_site: str | None = Query(None),
+    source_sites: list[str] | None = Query(None),
+    source_category: str | None = Query(None),
+    source_categories: list[str] | None = Query(None),
+    topic_category: str | None = Query(None),
+    topic_categories: list[str] | None = Query(None),
+    time_bucket: str | None = Query(None),
+    time_buckets: list[str] | None = Query(None),
     keyword: str | None = Query(None),
     sort_by: list[str] | None = Query(None),
     paging: dict = Depends(pagination_params),
@@ -42,6 +50,10 @@ def list_news(
 ):
     """获取新闻列表。"""
     sentiments_filter = sentiments or ([sentiment] if sentiment else None)
+    source_sites_filter = source_sites or ([source_site] if source_site else None)
+    source_categories_filter = source_categories or ([source_category] if source_category else None)
+    topic_categories_filter = topic_categories or ([topic_category] if topic_category else None)
+    time_buckets_filter = time_buckets or ([time_bucket] if time_bucket else None)
     items, total = list_news_service(
         db,
         symbol,
@@ -50,6 +62,10 @@ def list_news(
         start=start,
         end=end,
         sentiments=sentiments_filter,
+        source_sites=source_sites_filter,
+        source_categories=source_categories_filter,
+        topic_categories=topic_categories_filter,
+        time_buckets=time_buckets_filter,
         keyword=keyword,
         sort_by=sort_by,
         sort=sorting["sort"],

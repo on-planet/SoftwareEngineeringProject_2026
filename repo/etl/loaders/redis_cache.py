@@ -133,12 +133,18 @@ def cache_indicator(
     _set_json(f"indicator:{symbol}:{indicator}", data)
 
 
-def cache_sector_exposure(as_of: date | str, data: Dict[str, Any], market: str | None = None) -> None:
+def cache_sector_exposure(
+    as_of: date | str,
+    data: Dict[str, Any],
+    market: str | None = None,
+    *,
+    basis: str = "market_value",
+) -> None:
     """Cache sector exposure into Redis."""
     suffix = _format_market_suffix(market)
-    key = f"sector_exposure:{_format_key_suffix(as_of)}{suffix}"
+    key = f"sector_exposure:{_format_key_suffix(as_of)}:{basis}{suffix}"
     _set_json(key, data)
-    _set_json(f"sector_exposure:latest{suffix}", data)
+    _set_json(f"sector_exposure:latest:{basis}{suffix}", data)
 
 
 def cache_macro(as_of: date | str, data: Dict[str, Any]) -> None:

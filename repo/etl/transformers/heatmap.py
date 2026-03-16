@@ -1,7 +1,9 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from collections import defaultdict
 from typing import Dict, Iterable, List
+
+from etl.utils.sector_taxonomy import normalize_sector_name
 
 
 def build_heatmap(rows: Iterable[dict]) -> List[dict]:
@@ -10,7 +12,7 @@ def build_heatmap(rows: Iterable[dict]) -> List[dict]:
         lambda: {"closes": [], "changes": [], "close_sum": 0.0, "change_sum": 0.0, "count": 0}
     )
     for row in rows:
-        sector = row.get("sector") or "未知"
+        sector = normalize_sector_name(row.get("sector"), market=row.get("market"))
         market = row.get("market")
         close = float(row.get("close", 0) or 0)
         change = float(row.get("change", 0) or 0)

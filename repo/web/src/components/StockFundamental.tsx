@@ -1,7 +1,24 @@
 ﻿import React, { useEffect, useMemo, useState } from "react";
 
-import { getFundamental, getStock } from "../services/api";
-import { formatNullableNumber, formatNumber, formatSigned, formatSmartPercent } from "../utils/format";
+const FALLBACK_SECTOR_LABEL = "未分类";
+const normalizeSector = (value?: string | null) => {
+  const text = String(value ?? "").trim();
+  if (!text || text.toLowerCase() === "unknown" || text === "未知") {
+    return FALLBACK_SECTOR_LABEL;
+  }
+  return text;
+};
+
+import { getStockExtras, getStockOverview } from "../services/api";
+import {
+  formatLoosePercent,
+  formatNullableNumber,
+  formatNumber,
+  formatPercent,
+  formatSigned,
+  normalizePercentRatio,
+} from "../utils/format";
+import { readPersistentCache, writePersistentCache } from "../utils/persistentCache";
 import { getPrimaryStockName, getSecondaryStockName } from "../utils/stockNames";
 
 type Quote = {
@@ -53,6 +70,14 @@ type StockProfile = {
   quote?: Quote | null;
   quote_detail?: QuoteDetail | null;
   pankou?: Pankou | null;
+  risk?: {
+    symbol: string;
+    max_drawdown?: number | null;
+    volatility?: number | null;
+    as_of?: string | null;
+    cache_hit?: boolean | null;
+  } | null;
+  fundamental?: Fundamental;
 };
 
 type Fundamental = {
@@ -65,6 +90,34 @@ type Fundamental = {
 type Props = {
   symbol: string;
 };
+
+const OVERVIEW_CACHE_MAX_AGE_MS = 2 * 60 * 1000;
+const EXTRAS_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
+
+function buildOverviewCacheKey(symbol: string) {
+  return `stock:overview:${symbol.trim().toUpperCase()}`;
+}
+
+function buildExtrasCacheKey(symbol: string) {
+  return `stock:extras:${symbol.trim().toUpperCase()}`;
+}
+
+function hasProfileIdentity(value: Partial<StockProfile> | null | undefined): value is StockProfile {
+  return !!value && typeof value.symbol === "string" && typeof value.name === "string" && typeof value.market === "string" && typeof value.sector === "string";
+}
+
+function mergeProfile(
+  base: StockProfile | null,
+  patch: Partial<StockProfile> | null | undefined
+): StockProfile | null {
+  if (!base) {
+    return hasProfileIdentity(patch) ? patch : null;
+  }
+  return {
+    ...base,
+    ...(patch ?? {}),
+  } as StockProfile;
+}
 
 function MetricCard({ title, value, helper }: { title: string; value: string; helper?: string }) {
   return (
@@ -108,27 +161,39 @@ function DepthTable({ title, prefix, items }: { title: string; prefix: string; i
 
 export function StockFundamental({ symbol }: Props) {
   const [profile, setProfile] = useState<StockProfile | null>(null);
-  const [fundamental, setFundamental] = useState<Fundamental>(null);
   const [loading, setLoading] = useState(true);
+  const [extrasLoading, setExtrasLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
-    Promise.all([getStock(symbol), getFundamental(symbol)])
-      .then(([profileRes, fundamentalRes]) => {
+    const overviewCacheKey = buildOverviewCacheKey(symbol);
+    const extrasCacheKey = buildExtrasCacheKey(symbol);
+    const cachedOverview = readPersistentCache<StockProfile>(overviewCacheKey, OVERVIEW_CACHE_MAX_AGE_MS);
+    const cachedExtras = readPersistentCache<Pick<StockProfile, "quote_detail" | "pankou">>(
+      extrasCacheKey,
+      EXTRAS_CACHE_MAX_AGE_MS
+    );
+    setProfile(cachedOverview ? mergeProfile(cachedOverview, cachedExtras) : null);
+    setLoading(!cachedOverview);
+    setError(null);
+    getStockOverview(symbol)
+      .then((profileRes) => {
         if (!active) {
           return;
         }
-        setProfile(profileRes as StockProfile);
-        setFundamental(fundamentalRes as Fundamental);
+        const nextProfile = profileRes as StockProfile;
+        writePersistentCache(overviewCacheKey, nextProfile);
+        setProfile((current) => mergeProfile(current, nextProfile));
         setError(null);
       })
       .catch((err: Error) => {
         if (!active) {
           return;
         }
-        setError(err.message || "个股概览加载失败");
+        if (!cachedOverview) {
+          setError(err.message || "个股概览加载失败");
+        }
       })
       .finally(() => {
         if (active) {
@@ -140,10 +205,67 @@ export function StockFundamental({ symbol }: Props) {
     };
   }, [symbol]);
 
-  const changeColor = useMemo(() => {
-    const change = profile?.quote?.change ?? 0;
-    return change < 0 ? "#10b981" : "#ef4444";
+  useEffect(() => {
+    let active = true;
+    const extrasCacheKey = buildExtrasCacheKey(symbol);
+    const cachedExtras = readPersistentCache<Pick<StockProfile, "quote_detail" | "pankou">>(
+      extrasCacheKey,
+      EXTRAS_CACHE_MAX_AGE_MS
+    );
+    if (cachedExtras) {
+      setProfile((current) => (current ? { ...current, ...cachedExtras } : current));
+    }
+    setExtrasLoading(!cachedExtras);
+    getStockExtras(symbol)
+      .then((extrasRes) => {
+        if (!active) {
+          return;
+        }
+        const extras = extrasRes as Pick<StockProfile, "quote_detail" | "pankou">;
+        writePersistentCache(extrasCacheKey, extras);
+        setProfile((current) => (current ? { ...current, ...extras } : current));
+      })
+      .catch(() => {
+        if (!active) {
+          return;
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setExtrasLoading(false);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [symbol]);
+
+  const priceChange = useMemo(() => {
+    const change = profile?.quote?.change;
+    if (change === null || change === undefined || Number.isNaN(change)) {
+      return null;
+    }
+    return change;
   }, [profile]);
+
+  const changeColor = useMemo(() => {
+    const change = priceChange ?? 0;
+    return change < 0 ? "#10b981" : "#ef4444";
+  }, [priceChange]);
+
+  const percentRatio = useMemo(() => {
+    const lastClose = profile?.quote?.last_close;
+    if (
+      priceChange !== null &&
+      lastClose !== null &&
+      lastClose !== undefined &&
+      !Number.isNaN(lastClose) &&
+      lastClose !== 0
+    ) {
+      return priceChange / lastClose;
+    }
+    return normalizePercentRatio(profile?.quote?.percent);
+  }, [priceChange, profile]);
 
   if (loading) {
     return <div className="card helper">个股概览加载中...</div>;
@@ -160,6 +282,7 @@ export function StockFundamental({ symbol }: Props) {
   const quote = profile.quote ?? null;
   const detail = profile.quote_detail ?? null;
   const pankou = profile.pankou ?? null;
+  const fundamental = profile.fundamental ?? null;
   const primaryName = getPrimaryStockName(profile.symbol, profile.name);
   const secondaryName = getSecondaryStockName(profile.symbol, profile.name);
 
@@ -174,7 +297,7 @@ export function StockFundamental({ symbol }: Props) {
             </div>
           ) : null}
           <div className="helper" style={{ marginTop: 6 }}>
-            {profile.symbol} · {profile.market} · {profile.sector || "未分类"}
+            {profile.symbol} · {profile.market} · {normalizeSector(profile.sector)}
           </div>
           {quote?.timestamp ? (
             <div className="helper" style={{ marginTop: 6 }}>
@@ -185,8 +308,8 @@ export function StockFundamental({ symbol }: Props) {
         <div className="quote-hero">
           <div className="quote-current">{formatNullableNumber(quote?.current)}</div>
           <div className="quote-change" style={{ color: changeColor }}>
-            {quote?.change !== null && quote?.change !== undefined ? formatSigned(quote.change) : "--"}
-            <span style={{ marginLeft: 8 }}>{formatSmartPercent(quote?.percent)}</span>
+            {priceChange !== null ? formatSigned(priceChange) : "--"}
+            <span style={{ marginLeft: 8 }}>{percentRatio !== null ? formatPercent(percentRatio) : "--"}</span>
           </div>
         </div>
       </div>
@@ -198,16 +321,16 @@ export function StockFundamental({ symbol }: Props) {
         <MetricCard title="昨收" value={formatNullableNumber(quote?.last_close)} />
         <MetricCard title="成交量" value={quote?.volume !== null && quote?.volume !== undefined ? formatNumber(quote.volume) : "--"} />
         <MetricCard title="成交额" value={quote?.amount !== null && quote?.amount !== undefined ? formatNumber(quote.amount) : "--"} />
-        <MetricCard title="换手率" value={formatSmartPercent(quote?.turnover_rate)} />
-        <MetricCard title="振幅" value={formatSmartPercent(quote?.amplitude)} />
-        <MetricCard title="市盈率 TTM" value={formatNullableNumber(detail?.pe_ttm)} />
-        <MetricCard title="市净率" value={formatNullableNumber(detail?.pb)} />
-        <MetricCard title="市销率 TTM" value={formatNullableNumber(detail?.ps_ttm)} />
-        <MetricCard title="市现率" value={formatNullableNumber(detail?.pcf)} />
-        <MetricCard title="总市值" value={detail?.market_cap !== null && detail?.market_cap !== undefined ? formatNumber(detail.market_cap) : "--"} />
-        <MetricCard title="流通市值" value={detail?.float_market_cap !== null && detail?.float_market_cap !== undefined ? formatNumber(detail.float_market_cap) : "--"} />
-        <MetricCard title="股息率" value={formatSmartPercent(detail?.dividend_yield)} />
-        <MetricCard title="量比" value={formatNullableNumber(detail?.volume_ratio)} />
+        <MetricCard title="换手率" value={formatLoosePercent(quote?.turnover_rate)} />
+        <MetricCard title="振幅" value={formatLoosePercent(quote?.amplitude)} />
+        <MetricCard title="市盈率 TTM" value={formatNullableNumber(detail?.pe_ttm)} helper={extrasLoading && !detail ? "补充中" : undefined} />
+        <MetricCard title="市净率" value={formatNullableNumber(detail?.pb)} helper={extrasLoading && !detail ? "补充中" : undefined} />
+        <MetricCard title="市销率 TTM" value={formatNullableNumber(detail?.ps_ttm)} helper={extrasLoading && !detail ? "补充中" : undefined} />
+        <MetricCard title="市现率" value={formatNullableNumber(detail?.pcf)} helper={extrasLoading && !detail ? "补充中" : undefined} />
+        <MetricCard title="总市值" value={detail?.market_cap !== null && detail?.market_cap !== undefined ? formatNumber(detail.market_cap) : "--"} helper={extrasLoading && !detail ? "补充中" : undefined} />
+        <MetricCard title="流通市值" value={detail?.float_market_cap !== null && detail?.float_market_cap !== undefined ? formatNumber(detail.float_market_cap) : "--"} helper={extrasLoading && !detail ? "补充中" : undefined} />
+        <MetricCard title="股息率" value={formatLoosePercent(detail?.dividend_yield)} helper={extrasLoading && !detail ? "补充中" : undefined} />
+        <MetricCard title="量比" value={formatNullableNumber(detail?.volume_ratio)} helper={extrasLoading && !detail ? "补充中" : undefined} />
       </div>
 
       <div className="summary-grid">
@@ -225,9 +348,9 @@ export function StockFundamental({ symbol }: Props) {
           <div className="card-title">盘口概览</div>
           <div className="metric-grid compact-grid">
             <MetricCard title="委差" value={formatNullableNumber(pankou?.diff)} />
-            <MetricCard title="委比" value={formatSmartPercent(pankou?.ratio)} />
+            <MetricCard title="委比" value={formatLoosePercent(pankou?.ratio)} />
             <MetricCard title="盘口时间" value={pankou?.timestamp ? new Date(pankou.timestamp).toLocaleTimeString("zh-CN", { hour12: false }) : "--"} />
-            <MetricCard title="最小交易单位" value={detail?.lot_size !== null && detail?.lot_size !== undefined ? formatNumber(detail.lot_size) : "--"} />
+            <MetricCard title="最小交易单位" value={detail?.lot_size !== null && detail?.lot_size !== undefined ? formatNumber(detail.lot_size) : "--"} helper={extrasLoading && !pankou ? "补充中" : undefined} />
           </div>
         </div>
       </div>
@@ -239,4 +362,3 @@ export function StockFundamental({ symbol }: Props) {
     </div>
   );
 }
-

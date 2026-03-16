@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from collections import defaultdict
 from datetime import date
@@ -10,36 +10,13 @@ from app.core.cache import get_json
 from app.models.daily_prices import DailyPrice
 from app.models.stocks import Stock
 from app.utils.query_params import SortOrder
-
-UNKNOWN_SECTOR = "Unknown"
-UNKNOWN_SECTOR_ALIASES = {
-    "",
-    "unknown",
-    "unkown",
-    "none",
-    "null",
-    "delta-unknown",
-    "delta-zh",
-}
-RAW_UNKNOWN_SECTORS = {"Unknown", "鏈煡", "δ֪", "未知"}
+from etl.utils.sector_taxonomy import UNKNOWN_SECTOR, normalize_sector_name
 
 
 def _format_as_of(value) -> str:
     if isinstance(value, date):
         return value.isoformat()
     return str(value)
-
-
-def _normalize_sector_name(value: str | None) -> str:
-    raw = str(value or "").strip()
-    if not raw:
-        return UNKNOWN_SECTOR
-    lowered = raw.lower()
-    if lowered in UNKNOWN_SECTOR_ALIASES:
-        return UNKNOWN_SECTOR
-    if raw in RAW_UNKNOWN_SECTORS:
-        return UNKNOWN_SECTOR
-    return raw
 
 
 def _coerce_float(value) -> float:
@@ -53,7 +30,7 @@ def _coerce_int(value) -> int:
 def _normalize_cached_item(item: dict) -> dict:
     return {
         **item,
-        "sector": _normalize_sector_name(item.get("sector")),
+        "sector": normalize_sector_name(item.get("sector"), market=item.get("market")),
         "avg_close": _coerce_float(item.get("avg_close")),
         "avg_change": _coerce_float(item.get("avg_change")),
         "close_sum": _coerce_float(item.get("close_sum")),
@@ -95,8 +72,7 @@ def get_heatmap(
     max_change: float | None = None,
     as_of: date | None = None,
 ):
-    """Get industry heatmap data aggregated from stock daily prices."""
-    sector_filter = _normalize_sector_name(sector) if sector else None
+    sector_filter = normalize_sector_name(sector) if sector else None
     latest_date_query = db.query(func.max(DailyPrice.date)).join(Stock, DailyPrice.symbol == Stock.symbol)
     if market:
         latest_date_query = latest_date_query.filter(Stock.market == market)
@@ -123,7 +99,7 @@ def get_heatmap(
 
     buckets: dict[str, dict[str, float]] = defaultdict(lambda: {"close_sum": 0.0, "change_sum": 0.0, "count": 0.0})
     for sector_name, close_sum, change_sum, symbol_count in rows:
-        normalized_sector = _normalize_sector_name(sector_name)
+        normalized_sector = normalize_sector_name(sector_name, market=market)
         bucket = buckets[normalized_sector]
         bucket["close_sum"] += float(close_sum or 0.0)
         bucket["change_sum"] += float(change_sum or 0.0)
@@ -152,7 +128,6 @@ def get_cached_heatmap(
     max_change: float | None = None,
     sort: SortOrder = "desc",
 ) -> list[dict] | None:
-    """Get cached heatmap data from Redis."""
     key = "heatmap:latest" if as_of is None else f"heatmap:{_format_as_of(as_of)}"
     payload = get_json(key)
     if not payload:
@@ -165,7 +140,7 @@ def get_cached_heatmap(
     if items and any("avg_close" not in item for item in items):
         return None
 
-    sector_filter = _normalize_sector_name(sector) if sector else None
+    sector_filter = normalize_sector_name(sector) if sector else None
     normalized = [_normalize_cached_item(item) for item in items]
     if market:
         normalized = [item for item in normalized if item.get("market") == market]

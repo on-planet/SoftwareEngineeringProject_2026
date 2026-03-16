@@ -17,6 +17,7 @@ from app.schemas.portfolio_analysis import (
     PortfolioItemAnalysis,
     PortfolioSummary,
 )
+from etl.utils.sector_taxonomy import normalize_sector_name
 
 PORTFOLIO_ANALYSIS_CACHE_TTL = 600
 
@@ -51,18 +52,12 @@ def get_portfolio_analysis(db: Session, user_id: int, top_n: int = 5) -> Portfol
         except Exception:
             pass
 
-    holdings = (
-        db.query(UserPortfolio)
-        .filter(UserPortfolio.user_id == user_id)
-        .all()
-    )
+    holdings = db.query(UserPortfolio).filter(UserPortfolio.user_id == user_id).all()
     symbols = [item.symbol for item in holdings]
     price_map = _latest_prices_map(db, symbols)
     sector_map = {
-        symbol: sector
-        for symbol, sector in db.query(Stock.symbol, Stock.sector)
-        .filter(Stock.symbol.in_(symbols))
-        .all()
+        symbol: normalize_sector_name(sector)
+        for symbol, sector in db.query(Stock.symbol, Stock.sector).filter(Stock.symbol.in_(symbols)).all()
     }
 
     items: list[PortfolioItemAnalysis] = []
@@ -94,7 +89,7 @@ def get_portfolio_analysis(db: Session, user_id: int, top_n: int = 5) -> Portfol
 
     exposure_bucket: dict[str, float] = defaultdict(float)
     for item in items:
-        sector = item.sector or "未知"
+        sector = normalize_sector_name(item.sector)
         exposure_bucket[sector] += item.latest_price * item.shares
 
     sector_exposure = [

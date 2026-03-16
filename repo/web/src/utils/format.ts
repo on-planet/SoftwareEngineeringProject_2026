@@ -2,8 +2,8 @@ export function formatNumber(value: number) {
   return new Intl.NumberFormat("zh-CN").format(value);
 }
 
-export function formatPercent(value: number) {
-  return `${(value * 100).toFixed(2)}%`;
+export function formatPercent(value: number, digits = 2) {
+  return `${(value * 100).toFixed(digits)}%`;
 }
 
 export function formatSigned(value: number) {
@@ -18,10 +18,19 @@ export function formatNullableNumber(value?: number | null, digits = 2) {
   return Number(value).toFixed(digits);
 }
 
-export function formatSmartPercent(value?: number | null, digits = 2) {
+export function normalizePercentRatio(value?: number | null) {
   if (value === null || value === undefined || Number.isNaN(value)) {
+    return null;
+  }
+  return Math.abs(value) > 1 ? value / 100 : value;
+}
+
+export function formatLoosePercent(value?: number | null, digits = 2) {
+  const normalized = normalizePercentRatio(value);
+  if (normalized === null) {
     return "--";
   }
-  const normalized = Math.abs(value) <= 1 ? value * 100 : value;
-  return `${normalized.toFixed(digits)}%`;
+  return formatPercent(normalized, digits);
 }
+
+export const formatSmartPercent = formatLoosePercent;

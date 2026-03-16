@@ -1,6 +1,15 @@
 import Link from "next/link";
 import React, { useEffect, useState } from "react";
 
+const FALLBACK_SECTOR_LABEL = "未分类";
+const normalizeSector = (value?: string | null) => {
+  const text = String(value ?? "").trim();
+  if (!text || text.toLowerCase() === "unknown" || text === "未知") {
+    return FALLBACK_SECTOR_LABEL;
+  }
+  return text;
+};
+
 import { getStocks } from "../services/api";
 import { getPrimaryStockName, getSecondaryStockName } from "../utils/stockNames";
 
@@ -73,7 +82,7 @@ function MarketSection({ market, keyword }: { market: "A" | "HK"; keyword: strin
                 <div className="helper">{item.symbol}</div>
                 <div className="stock-card-meta">
                   <span>{item.market}</span>
-                  <span>{item.sector || "未分类"}</span>
+                  <span>{normalizeSector(item.sector)}</span>
                 </div>
               </Link>
             );

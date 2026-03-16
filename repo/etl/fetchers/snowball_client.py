@@ -28,6 +28,7 @@ _TOKEN_BLOCKED = False
 _TOKEN_BLOCKED_VALUE = ""
 _TOKEN_BLOCK_WARNING_SHOWN = False
 _SYMBOL_RE = re.compile(r"^[A-Z]{2}\d{6}$")
+_BJ_SYMBOL_RE = re.compile(r"^BJ\d{6}$")
 _HK_SYMBOL_RE = re.compile(r"^HK\d{1,5}$")
 _US_SYMBOL_RE = re.compile(r"^US[A-Z.]+$")
 _DEFAULT_INDEX_SPECS = (
@@ -138,7 +139,7 @@ def normalize_symbol(symbol: str) -> str:
     upper = symbol.strip().upper()
     if not upper:
         return upper
-    if upper.endswith((".SH", ".SZ", ".HK", ".US")):
+    if upper.endswith((".SH", ".SZ", ".BJ", ".HK", ".US")):
         if upper.endswith(".HK"):
             code = upper[:-3]
             if code.isdigit():
@@ -148,6 +149,8 @@ def normalize_symbol(symbol: str) -> str:
         market = upper[:2]
         code = upper[2:]
         return f"{code}.{market}"
+    if _BJ_SYMBOL_RE.match(upper):
+        return f"{upper[2:]}.BJ"
     if _HK_SYMBOL_RE.match(upper):
         return f"{upper[2:].zfill(5)}.HK"
     if _US_SYMBOL_RE.match(upper):
@@ -155,6 +158,8 @@ def normalize_symbol(symbol: str) -> str:
     digits = re.sub(r"\D", "", upper)
     if 1 <= len(digits) <= 5:
         return f"{digits.zfill(5)}.HK"
+    if len(digits) == 6 and digits.startswith(("4", "8")):
+        return f"{digits}.BJ"
     if len(digits) == 6 and digits.startswith(("5", "6", "9")):
         return f"{digits}.SH"
     if len(digits) == 6:
@@ -197,7 +202,7 @@ def to_snowball_symbol(symbol: str) -> str:
     canonical_index = _INDEX_ALIAS_MAP.get(upper)
     if canonical_index:
         return _index_map().get(canonical_index, upper)
-    if _SYMBOL_RE.match(upper) or _HK_SYMBOL_RE.match(upper) or _US_SYMBOL_RE.match(upper):
+    if _SYMBOL_RE.match(upper) or _BJ_SYMBOL_RE.match(upper) or _HK_SYMBOL_RE.match(upper) or _US_SYMBOL_RE.match(upper):
         if _HK_SYMBOL_RE.match(upper):
             return f"HK{upper[2:].zfill(5)}"
         return upper
@@ -206,6 +211,8 @@ def to_snowball_symbol(symbol: str) -> str:
         return f"SH{normalized[:-3]}"
     if normalized.endswith(".SZ"):
         return f"SZ{normalized[:-3]}"
+    if normalized.endswith(".BJ"):
+        return f"BJ{normalized[:-3]}"
     if normalized.endswith(".HK"):
         return f"HK{normalized[:-3].zfill(5)}"
     if normalized.endswith(".US"):
@@ -267,6 +274,8 @@ def from_snowball_symbol(symbol: str) -> str:
         return reverse_index_map[upper]
     if upper.startswith(("SH", "SZ")) and len(upper) == 8 and upper[2:].isdigit():
         return f"{upper[2:]}.{upper[:2]}"
+    if upper.startswith("BJ") and len(upper) == 8 and upper[2:].isdigit():
+        return f"{upper[2:]}.BJ"
     if upper.startswith("HK") and len(upper) >= 6:
         return f"{upper[2:].zfill(5)}.HK"
     if upper.startswith("US") and len(upper) > 2:
@@ -278,7 +287,7 @@ def market_from_symbol(symbol: str) -> str:
     normalized = normalize_index_symbol(symbol) if symbol in _index_specs_by_symbol() else normalize_symbol(symbol)
     if normalized.endswith(".HK"):
         return "HK"
-    if normalized.endswith((".SH", ".SZ")):
+    if normalized.endswith((".SH", ".SZ", ".BJ")):
         return "A"
     return "US"
 
@@ -913,6 +922,16 @@ def _extract_finance_period(row: dict, fallback_period: str) -> str:
     return f"{record_date.year:04d}{record_date.month:02d}"
 
 
+def _financial_row_has_signal(row: dict | None) -> bool:
+    if not isinstance(row, dict):
+        return False
+    for key in ("revenue", "net_income", "cash_flow", "roe", "debt_ratio"):
+        value = _safe_float(row.get(key))
+        if value is not None and abs(value) > 1e-12:
+            return True
+    return False
+
+
 def _parse_kline_history_rows(
     symbol: str,
     rows: list[dict],
@@ -1000,6 +1019,8 @@ def _quote_from_record(symbol: str, record: dict) -> dict:
         percent = change / last_close * 100.0
     return {
         "symbol": normalized,
+        "name": _extract_name(record, normalized),
+        "sector": _extract_sector(record),
         "current": current,
         "change": change,
         "percent": percent,
@@ -1500,7 +1521,9 @@ def get_financials(symbol: str, period: str) -> dict:
         ["symbol", "period", "revenue", "net_income", "cash_flow", "roe", "debt_ratio"],
         "snowball.financials",
     )
-    return rows[0] if rows else {}
+    if not rows:
+        return {}
+    return rows[0] if _financial_row_has_signal(rows[0]) else {}
 
 
 def get_recent_financials(symbol: str, *, count: int = 8, as_of: date | None = None) -> List[dict]:

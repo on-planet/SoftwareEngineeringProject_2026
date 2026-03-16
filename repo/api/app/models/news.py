@@ -15,3 +15,7 @@ class News(Base):
     published_at = Column(DateTime)
     link = Column(String)
     source = Column(String)
+    source_site = Column(String)
+    source_category = Column(String)
+    topic_category = Column(String)
+    time_bucket = Column(String)

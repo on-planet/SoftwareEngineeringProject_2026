@@ -122,3 +122,23 @@ def save_stock_basics_cache(rows: Iterable[dict], *, merge: bool = False) -> int
     _ensure_state_dir()
     CACHE_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return len(payload["items"])
+
+
+def list_cached_symbols(
+    *,
+    markets: Iterable[str] | None = None,
+    limit: int | None = None,
+) -> list[str]:
+    market_filter = {str(item).strip().upper() for item in (markets or []) if str(item).strip()} or None
+    symbols: list[str] = []
+    for row in load_stock_basics_cache():
+        market = str(row.get("market") or "").upper()
+        if market_filter is not None and market not in market_filter:
+            continue
+        symbol = normalize_symbol(str(row.get("symbol") or ""))
+        if not symbol:
+            continue
+        symbols.append(symbol)
+        if limit is not None and limit > 0 and len(symbols) >= limit:
+            break
+    return symbols

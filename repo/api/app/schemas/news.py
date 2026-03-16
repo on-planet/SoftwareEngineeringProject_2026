@@ -13,6 +13,10 @@ class NewsOut(BaseModel):
     published_at: datetime
     link: str | None = None
     source: str | None = None
+    source_site: str | None = None
+    source_category: str | None = None
+    topic_category: str | None = None
+    time_bucket: str | None = None
 
     class Config:
         from_attributes = True
@@ -25,6 +29,10 @@ class NewsCreate(BaseModel):
     published_at: datetime
     link: str | None = None
     source: str | None = None
+    source_site: str | None = None
+    source_category: str | None = None
+    topic_category: str | None = None
+    time_bucket: str | None = None
 
 
 class NewsUpdate(BaseModel):
@@ -33,3 +41,7 @@ class NewsUpdate(BaseModel):
     published_at: datetime | None = None
     link: str | None = None
     source: str | None = None
+    source_site: str | None = None
+    source_category: str | None = None
+    topic_category: str | None = None
+    time_bucket: str | None = None

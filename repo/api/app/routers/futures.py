@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
@@ -28,6 +29,8 @@ def list_futures_route(
     symbol: str | None = Query(None),
     start: date | None = Query(None),
     end: date | None = Query(None),
+    as_of: date | None = Query(None),
+    frequency: Literal["day", "week"] = Query("day"),
     limit: int = Query(200, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     sorting: dict = Depends(sort_params),
@@ -38,6 +41,8 @@ def list_futures_route(
         symbol=symbol,
         start=start,
         end=end,
+        as_of=as_of,
+        frequency=frequency,
         limit=limit,
         offset=offset,
         sort=sorting["sort"],
@@ -57,7 +62,8 @@ def get_futures_series_route(
     symbol: str,
     start: date | None = Query(None),
     end: date | None = Query(None),
+    frequency: Literal["day", "week"] = Query("day"),
     db: Session = Depends(get_db),
 ):
-    items = get_futures_series(db, symbol=symbol, start=start, end=end)
+    items = get_futures_series(db, symbol=symbol, start=start, end=end, frequency=frequency)
     return {"symbol": symbol.upper(), "items": items}

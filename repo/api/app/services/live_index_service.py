@@ -5,6 +5,7 @@ from datetime import date
 from app.core.cache import get_json, set_json
 from app.services.cache_utils import build_cache_key
 from etl.fetchers.hk_index_client import get_hk_index_constituents, supported_hk_index_symbols
+from etl.fetchers.index_constituent_client import get_index_constituents
 from etl.fetchers.snowball_client import (
     get_index_daily,
     get_stock_basics,
@@ -13,7 +14,7 @@ from etl.fetchers.snowball_client import (
 )
 
 LIVE_INDEX_CACHE_TTL = 300
-LIVE_INDEX_CACHE_VERSION = "v2"
+LIVE_INDEX_CACHE_VERSION = "v6"
 
 
 def list_live_indices(*, as_of: date | None = None, sort: str = "desc") -> list[dict]:
@@ -61,26 +62,37 @@ def list_live_index_constituents(
         version=LIVE_INDEX_CACHE_VERSION,
         symbol=canonical,
         as_of=as_of,
-        limit=limit,
-        offset=offset,
     )
     cached = get_json(cache_key)
-    if isinstance(cached, dict) and isinstance(cached.get("items"), list) and isinstance(cached.get("total"), int):
-        return cached["items"], cached["total"]
-
-    rows: list[dict] = []
-    if canonical in supported_hk_index_symbols():
-        rows = get_hk_index_constituents(canonical)
-        basics = get_stock_basics([row["symbol"] for row in rows if row.get("symbol")])
-        by_symbol = {str(item.get("symbol")): item for item in basics if isinstance(item, dict) and item.get("symbol")}
-        for row in rows:
-            basic = by_symbol.get(str(row.get("symbol")), {})
-            if basic.get("name") and basic.get("name") != basic.get("symbol"):
-                row["name"] = basic["name"]
-            if basic.get("market"):
-                row["market"] = basic["market"]
+    if isinstance(cached, list):
+        rows = cached
+    else:
+        rows = []
+        target_date = as_of or date.today()
+        if canonical in supported_hk_index_symbols():
+            # Hang Seng payload already carries constituent name and market.
+            rows = get_hk_index_constituents(canonical)
+        else:
+            rows = get_index_constituents(canonical, target_date)
+            if rows:
+                basics = get_stock_basics([row["symbol"] for row in rows if row.get("symbol")])
+                by_symbol = {str(item.get("symbol")): item for item in basics if isinstance(item, dict) and item.get("symbol")}
+                rows = sorted(
+                    rows,
+                    key=lambda item: float(item.get("weight") or 0.0),
+                    reverse=True,
+                )
+                for rank, row in enumerate(rows, start=1):
+                    basic = by_symbol.get(str(row.get("symbol")), {})
+                    if basic.get("name") and basic.get("name") != basic.get("symbol"):
+                        row["name"] = basic["name"]
+                    if basic.get("market"):
+                        row["market"] = basic["market"]
+                    row.setdefault("rank", rank)
+                    row.setdefault("source", "Snowball")
+        if rows:
+            set_json(cache_key, rows, ttl=LIVE_INDEX_CACHE_TTL)
 
     total = len(rows)
     items = rows[offset : offset + limit]
-    set_json(cache_key, {"items": items, "total": total}, ttl=LIVE_INDEX_CACHE_TTL)
     return items, total

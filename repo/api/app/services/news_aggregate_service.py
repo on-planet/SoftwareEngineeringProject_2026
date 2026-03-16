@@ -19,6 +19,10 @@ def list_news_aggregate(
     start: date | None = None,
     end: date | None = None,
     sentiments: list[str] | None = None,
+    source_sites: list[str] | None = None,
+    source_categories: list[str] | None = None,
+    topic_categories: list[str] | None = None,
+    time_buckets: list[str] | None = None,
     keyword: str | None = None,
     sort_by: list[str] | None = None,
     limit: int = 100,
@@ -31,6 +35,10 @@ def list_news_aggregate(
         start=start,
         end=end,
         sentiments=sentiments,
+        source_sites=source_sites,
+        source_categories=source_categories,
+        topic_categories=topic_categories,
+        time_buckets=time_buckets,
         keyword=keyword,
         sort_by=sort_by,
         limit=limit,
@@ -47,6 +55,14 @@ def list_news_aggregate(
         base_query = base_query.filter(News.symbol.in_(symbols))
     if sentiments:
         base_query = base_query.filter(News.sentiment.in_(sentiments))
+    if source_sites:
+        base_query = base_query.filter(News.source_site.in_(source_sites))
+    if source_categories:
+        base_query = base_query.filter(News.source_category.in_(source_categories))
+    if topic_categories:
+        base_query = base_query.filter(News.topic_category.in_(topic_categories))
+    if time_buckets:
+        base_query = base_query.filter(News.time_bucket.in_(time_buckets))
     if keyword:
         keyword_like = f"%{keyword}%"
         base_query = base_query.filter(
@@ -76,6 +92,10 @@ def list_news_aggregate(
         "title": News.title,
         "symbol": News.symbol,
         "sentiment": News.sentiment,
+        "source_site": News.source_site,
+        "source_category": News.source_category,
+        "topic_category": News.topic_category,
+        "time_bucket": News.time_bucket,
     }
     sort_keys = [key for key in (sort_by or ["published_at"]) if key in sort_fields]
     if not sort_keys:

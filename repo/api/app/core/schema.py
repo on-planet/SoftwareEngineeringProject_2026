@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from sqlalchemy import text
+
 from app.core.db import engine
 from app.models.base import Base
 
@@ -11,15 +13,35 @@ from app.models.financials import Financial  # noqa: F401
 from app.models.fund_holdings import FundHolding  # noqa: F401
 from app.models.fundamental_score import FundamentalScore  # noqa: F401
 from app.models.futures_price import FuturesPrice  # noqa: F401
+from app.models.futures_weekly_price import FuturesWeeklyPrice  # noqa: F401
 from app.models.index_constituent import IndexConstituent  # noqa: F401
 from app.models.indices import Index  # noqa: F401
 from app.models.insider_trade import InsiderTrade  # noqa: F401
 from app.models.macro import Macro  # noqa: F401
 from app.models.news import News  # noqa: F401
 from app.models.sector_exposure import SectorExposure  # noqa: F401
+from app.models.sector_exposure_summary import SectorExposureSummary  # noqa: F401
+from app.models.stock_valuation_snapshot import StockValuationSnapshot  # noqa: F401
 from app.models.stocks import Stock  # noqa: F401
 from app.models.user_portfolio import UserPortfolio  # noqa: F401
 
 
 def init_schema() -> None:
     Base.metadata.create_all(bind=engine)
+    statements = [
+        "ALTER TABLE futures_prices ADD COLUMN IF NOT EXISTS contract_month VARCHAR(16)",
+        "ALTER TABLE futures_prices ADD COLUMN IF NOT EXISTS settlement DOUBLE PRECISION",
+        "ALTER TABLE futures_prices ADD COLUMN IF NOT EXISTS open_interest DOUBLE PRECISION",
+        "ALTER TABLE futures_prices ADD COLUMN IF NOT EXISTS turnover DOUBLE PRECISION",
+        "ALTER TABLE futures_weekly_prices ADD COLUMN IF NOT EXISTS contract_month VARCHAR(16)",
+        "ALTER TABLE futures_weekly_prices ADD COLUMN IF NOT EXISTS settlement DOUBLE PRECISION",
+        "ALTER TABLE futures_weekly_prices ADD COLUMN IF NOT EXISTS open_interest DOUBLE PRECISION",
+        "ALTER TABLE futures_weekly_prices ADD COLUMN IF NOT EXISTS turnover DOUBLE PRECISION",
+        "ALTER TABLE news ADD COLUMN IF NOT EXISTS source_site VARCHAR(128)",
+        "ALTER TABLE news ADD COLUMN IF NOT EXISTS source_category VARCHAR(64)",
+        "ALTER TABLE news ADD COLUMN IF NOT EXISTS topic_category VARCHAR(64)",
+        "ALTER TABLE news ADD COLUMN IF NOT EXISTS time_bucket VARCHAR(32)",
+    ]
+    with engine.begin() as conn:
+        for statement in statements:
+            conn.execute(text(statement))

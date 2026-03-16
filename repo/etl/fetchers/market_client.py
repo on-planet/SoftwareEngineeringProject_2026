@@ -5,6 +5,7 @@ from datetime import date
 from typing import List
 
 from etl.loaders.pg_loader import list_stock_rows
+from etl.fetchers.baostock_client import get_stock_industry
 from etl.fetchers.snowball_client import (
     get_daily_prices as sb_get_daily_prices,
     get_financials as sb_get_financials,
@@ -20,6 +21,20 @@ from etl.utils.stock_basics_cache import load_stock_basics_cache, save_stock_bas
 def market_data_session():
     with snowball_session():
         yield
+
+
+def _can_apply_baostock_sector(symbol: str) -> bool:
+    normalized = str(symbol or "").strip().upper()
+    return normalized.endswith((".SH", ".SZ", ".BJ"))
+
+
+def _should_replace_name(current_name: str | None, symbol: str) -> bool:
+    text = str(current_name or "").strip()
+    if not text:
+        return True
+    if text.upper() == str(symbol or "").strip().upper():
+        return True
+    return not any("\u4e00" <= char <= "\u9fff" for char in text)
 
 
 def get_stock_basic(
@@ -48,6 +63,19 @@ def get_stock_basic(
 
     rows = sb_get_stock_basics(requested)
     if rows:
+        baostock_rows = get_stock_industry(as_of=date.today())
+        if baostock_rows:
+            by_symbol = {row.get("symbol"): row for row in baostock_rows if row.get("symbol")}
+            for row in rows:
+                symbol = row.get("symbol")
+                if symbol and _can_apply_baostock_sector(str(symbol)) and symbol in by_symbol:
+                    baostock_row = by_symbol[symbol]
+                    sector = baostock_row.get("sector")
+                    if sector:
+                        row["sector"] = sector
+                    baostock_name = str(baostock_row.get("name") or "").strip()
+                    if baostock_name and _should_replace_name(str(row.get("name") or ""), str(symbol)):
+                        row["name"] = baostock_name
         save_stock_basics_cache(rows, merge=bool(requested))
     return rows
 

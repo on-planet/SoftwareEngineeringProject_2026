@@ -22,12 +22,11 @@ router = APIRouter(tags=["sector"])
 )
 def get_sector_exposure_route(
     market: str | None = Query(None),
+    basis: str = Query("market_value"),
     limit: int | None = Query(None, ge=1, le=200),
     offset: int = Query(0, ge=0),
     sort: str = Query("desc", pattern="^(asc|desc)$"),
     as_of: str | None = Query(None),
     db: Session = Depends(get_db),
 ):
-    """获取行业分布。"""
-    items = get_sector_exposure(db, market, limit, offset, sort, as_of)
-    return {"market": market, "items": items}
+    return get_sector_exposure(db, market, limit, offset, sort, as_of, basis)

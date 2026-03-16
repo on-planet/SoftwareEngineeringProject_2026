@@ -52,7 +52,11 @@ CREATE TABLE IF NOT EXISTS news (
     sentiment VARCHAR(32),
     published_at TIMESTAMP,
     link TEXT,
-    source VARCHAR(128)
+    source VARCHAR(128),
+    source_site VARCHAR(128),
+    source_category VARCHAR(64),
+    topic_category VARCHAR(64),
+    time_bucket VARCHAR(32)
 );
 
 CREATE TABLE IF NOT EXISTS events (
@@ -104,11 +108,38 @@ CREATE TABLE IF NOT EXISTS index_constituents (
     PRIMARY KEY (index_symbol, symbol, date)
 );
 
-CREATE TABLE IF NOT EXISTS sector_exposure (
-    sector VARCHAR(64) NOT NULL,
+CREATE TABLE IF NOT EXISTS sector_exposure_daily (
+    date DATE NOT NULL,
     market VARCHAR(16) NOT NULL,
+    basis VARCHAR(32) NOT NULL,
+    sector VARCHAR(64) NOT NULL,
     value DOUBLE PRECISION,
-    PRIMARY KEY (sector, market)
+    weight DOUBLE PRECISION,
+    symbol_count INTEGER,
+    PRIMARY KEY (date, market, basis, sector)
+);
+
+CREATE TABLE IF NOT EXISTS sector_exposure_summary (
+    date DATE NOT NULL,
+    market VARCHAR(16) NOT NULL,
+    basis VARCHAR(32) NOT NULL,
+    total_value DOUBLE PRECISION,
+    total_symbol_count INTEGER,
+    covered_symbol_count INTEGER,
+    classified_symbol_count INTEGER,
+    unknown_symbol_count INTEGER,
+    unknown_value DOUBLE PRECISION,
+    coverage DOUBLE PRECISION,
+    PRIMARY KEY (date, market, basis)
+);
+
+CREATE TABLE IF NOT EXISTS stock_valuation_snapshots (
+    symbol VARCHAR(32) NOT NULL,
+    date DATE NOT NULL,
+    market_cap DOUBLE PRECISION,
+    float_market_cap DOUBLE PRECISION,
+    source VARCHAR(64),
+    PRIMARY KEY (symbol, date)
 );
 
 CREATE TABLE IF NOT EXISTS fund_holdings (
@@ -125,10 +156,31 @@ CREATE TABLE IF NOT EXISTS futures_prices (
     symbol VARCHAR(32) NOT NULL,
     name VARCHAR(128),
     date DATE NOT NULL,
+    contract_month VARCHAR(16),
     open DOUBLE PRECISION,
     high DOUBLE PRECISION,
     low DOUBLE PRECISION,
     close DOUBLE PRECISION,
+    settlement DOUBLE PRECISION,
+    open_interest DOUBLE PRECISION,
+    turnover DOUBLE PRECISION,
+    volume DOUBLE PRECISION,
+    source VARCHAR(64),
+    PRIMARY KEY (symbol, date)
+);
+
+CREATE TABLE IF NOT EXISTS futures_weekly_prices (
+    symbol VARCHAR(32) NOT NULL,
+    name VARCHAR(128),
+    date DATE NOT NULL,
+    contract_month VARCHAR(16),
+    open DOUBLE PRECISION,
+    high DOUBLE PRECISION,
+    low DOUBLE PRECISION,
+    close DOUBLE PRECISION,
+    settlement DOUBLE PRECISION,
+    open_interest DOUBLE PRECISION,
+    turnover DOUBLE PRECISION,
     volume DOUBLE PRECISION,
     source VARCHAR(64),
     PRIMARY KEY (symbol, date)
@@ -141,6 +193,10 @@ CREATE INDEX IF NOT EXISTS idx_daily_prices_symbol_date ON daily_prices(symbol, 
 CREATE INDEX IF NOT EXISTS idx_financials_symbol ON financials(symbol);
 CREATE INDEX IF NOT EXISTS idx_news_symbol ON news(symbol);
 CREATE INDEX IF NOT EXISTS idx_news_published_at ON news(published_at);
+CREATE INDEX IF NOT EXISTS idx_news_source_site ON news(source_site);
+CREATE INDEX IF NOT EXISTS idx_news_source_category ON news(source_category);
+CREATE INDEX IF NOT EXISTS idx_news_topic_category ON news(topic_category);
+CREATE INDEX IF NOT EXISTS idx_news_time_bucket ON news(time_bucket);
 CREATE INDEX IF NOT EXISTS idx_events_symbol ON events(symbol);
 CREATE INDEX IF NOT EXISTS idx_events_date ON events(date);
 CREATE INDEX IF NOT EXISTS idx_events_type ON events(type);
@@ -156,3 +212,5 @@ CREATE INDEX IF NOT EXISTS idx_fund_holdings_symbol ON fund_holdings(symbol);
 CREATE INDEX IF NOT EXISTS idx_fund_holdings_report_date ON fund_holdings(report_date);
 CREATE INDEX IF NOT EXISTS idx_futures_prices_date ON futures_prices(date);
 CREATE INDEX IF NOT EXISTS idx_futures_prices_symbol ON futures_prices(symbol);
+CREATE INDEX IF NOT EXISTS idx_futures_weekly_prices_date ON futures_weekly_prices(date);
+CREATE INDEX IF NOT EXISTS idx_futures_weekly_prices_symbol ON futures_weekly_prices(symbol);

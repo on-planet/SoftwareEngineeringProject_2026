@@ -5,7 +5,29 @@ import { INDEX_CONSTITUENT_OPTIONS } from "../constants/indices";
 import { getIndexConstituents } from "../services/api";
 import { formatNumber, formatSigned } from "../utils/format";
 
-const DEFAULT_INDEX = INDEX_CONSTITUENT_OPTIONS[0]?.symbol ?? "HKHSI";
+const TEXT = {
+  loadError: "\u6307\u6570\u6210\u5206\u80a1\u52a0\u8f7d\u5931\u8d25",
+  pageUnit: "\u6761",
+  listTitle: "\u6307\u6570\u6210\u5206\u80a1",
+  totalPrefix: "\u5171",
+  totalSuffix: "\u53ea",
+  loading: "\u6210\u5206\u80a1\u52a0\u8f7d\u4e2d...",
+  empty: "\u6682\u65e0\u6210\u5206\u80a1\u6570\u636e\u3002",
+  weight: "\u6743\u91cd",
+  weightUnknown: "\u6743\u91cd\u6682\u672a\u516c\u5f00",
+  contribution: "\u8d21\u732e\u70b9\u6570",
+  source: "\u6765\u6e90",
+  coverageHint: "\u5f53\u524d\u4f18\u5148\u4f7f\u7528 pysnowball\uff0c\u4e0d\u53ef\u7528\u65f6\u56de\u9000\u5230 CSI \u516c\u5f00\u6743\u91cd\u6587\u4ef6\u3002",
+  prevPage: "\u4e0a\u4e00\u9875",
+  nextPage: "\u4e0b\u4e00\u9875",
+  page: "\u7b2c",
+  pageSuffix: "\u9875",
+};
+
+const DEFAULT_INDEX =
+  INDEX_CONSTITUENT_OPTIONS.find((item) => item.symbol === "000300.SH")?.symbol ??
+  INDEX_CONSTITUENT_OPTIONS[0]?.symbol ??
+  "000300.SH";
 
 type ConstituentItem = {
   index_symbol: string;
@@ -59,7 +81,7 @@ export function IndexConstituentList() {
         if (!active) {
           return;
         }
-        setError(err.message || "指数成分股加载失败");
+        setError(err.message || TEXT.loadError);
       })
       .finally(() => {
         if (active) {
@@ -98,62 +120,72 @@ export function IndexConstituentList() {
             setPage(1);
           }}
         >
-          <option value={10}>10 条</option>
-          <option value={20}>20 条</option>
-          <option value={50}>50 条</option>
+          <option value={10}>{`10 ${TEXT.pageUnit}`}</option>
+          <option value={20}>{`20 ${TEXT.pageUnit}`}</option>
+          <option value={50}>{`50 ${TEXT.pageUnit}`}</option>
         </select>
       </div>
 
       <div className="helper">
-        {currentIndex ? `${currentIndex.label}成分股` : "指数成分股"}
-        {total ? ` · 共 ${total} 只` : ""}
+        {currentIndex ? `${currentIndex.label}${TEXT.listTitle}` : TEXT.listTitle}
+        {total ? ` | ${TEXT.totalPrefix} ${total} ${TEXT.totalSuffix}` : ""}
       </div>
+      <div className="helper">{TEXT.coverageHint}</div>
 
-      {loading ? <div className="helper">成分股加载中...</div> : null}
-      {!loading && error ? <div className="helper">成分股加载失败：{error}</div> : null}
-      {!loading && !error && items.length === 0 ? <div className="helper">暂无成分股数据。</div> : null}
+      {loading ? <div className="helper">{TEXT.loading}</div> : null}
+      {!loading && error ? <div className="helper">{`${TEXT.loadError}: ${error}`}</div> : null}
+      {!loading && !error && items.length === 0 ? <div className="helper">{TEXT.empty}</div> : null}
 
       {!loading && !error && items.length > 0 ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           {items.map((item) => (
-            <Link key={`${item.index_symbol}-${item.symbol}-${item.rank ?? 0}`} href={`/stock/${encodeURIComponent(item.symbol)}`} className="card">
+            <Link
+              key={`${item.index_symbol}-${item.symbol}-${item.rank ?? 0}`}
+              href={`/stock/${encodeURIComponent(item.symbol)}`}
+              className="card"
+            >
               <div className="card-title">
                 {item.rank ? `${item.rank}. ` : ""}
                 {item.name || item.symbol}
               </div>
               <div className="helper" style={{ marginTop: 6 }}>
                 {item.symbol}
-                {item.market ? ` · ${item.market}` : ""}
-                {item.date ? ` · ${String(item.date).slice(0, 10)}` : ""}
+                {item.market ? ` | ${item.market}` : ""}
+                {item.date ? ` | ${String(item.date).slice(0, 10)}` : ""}
               </div>
               <div className="helper" style={{ marginTop: 6 }}>
-                {item.weight !== null && item.weight !== undefined ? `权重 ${formatNumber(item.weight)}` : "权重暂未公开"}
+                {item.weight !== null && item.weight !== undefined
+                  ? `${TEXT.weight} ${formatNumber(item.weight)}`
+                  : TEXT.weightUnknown}
                 {item.contribution_change !== null && item.contribution_change !== undefined
-                  ? ` · 贡献点数 ${formatSigned(item.contribution_change)}`
+                  ? ` | ${TEXT.contribution} ${formatSigned(item.contribution_change)}`
                   : ""}
               </div>
               {item.source ? (
                 <div className="helper" style={{ marginTop: 6 }}>
-                  来源：{item.source}
+                  {`${TEXT.source}: ${item.source}`}
                 </div>
               ) : null}
             </Link>
           ))}
 
           <div className="helper" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <button type="button" onClick={() => setPage((value) => Math.max(1, value - 1))} disabled={page <= 1} className="input">
-              上一页
+            <button
+              type="button"
+              onClick={() => setPage((value) => Math.max(1, value - 1))}
+              disabled={page <= 1}
+              className="input"
+            >
+              {TEXT.prevPage}
             </button>
-            <span>
-              第 {page} / {maxPage} 页
-            </span>
+            <span>{`${TEXT.page} ${page} / ${maxPage} ${TEXT.pageSuffix}`}</span>
             <button
               type="button"
               onClick={() => setPage((value) => Math.min(maxPage, value + 1))}
               disabled={page >= maxPage}
               className="input"
             >
-              下一页
+              {TEXT.nextPage}
             </button>
           </div>
         </div>

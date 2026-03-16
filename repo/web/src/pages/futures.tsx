@@ -2,16 +2,23 @@ import React, { useEffect, useMemo, useState } from "react";
 import ReactECharts from "echarts-for-react";
 
 import { getFutures, getFuturesSeries } from "../services/api";
-import { formatNumber, formatPercent, formatSigned } from "../utils/format";
+import { formatNullableNumber, formatNumber, formatPercent, formatSigned } from "../utils/format";
+import { formatContractMonth, FUTURES_LABELS, sortPreferredFutures } from "../utils/futures";
+
+type FuturesFrequency = "day" | "week";
 
 type FuturesItem = {
   symbol: string;
   name?: string | null;
   date: string;
+  contract_month?: string | null;
   open?: number | null;
   high?: number | null;
   low?: number | null;
   close?: number | null;
+  settlement?: number | null;
+  open_interest?: number | null;
+  turnover?: number | null;
   volume?: number | null;
   source?: string | null;
 };
@@ -28,15 +35,6 @@ type FuturesSeries = {
   items: FuturesItem[];
 };
 
-const LABELS: Record<string, string> = {
-  GOLD: "Gold",
-  SILVER: "Silver",
-  WTI: "WTI",
-  BRENT: "Brent",
-  NATGAS: "NatGas",
-  COPPER: "Copper",
-};
-
 function toLatestBySymbol(items: FuturesItem[]) {
   const map = new Map<string, FuturesItem>();
   for (const item of items) {
@@ -48,10 +46,11 @@ function toLatestBySymbol(items: FuturesItem[]) {
       map.set(item.symbol, item);
     }
   }
-  return Array.from(map.values()).sort((a, b) => a.symbol.localeCompare(b.symbol));
+  return sortPreferredFutures(Array.from(map.values()));
 }
 
 export default function FuturesPage() {
+  const [frequency, setFrequency] = useState<FuturesFrequency>("day");
   const [items, setItems] = useState<FuturesItem[]>([]);
   const [selectedSymbol, setSelectedSymbol] = useState("");
   const [series, setSeries] = useState<FuturesItem[]>([]);
@@ -69,6 +68,8 @@ export default function FuturesPage() {
       limit: 500,
       start: start || undefined,
       end: end || undefined,
+      as_of: end || undefined,
+      frequency,
     })
       .then((res) => {
         if (!active) {
@@ -99,7 +100,7 @@ export default function FuturesPage() {
     return () => {
       active = false;
     };
-  }, [end, start]);
+  }, [end, frequency, start]);
 
   useEffect(() => {
     if (!selectedSymbol) {
@@ -111,6 +112,7 @@ export default function FuturesPage() {
     getFuturesSeries(selectedSymbol, {
       start: start || undefined,
       end: end || undefined,
+      frequency,
     })
       .then((res) => {
         if (!active) {
@@ -135,7 +137,7 @@ export default function FuturesPage() {
     return () => {
       active = false;
     };
-  }, [end, selectedSymbol, start]);
+  }, [end, frequency, selectedSymbol, start]);
 
   const chartOption = useMemo(() => {
     if (!series.length) {
@@ -186,7 +188,14 @@ export default function FuturesPage() {
         <div className="card-title" style={{ marginBottom: 12 }}>
           筛选条件
         </div>
-        <div className="toolbar">
+        <div className="toolbar" style={{ alignItems: "end", flexWrap: "wrap", gap: 12 }}>
+          <label style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 12 }}>
+            频率
+            <select className="select" value={frequency} onChange={(event) => setFrequency(event.target.value as FuturesFrequency)}>
+              <option value="day">日度</option>
+              <option value="week">周度</option>
+            </select>
+          </label>
           <label style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 12 }}>
             开始日期
             <input className="input" type="date" value={start} onChange={(event) => setStart(event.target.value)} />
@@ -201,7 +210,7 @@ export default function FuturesPage() {
               {items.length === 0 ? <option value="">暂无品种</option> : null}
               {items.map((item) => (
                 <option key={item.symbol} value={item.symbol}>
-                  {item.symbol}
+                  {FUTURES_LABELS[item.symbol] || item.name || item.symbol}
                 </option>
               ))}
             </select>
@@ -221,7 +230,7 @@ export default function FuturesPage() {
               const delta = close - open;
               const pct = open !== 0 ? delta / open : 0;
               const trendColor = delta >= 0 ? "#f87171" : "#34d399";
-              const label = LABELS[item.symbol] || item.name || item.symbol;
+              const label = FUTURES_LABELS[item.symbol] || item.name || item.symbol;
               return (
                 <button
                   type="button"
@@ -238,9 +247,18 @@ export default function FuturesPage() {
                   <div className="helper">
                     {item.symbol} | {item.date}
                   </div>
+                  <div className="helper" style={{ marginTop: 4 }}>
+                    主力合约: {formatContractMonth(item.contract_month)}
+                  </div>
                   <div style={{ marginTop: 8, fontSize: 20, fontWeight: 700 }}>{formatNumber(close)}</div>
                   <div style={{ marginTop: 4, color: trendColor, fontWeight: 600 }}>
                     {formatSigned(delta)} ({delta === 0 ? "0.00%" : formatPercent(pct)})
+                  </div>
+                  <div className="helper" style={{ marginTop: 8 }}>
+                    结算 {formatNullableNumber(item.settlement)}
+                  </div>
+                  <div className="helper">
+                    持仓 {formatNullableNumber(item.open_interest, 0)} | 成交额 {formatNullableNumber(item.turnover)}
                   </div>
                 </button>
               );

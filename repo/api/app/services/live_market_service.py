@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 import os
+from types import SimpleNamespace
 from typing import Iterable, Literal
 
 from app.core.cache import get_json, set_json
@@ -19,7 +20,6 @@ from etl.fetchers.snowball_client import (
     get_kline_history,
     get_recent_financials,
     get_stock_earning_forecasts,
-    get_stock_basics,
     get_stock_pankou,
     get_stock_quote,
     get_stock_quote_detail,
@@ -38,6 +38,7 @@ LiveKlinePeriod = Literal["1m", "30m", "60m", "day", "week", "month", "quarter",
 LIVE_CACHE_TTL = max(60, int(os.getenv("API_LIVE_CACHE_TTL", "1800")))
 A_SHARE_SH_PREFIXES = ("600", "601", "603", "605", "688", "689", "900")
 A_SHARE_SZ_PREFIXES = ("000", "001", "002", "003", "200", "300", "301")
+UNKNOWN_SECTOR_VALUES = {"", "Unknown", "未知", "未分类"}
 
 
 def _looks_like_equity_symbol(symbol: str) -> bool:
@@ -119,7 +120,6 @@ def _merge_stock_rows(primary: Iterable[dict], fallback: Iterable[dict], *, limi
             merged_row["market"] = fallback_row.get("market") or market_from_symbol(symbol)
         merged.append(merged_row)
         seen.add(symbol)
-
     for row in _dedupe_stock_rows(fallback):
         if row["symbol"] in seen:
             continue
@@ -128,6 +128,72 @@ def _merge_stock_rows(primary: Iterable[dict], fallback: Iterable[dict], *, limi
         if len(merged) >= limit:
             break
     return merged[:limit]
+
+
+def _hydrate_stock_rows_from_local_basics(rows: Iterable[dict], *, limit: int) -> list[dict]:
+    normalized_rows = _dedupe_stock_rows(rows)
+    symbols = [row["symbol"] for row in normalized_rows if row.get("symbol")]
+    if not symbols:
+        return normalized_rows[:limit]
+    local_rows = get_cached_stock_basic(symbols, allow_stale_cache=True)
+    if not local_rows:
+        return normalized_rows[:limit]
+    return _merge_stock_rows(normalized_rows, local_rows, limit=limit)
+
+
+def _hydrate_stock_rows_from_profile_cache(rows: Iterable[dict], *, limit: int) -> list[dict]:
+    normalized_rows = _dedupe_stock_rows(rows)
+    if not normalized_rows:
+        return normalized_rows[:limit]
+    cached_rows: list[dict] = []
+    for row in normalized_rows:
+        symbol = str(row.get("symbol") or "").strip()
+        if not symbol:
+            continue
+        cached = get_json(build_cache_key("live:stock:profile", symbol=symbol))
+        if not isinstance(cached, dict):
+            continue
+        cached_rows.append(
+            {
+                "symbol": symbol,
+                "name": str(cached.get("name") or symbol),
+                "market": str(cached.get("market") or row.get("market") or market_from_symbol(symbol)),
+                "sector": str(cached.get("sector") or "Unknown"),
+            }
+        )
+    if not cached_rows:
+        return normalized_rows[:limit]
+    return _merge_stock_rows(normalized_rows, cached_rows, limit=limit)
+
+
+def _needs_sector_refresh(value: str | None) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return True
+    if text.lower() == "unknown":
+        return True
+    return text in {"未知", "未分类"}
+
+
+def _refresh_stock_rows_sectors(rows: list[dict]) -> list[dict]:
+    if not rows:
+        return rows
+    symbols: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        symbol = str(row.get("symbol") or "").strip()
+        if not symbol or symbol in seen:
+            continue
+        if _needs_sector_refresh(row.get("sector")):
+            symbols.append(symbol)
+            seen.add(symbol)
+    if not symbols:
+        return rows
+    refreshed = get_cached_stock_basic(symbols, force_refresh=True, allow_stale_cache=False)
+    if not refreshed:
+        return rows
+    return _merge_stock_rows(rows, refreshed, limit=len(rows))
+
 
 
 def _fallback_stock_profile(symbol: str) -> dict:
@@ -163,6 +229,28 @@ def _has_quote_signal(profile: dict | None) -> bool:
         if isinstance(value, dict) and value:
             return True
     return False
+
+
+def _has_identity_signal(profile: dict | None) -> bool:
+    if not isinstance(profile, dict):
+        return False
+    symbol = normalize_symbol(str(profile.get("symbol") or ""))
+    name = str(profile.get("name") or "").strip()
+    sector = str(profile.get("sector") or "").strip()
+    has_name = bool(name) and name != symbol
+    has_sector = bool(sector) and sector not in UNKNOWN_SECTOR_VALUES
+    return has_name and has_sector
+
+
+def _profile_extras_from_cache(profile: dict | None) -> tuple[dict, dict]:
+    if not isinstance(profile, dict):
+        return {}, {}
+    quote_detail = profile.get("quote_detail")
+    pankou = profile.get("pankou")
+    return (
+        dict(quote_detail) if isinstance(quote_detail, dict) else {},
+        dict(pankou) if isinstance(pankou, dict) else {},
+    )
 
 
 def _has_non_zero_signal(row: dict | None, *, fields: tuple[str, ...]) -> bool:
@@ -216,6 +304,60 @@ def _load_db_daily_rows(symbol: str, *, start: date | None = None, end: date | N
                 "volume": float(row.volume or 0),
             }
         return [items_by_date[row_date] for row_date in sorted(items_by_date)]
+
+
+def _quote_from_daily_rows(symbol: str, rows: Iterable[object]) -> dict:
+    normalized = normalize_symbol(symbol)
+    items_by_date: dict[date, SimpleNamespace] = {}
+    for row in rows:
+        row_date = getattr(row, "date", None)
+        if row_date is None or row_date in items_by_date:
+            continue
+        items_by_date[row_date] = SimpleNamespace(
+            date=row_date,
+            open=float(getattr(row, "open", 0) or 0),
+            high=float(getattr(row, "high", 0) or 0),
+            low=float(getattr(row, "low", 0) or 0),
+            close=float(getattr(row, "close", 0) or 0),
+            volume=float(getattr(row, "volume", 0) or 0),
+        )
+    ordered_dates = sorted(items_by_date, reverse=True)
+    if not ordered_dates:
+        return {}
+    latest = items_by_date[ordered_dates[0]]
+    previous = items_by_date[ordered_dates[1]] if len(ordered_dates) > 1 else None
+    last_close = float(previous.close) if previous is not None else None
+    change = float(latest.close) - last_close if last_close not in (None, 0) else None
+    percent = (change / last_close * 100.0) if change is not None and last_close not in (None, 0) else None
+    return {
+        "symbol": normalized,
+        "current": float(latest.close),
+        "change": change,
+        "percent": percent,
+        "open": float(latest.open),
+        "high": float(latest.high),
+        "low": float(latest.low),
+        "last_close": last_close,
+        "volume": float(latest.volume),
+        "amount": None,
+        "turnover_rate": None,
+        "amplitude": None,
+        "timestamp": datetime.combine(latest.date, datetime.min.time()),
+    }
+
+
+def _load_db_quote_snapshot(symbol: str) -> dict:
+    normalized = normalize_symbol(symbol)
+    aliases = symbol_lookup_aliases(normalized)
+    with SessionLocal() as db:
+        rows = (
+            db.query(DailyPrice)
+            .filter(DailyPrice.symbol.in_(aliases))
+            .order_by(DailyPrice.date.desc(), DailyPrice.symbol.asc())
+            .limit(16)
+            .all()
+        )
+    return _quote_from_daily_rows(normalized, rows)
 
 
 def _load_db_financial_rows(
@@ -366,6 +508,33 @@ def _filter_points(points: list[KlinePoint], start: date | None, end: date | Non
     return filtered[-limit:]
 
 
+def _load_local_kline_points(
+    symbol: str,
+    *,
+    period: LiveKlinePeriod,
+    limit: int,
+    start: date | None = None,
+    end: date | None = None,
+    is_index: bool = False,
+) -> list[KlinePoint]:
+    if is_index or period not in {"day", "week", "month", "quarter", "year"}:
+        return []
+    db_points = _points_from_rows(_load_db_daily_rows(symbol, start=start, end=end))
+    if not db_points:
+        return []
+    if period == "day":
+        points = db_points
+    elif period == "week":
+        points = _aggregate_points(db_points, "week")
+    elif period == "month":
+        points = _aggregate_points(db_points, "month")
+    elif period == "quarter":
+        points = _aggregate_points(db_points, "quarter")
+    else:
+        points = _aggregate_points(db_points, "year")
+    return _filter_points(points, start, end, limit)
+
+
 def list_live_stocks(
     *,
     market: str | None = None,
@@ -387,11 +556,17 @@ def list_live_stocks(
     )
     cached = get_json(cache_key)
     if isinstance(cached, dict) and isinstance(cached.get("items"), list) and isinstance(cached.get("total"), int):
-        return cached["items"], cached["total"]
+        hydrated = _hydrate_stock_rows_from_local_basics(cached["items"], limit=len(cached["items"]))
+        hydrated = _hydrate_stock_rows_from_profile_cache(hydrated, limit=len(hydrated))
+        if hydrated != cached["items"]:
+            set_json(cache_key, {"items": hydrated, "total": cached["total"]}, ttl=LIVE_CACHE_TTL)
+        return hydrated, cached["total"]
 
     target_size = max(limit + offset, 100)
     fallback_rows = _fallback_stock_rows(market=normalized_market, keyword=keyword_text, limit=target_size)
-    if keyword_text:
+    if len(fallback_rows) >= target_size:
+        items = list(fallback_rows)
+    elif keyword_text:
         items = search_stocks(keyword_text, market=normalized_market, limit=target_size)
     elif normalized_market in {"A", "HK", "US"}:
         items = get_market_stock_pool(normalized_market, limit=target_size)
@@ -402,27 +577,71 @@ def list_live_stocks(
     items.sort(key=lambda item: str(item.get("symbol", "")), reverse=sort == "desc")
     total = len(items)
     payload = items[offset : offset + limit]
+    payload = _hydrate_stock_rows_from_local_basics(payload, limit=len(payload))
+    payload = _hydrate_stock_rows_from_profile_cache(payload, limit=len(payload))
     set_json(cache_key, {"items": payload, "total": total}, ttl=LIVE_CACHE_TTL)
     return payload, total
 
 
 def get_live_stock_profile(symbol: str) -> dict | None:
+    return _get_live_stock_profile(symbol, include_quote_detail=True, include_pankou=True)
+
+
+def get_live_stock_overview_profile(symbol: str) -> dict | None:
+    return _get_live_stock_profile(symbol, include_quote_detail=False, include_pankou=False)
+
+
+def _get_live_stock_profile(
+    symbol: str,
+    *,
+    include_quote_detail: bool,
+    include_pankou: bool,
+) -> dict | None:
     normalized = normalize_symbol(symbol)
     cache_key = build_cache_key("live:stock:profile", symbol=normalized)
     cached = get_json(cache_key)
-    if isinstance(cached, dict) and _has_quote_signal(cached):
+    if (
+        isinstance(cached, dict)
+        and _has_quote_signal(cached)
+        and _has_identity_signal(cached)
+        and (include_quote_detail or isinstance(cached.get("quote_detail"), dict))
+        and (include_pankou or isinstance(cached.get("pankou"), dict))
+    ):
         return cached
 
     fallback_profile = _fallback_stock_profile(normalized)
-    rows = get_stock_basics([normalized])
-    result = _merge_stock_profile(dict(rows[0]) if rows else None, fallback_profile)
+    rows = get_cached_stock_basic([normalized], allow_stale_cache=True)
+    if rows and str(rows[0].get("sector") or "").strip() in {"", "Unknown", "未知", "未分类"}:
+        refreshed = get_cached_stock_basic([normalized], force_refresh=True, allow_stale_cache=False)
+        if refreshed:
+            rows = refreshed
+    primary_profile = dict(rows[0]) if rows else None
+    if isinstance(cached, dict):
+        primary_profile = _merge_stock_profile(cached, primary_profile or fallback_profile)
+    result = _merge_stock_profile(primary_profile, fallback_profile)
+    cached_quote_detail, cached_pankou = _profile_extras_from_cache(cached)
     quote = get_stock_quote(normalized)
-    quote_detail = get_stock_quote_detail(normalized)
-    pankou = get_stock_pankou(normalized)
+    if not quote:
+        quote = _load_db_quote_snapshot(normalized)
     if quote:
-        result["quote"] = {key: value for key, value in quote.items() if key != "symbol"}
-    if quote_detail:
-        result["quote_detail"] = {key: value for key, value in quote_detail.items() if key != "symbol"}
+        quote_name = str(quote.get("name") or "").strip()
+        if quote_name and str(result.get("name") or "").strip() in {"", normalized}:
+            result["name"] = quote_name
+        quote_sector = str(quote.get("sector") or "").strip()
+        if quote_sector and str(result.get("sector") or "").strip() in UNKNOWN_SECTOR_VALUES:
+            result["sector"] = quote_sector
+    if quote:
+        result["quote"] = {key: value for key, value in quote.items() if key not in {"symbol", "name", "sector"}}
+    if include_quote_detail:
+        quote_detail = get_stock_quote_detail(normalized) or cached_quote_detail
+        if quote_detail:
+            result["quote_detail"] = {key: value for key, value in quote_detail.items() if key != "symbol"}
+    elif cached_quote_detail:
+        result["quote_detail"] = {key: value for key, value in cached_quote_detail.items() if key != "symbol"}
+    if include_pankou:
+        pankou = get_stock_pankou(normalized) or cached_pankou
+    else:
+        pankou = cached_pankou
     if pankou:
         result["pankou"] = {
             "diff": pankou.get("diff"),
@@ -436,6 +655,32 @@ def get_live_stock_profile(symbol: str) -> dict | None:
     return result
 
 
+def get_live_stock_profile_extras(symbol: str) -> dict:
+    normalized = normalize_symbol(symbol)
+    cache_key = build_cache_key("live:stock:profile", symbol=normalized)
+    cached = get_json(cache_key)
+    cached_quote_detail, cached_pankou = _profile_extras_from_cache(cached)
+    quote_detail = get_stock_quote_detail(normalized) or cached_quote_detail
+    pankou = get_stock_pankou(normalized) or cached_pankou
+    payload: dict = {"symbol": normalized}
+    if quote_detail:
+        payload["quote_detail"] = {key: value for key, value in quote_detail.items() if key != "symbol"}
+    if pankou:
+        payload["pankou"] = {
+            "diff": pankou.get("diff"),
+            "ratio": pankou.get("ratio"),
+            "timestamp": pankou.get("timestamp"),
+            "bids": pankou.get("bids") or [],
+            "asks": pankou.get("asks") or [],
+        }
+    if isinstance(cached, dict) and (payload.get("quote_detail") or payload.get("pankou")):
+        merged = dict(cached)
+        merged.update(payload)
+        if _has_quote_signal(merged):
+            set_json(cache_key, merged, ttl=LIVE_CACHE_TTL)
+    return payload
+
+
 def get_live_stock_daily(
     symbol: str,
     *,
@@ -445,10 +690,10 @@ def get_live_stock_daily(
     min_volume: float | None = None,
 ) -> list[dict]:
     normalized = normalize_symbol(symbol)
-    count = 1200 if start else 360
-    rows = get_kline_history(normalized, period="day", count=count, as_of=end, is_index=False)
+    rows = _load_db_daily_rows(normalized, start=start, end=end)
     if not rows:
-        rows = _load_db_daily_rows(normalized, start=start, end=end)
+        count = 1200 if start else 360
+        rows = get_kline_history(normalized, period="day", count=count, as_of=end, is_index=False)
     if not rows:
         snapshot_row = _snapshot_daily_row(normalized)
         if snapshot_row is not None:
@@ -489,6 +734,11 @@ def get_live_kline(
         if items:
             return items
 
+    local_items = _load_local_kline_points(normalized, period=period, limit=limit, start=start, end=end, is_index=is_index)
+    if local_items:
+        set_json(cache_key, [item.dict() for item in local_items], ttl=LIVE_CACHE_TTL)
+        return local_items
+
     if period in {"1m", "30m", "60m", "day", "week", "month"}:
         if period == "1m":
             fetch_count = max(limit * 2, 240)
@@ -511,19 +761,6 @@ def get_live_kline(
         points = _aggregate_points(base_points, "year")
 
     items = _filter_points(points, start, end, limit)
-    if not items and not is_index and period in {"day", "week", "month", "quarter", "year"}:
-        db_points = _points_from_rows(_load_db_daily_rows(normalized, start=start, end=end))
-        if period == "day":
-            points = db_points
-        elif period == "week":
-            points = _aggregate_points(db_points, "week")
-        elif period == "month":
-            points = _aggregate_points(db_points, "month")
-        elif period == "quarter":
-            points = _aggregate_points(db_points, "quarter")
-        else:
-            points = _aggregate_points(db_points, "year")
-        items = _filter_points(points, start, end, limit)
     if not items and not is_index and period == "day":
         snapshot_row = _snapshot_daily_row(normalized)
         if snapshot_row is not None:
@@ -560,6 +797,19 @@ def get_live_financials(
         if cached_items and _financial_rows_have_signal(cached_items):
             return cached_items, cached["total"]
 
+    items, total = _load_db_financial_rows(
+        normalized,
+        limit=limit,
+        offset=offset,
+        period=period,
+        min_revenue=min_revenue,
+        min_net_income=min_net_income,
+        sort=sort,
+    )
+    if items and _financial_rows_have_signal(items):
+        set_json(cache_key, {"items": items, "total": total}, ttl=LIVE_CACHE_TTL)
+        return items, total
+
     rows = get_recent_financials(normalized, count=max(limit + offset, 8))
     if period:
         rows = [row for row in rows if row.get("period") == period]
@@ -570,16 +820,6 @@ def get_live_financials(
     rows.sort(key=lambda item: str(item.get("period", "")), reverse=sort != "asc")
     total = len(rows)
     items = rows[offset : offset + limit]
-    if not items or not _financial_rows_have_signal(items):
-        items, total = _load_db_financial_rows(
-            normalized,
-            limit=limit,
-            offset=offset,
-            period=period,
-            min_revenue=min_revenue,
-            min_net_income=min_net_income,
-            sort=sort,
-        )
     if not items or not _financial_rows_have_signal(items):
         return [], 0
     if items and _financial_rows_have_signal(items):
@@ -594,9 +834,9 @@ def get_live_fundamental(symbol: str) -> dict | None:
     if isinstance(cached, dict) and _fundamental_payload_is_usable(cached):
         return cached
 
-    rows = get_recent_financials(normalized, count=4)
+    rows, _ = _load_db_financial_rows(normalized, limit=4, offset=0, sort="desc")
     if not rows or not _financial_rows_have_signal(rows):
-        rows, _ = _load_db_financial_rows(normalized, limit=4, offset=0, sort="desc")
+        rows = get_recent_financials(normalized, count=4)
     if not rows or not _financial_rows_have_signal(rows):
         return None
     current = rows[0]

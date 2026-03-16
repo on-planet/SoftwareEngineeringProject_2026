@@ -1,16 +1,22 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 
 import { getSectorExposure } from "../services/api";
-import { formatNumber } from "../utils/format";
+import { formatNumber, formatPercent } from "../utils/format";
 
 type SectorItem = {
   sector: string;
   value: number;
   weight: number;
+  symbol_count?: number;
 };
 
 type SectorResponse = {
   market: string | null;
+  as_of?: string | null;
+  basis: string;
+  total_value: number;
+  coverage: number;
+  unknown_weight: number;
   items: SectorItem[];
 };
 
@@ -20,7 +26,7 @@ export function SectorExposurePanel() {
   const [market, setMarket] = useState("");
   const [sort, setSort] = useState<SortOrder>("desc");
   const [limit, setLimit] = useState(24);
-  const [items, setItems] = useState<SectorItem[]>([]);
+  const [response, setResponse] = useState<SectorResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -29,18 +35,18 @@ export function SectorExposurePanel() {
     setLoading(true);
     getSectorExposure({
       market: market || undefined,
+      basis: "market_value",
       sort,
       limit,
     })
       .then((res) => {
         if (!active) return;
-        const data = res as SectorResponse;
-        setItems(data.items ?? []);
+        setResponse(res as SectorResponse);
         setError(null);
       })
       .catch((err: Error) => {
         if (!active) return;
-        setError(err.message || "加载行业暴露失败");
+        setError(err.message || "行业暴露加载失败");
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -50,7 +56,7 @@ export function SectorExposurePanel() {
     };
   }, [market, sort, limit]);
 
-  const totalWeight = useMemo(() => items.reduce((sum, item) => sum + (item.weight || 0), 0), [items]);
+  const items = response?.items ?? [];
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -58,23 +64,16 @@ export function SectorExposurePanel() {
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <label style={{ display: "flex", flexDirection: "column", fontSize: 12, gap: 6 }}>
             市场
-            <select
-              className="select"
-              value={market}
-              onChange={(event) => setMarket(event.target.value)}
-            >
+            <select className="select" value={market} onChange={(event) => setMarket(event.target.value)}>
               <option value="">全部</option>
               <option value="A">A股</option>
               <option value="HK">港股</option>
+              <option value="US">美股</option>
             </select>
           </label>
           <label style={{ display: "flex", flexDirection: "column", fontSize: 12, gap: 6 }}>
             排序
-            <select
-              className="select"
-              value={sort}
-              onChange={(event) => setSort(event.target.value as SortOrder)}
-            >
+            <select className="select" value={sort} onChange={(event) => setSort(event.target.value as SortOrder)}>
               <option value="desc">降序</option>
               <option value="asc">升序</option>
             </select>
@@ -86,6 +85,25 @@ export function SectorExposurePanel() {
           <option value={36}>36 条</option>
         </select>
       </div>
+
+      {response ? (
+        <div className="grid grid-3">
+          <div className="card">
+            <div className="helper">口径</div>
+            <div style={{ fontWeight: 700, marginTop: 4 }}>{response.basis}</div>
+            {response.as_of ? <div className="helper" style={{ marginTop: 6 }}>日期 {response.as_of}</div> : null}
+          </div>
+          <div className="card">
+            <div className="helper">覆盖率</div>
+            <div style={{ fontWeight: 700, marginTop: 4 }}>{formatPercent(response.coverage)}</div>
+          </div>
+          <div className="card">
+            <div className="helper">未分类占比</div>
+            <div style={{ fontWeight: 700, marginTop: 4 }}>{formatPercent(response.unknown_weight)}</div>
+          </div>
+        </div>
+      ) : null}
+
       {loading ? (
         <div className="helper">行业暴露加载中...</div>
       ) : error ? (
@@ -97,13 +115,11 @@ export function SectorExposurePanel() {
           {items.map((item) => (
             <div key={item.sector} className="card">
               <div className="card-title">{item.sector}</div>
-              <div className="helper">占比 {formatNumber(item.weight * 100)}%</div>
-              <div style={{ marginTop: 6, fontWeight: 600 }}>市值 {formatNumber(item.value)}</div>
-              {totalWeight > 0 ? (
-                <div className="helper" style={{ marginTop: 4 }}>
-                  权重 {formatNumber((item.weight / totalWeight) * 100)}%
-                </div>
-              ) : null}
+              <div className="helper">占比 {formatPercent(item.weight)}</div>
+              <div style={{ marginTop: 6, fontWeight: 600 }}>暴露值 {formatNumber(item.value)}</div>
+              <div className="helper" style={{ marginTop: 4 }}>
+                股票数 {formatNumber(item.symbol_count ?? 0)}
+              </div>
             </div>
           ))}
         </div>

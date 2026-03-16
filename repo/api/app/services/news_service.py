@@ -21,6 +21,10 @@ def list_news(
     start: date | None = None,
     end: date | None = None,
     sentiments: list[str] | None = None,
+    source_sites: list[str] | None = None,
+    source_categories: list[str] | None = None,
+    topic_categories: list[str] | None = None,
+    time_buckets: list[str] | None = None,
     keyword: str | None = None,
     sort_by: list[str] | None = None,
     sort: SortOrder = "desc",
@@ -34,6 +38,10 @@ def list_news(
         start=start,
         end=end,
         sentiments=sentiments,
+        source_sites=source_sites,
+        source_categories=source_categories,
+        topic_categories=topic_categories,
+        time_buckets=time_buckets,
         keyword=keyword,
         sort_by=sort_by,
         sort=sort,
@@ -45,6 +53,14 @@ def list_news(
     query = db.query(News).filter(News.symbol == symbol)
     if sentiments:
         query = query.filter(News.sentiment.in_(sentiments))
+    if source_sites:
+        query = query.filter(News.source_site.in_(source_sites))
+    if source_categories:
+        query = query.filter(News.source_category.in_(source_categories))
+    if topic_categories:
+        query = query.filter(News.topic_category.in_(topic_categories))
+    if time_buckets:
+        query = query.filter(News.time_bucket.in_(time_buckets))
     if keyword:
         keyword_like = f"%{keyword}%"
         query = query.filter(News.title.ilike(keyword_like))
@@ -57,6 +73,10 @@ def list_news(
         "published_at": News.published_at,
         "title": News.title,
         "sentiment": News.sentiment,
+        "source_site": News.source_site,
+        "source_category": News.source_category,
+        "topic_category": News.topic_category,
+        "time_bucket": News.time_bucket,
     }
     sort_keys = [key for key in (sort_by or ["published_at"]) if key in sort_fields]
     if not sort_keys:

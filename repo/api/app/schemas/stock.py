@@ -5,6 +5,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+from app.schemas.fundamental import FundamentalOut
 from app.schemas.risk import RiskOut
 
 
@@ -97,3 +98,22 @@ class StockWithRiskOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class StockOverviewOut(BaseModel):
+    symbol: str
+    name: str
+    market: str
+    sector: str
+    quote: StockQuoteOut | None = None
+    risk: RiskOut | None = None
+    fundamental: FundamentalOut | None = None
+
+    class Config:
+        from_attributes = True
+
+
+class StockExtrasOut(BaseModel):
+    symbol: str
+    quote_detail: StockQuoteDetailOut | None = None
+    pankou: StockPankouOut | None = None

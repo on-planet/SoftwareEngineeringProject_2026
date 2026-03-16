@@ -15,7 +15,9 @@ import xml.etree.ElementTree as ET
 
 from etl.fetchers.snowball_client import normalize_symbol, to_snowball_symbol
 from etl.loaders.redis_cache import get_cache_string
+from etl.utils.stock_basics_cache import list_cached_symbols
 from etl.utils.logging import get_logger
+from etl.utils.news_taxonomy import classify_news_metadata
 from etl.utils.normalize import ensure_required
 
 LOGGER = get_logger(__name__)
@@ -51,17 +53,26 @@ def _rsshub_base() -> str:
 
 def _rss_symbols() -> list[str]:
     raw = os.getenv("SNOWBALL_RSS_SYMBOLS", "").strip() or os.getenv("SNOWBALL_STOCK_SYMBOLS", "").strip()
-    if not raw:
-        return []
     output: list[str] = []
     seen: set[str] = set()
-    for item in raw.split(","):
-        symbol = normalize_symbol(item.strip())
-        if not symbol or symbol in seen:
+    if raw:
+        for item in raw.split(","):
+            symbol = normalize_symbol(item.strip())
+            if not symbol or symbol in seen:
+                continue
+            seen.add(symbol)
+            output.append(symbol)
+        return output
+
+    cached_limit = max(1, int(os.getenv("SNOWBALL_RSS_HK_LIMIT", "200")))
+    for symbol in list_cached_symbols(markets=("HK",), limit=cached_limit):
+        if symbol in seen:
             continue
         seen.add(symbol)
         output.append(symbol)
-    return output
+    if output:
+        return output
+    return ["00700.HK", "00005.HK", "00941.HK"]
 
 
 def _rsshub_xueqiu_news(symbol: str) -> str:
@@ -73,6 +84,15 @@ def _rsshub_cls_telegraph() -> str:
     if override:
         return override
     return "https://pyrsshub.vercel.app/cls/telegraph"
+
+
+def _external_market_feeds() -> dict[str, str]:
+    return {
+        "https://quanwenrss.com/caixin/economy": "Caixin Economy",
+        "https://quanwenrss.com/morganstanley/global": "Morgan Stanley Global",
+        "https://quanwenrss.com/apnews/world": "AP News World",
+        "https://quanwenrss.com/politico/finance": "Politico Finance",
+    }
 
 
 def _cache_key(url: str) -> str:
@@ -268,6 +288,11 @@ def _append_rows(rows: List[dict], symbol: str, items: list[dict], as_of: date, 
             continue
         if published_at.date() != as_of:
             continue
+        metadata = classify_news_metadata(
+            source=source,
+            link=item.get("link") or "",
+            published_at=published_at,
+        )
         rows.append(
             {
                 "symbol": symbol,
@@ -276,6 +301,10 @@ def _append_rows(rows: List[dict], symbol: str, items: list[dict], as_of: date, 
                 "published_at": published_at,
                 "link": item.get("link") or "",
                 "source": source,
+                "source_site": metadata.get("source_site"),
+                "source_category": metadata.get("source_category"),
+                "topic_category": metadata.get("topic_category"),
+                "time_bucket": metadata.get("time_bucket"),
             }
         )
 
@@ -313,10 +342,12 @@ def get_news(as_of: date) -> List[dict]:
         "https://tw.stock.yahoo.com/rss?category=column": "Yahoo TW Column",
         "https://tw.stock.yahoo.com/rss?category=research": "Yahoo TW Research",
     }
+    external_urls = _external_market_feeds()
     url_map = {
         **{url: symbol for symbol, url in symbol_urls.items()},
         cls_telegraph_url: "CLS_TELEGRAPH",
         **{url: f"YAHOO::{source}" for url, source in yahoo_urls.items()},
+        **{url: f"EXTERNAL::{source}" for url, source in external_urls.items()},
     }
     fetched = _fetch_rss_batch(url_map.keys())
 
@@ -324,6 +355,8 @@ def get_news(as_of: date) -> List[dict]:
         _append_rows(rows, symbol, fetched.get(url, []), as_of, "RSSHub Xueqiu News")
     _append_rows(rows, "ALL", fetched.get(cls_telegraph_url, []), as_of, "RSSHub CLS Telegraph")
     for url, source in yahoo_urls.items():
+        _append_rows(rows, "ALL", fetched.get(url, []), as_of, source)
+    for url, source in external_urls.items():
         _append_rows(rows, "ALL", fetched.get(url, []), as_of, source)
 
     # Optional: Redis-cached HK symbols as broad market feed targets.
@@ -334,4 +367,8 @@ def get_news(as_of: date) -> List[dict]:
             if symbol.endswith(".HK"):
                 _append_rows(rows, symbol, fetched.get(symbol_urls.get(symbol, ""), []), as_of, "RSSHub Xueqiu News")
 
-    return ensure_required(_dedupe_rows(rows), ["symbol", "title", "sentiment", "published_at"], "news.fetch")
+    return ensure_required(
+        _dedupe_rows(rows),
+        ["symbol", "title", "sentiment", "published_at"],
+        "news.fetch",
+    )

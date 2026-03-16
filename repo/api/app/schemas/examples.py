@@ -1,6 +1,4 @@
-from __future__ import annotations
-
-from datetime import date, datetime
+﻿from __future__ import annotations
 
 INDEX_PAGE_EXAMPLE = {
     "items": [
@@ -17,7 +15,7 @@ NEWS_PAGE_EXAMPLE = {
         {
             "id": 1,
             "symbol": "000001.SH",
-            "title": "示例新闻",
+            "title": "公司发布业绩预告",
             "sentiment": "positive",
             "published_at": "2026-03-10T08:00:00Z",
         }
@@ -31,7 +29,7 @@ STOCK_WITH_RISK_EXAMPLE = {
     "symbol": "000001.SH",
     "name": "平安银行",
     "market": "A",
-    "sector": "银行",
+    "sector": "金融",
     "risk": {
         "symbol": "000001.SH",
         "max_drawdown": -0.12,
@@ -65,7 +63,7 @@ KLINE_SERIES_EXAMPLE = {
 
 HEATMAP_PAGE_EXAMPLE = {
     "items": [
-        {"sector": "银行", "avg_close": 10.2, "avg_change": 0.12},
+        {"sector": "金融", "avg_close": 10.2, "avg_change": 0.12},
         {"sector": "科技", "avg_close": 28.5, "avg_change": -0.34},
     ],
     "total": 2,
@@ -85,7 +83,7 @@ MACRO_PAGE_EXAMPLE = {
 
 BUYBACK_PAGE_EXAMPLE = {
     "items": [
-        {"symbol": "00005.HK", "date": "2026-03-10", "amount": 1000000.0},
+        {"symbol": "00005.HK", "date": "2026-03-10", "amount": 1000000.0}
     ],
     "total": 1,
     "limit": 20,
@@ -94,7 +92,7 @@ BUYBACK_PAGE_EXAMPLE = {
 
 INSIDER_PAGE_EXAMPLE = {
     "items": [
-        {"id": 1, "symbol": "000001.SH", "date": "2026-03-10", "type": "buy", "shares": 100000.0},
+        {"id": 1, "symbol": "000001.SH", "date": "2026-03-10", "type": "buy", "shares": 100000.0}
     ],
     "total": 1,
     "limit": 20,
@@ -149,7 +147,7 @@ PORTFOLIO_ANALYSIS_EXAMPLE = {
             "latest_price": 10.2,
             "pnl": 700.0,
             "pnl_pct": 0.0737,
-            "sector": "银行",
+            "sector": "金融",
         }
     ],
     "summary": {
@@ -159,7 +157,7 @@ PORTFOLIO_ANALYSIS_EXAMPLE = {
         "total_pnl_pct": 0.0737,
     },
     "sector_exposure": [
-        {"sector": "银行", "value": 10200.0, "weight": 1.0}
+        {"sector": "金融", "value": 10200.0, "weight": 1.0}
     ],
     "top_holdings": [
         {"symbol": "000001.SH", "value": 10200.0, "weight": 1.0}
@@ -195,35 +193,48 @@ INDEX_CONSTITUENTS_EXAMPLE = {
 
 SECTOR_EXPOSURE_EXAMPLE = {
     "market": "A",
+    "as_of": "2026-03-16",
+    "basis": "market_value",
+    "total_value": 24200.0,
+    "coverage": 0.91,
+    "unknown_weight": 0.03,
     "items": [
-        {"sector": "科技", "value": 14000.0, "weight": 0.58},
-        {"sector": "银行", "value": 10200.0, "weight": 0.42},
+        {"sector": "科技", "value": 14000.0, "weight": 0.58, "symbol_count": 18},
+        {"sector": "金融", "value": 10200.0, "weight": 0.42, "symbol_count": 12},
     ],
 }
 
 FUTURES_PAGE_EXAMPLE = {
     "items": [
         {
-            "symbol": "GOLD",
-            "name": "GOLD",
+            "symbol": "AU",
+            "name": "黄金",
             "date": "2026-03-10",
-            "open": 2150.0,
-            "high": 2172.3,
-            "low": 2140.1,
-            "close": 2165.4,
-            "volume": 183245.0,
-            "source": "Snowball",
+            "contract_month": "2606",
+            "open": 546.18,
+            "high": 548.62,
+            "low": 544.56,
+            "close": 547.94,
+            "settlement": 548.01,
+            "open_interest": 178365.0,
+            "turnover": 3319.4,
+            "volume": 290419.0,
+            "source": "SHFE",
         },
         {
-            "symbol": "WTI",
-            "name": "WTI",
+            "symbol": "SC",
+            "name": "原油",
             "date": "2026-03-10",
-            "open": 78.2,
-            "high": 79.1,
-            "low": 77.5,
-            "close": 78.6,
-            "volume": 96540.0,
-            "source": "Snowball",
+            "contract_month": "2605",
+            "open": 520.8,
+            "high": 528.6,
+            "low": 517.3,
+            "close": 525.4,
+            "settlement": 524.9,
+            "open_interest": 303871.0,
+            "turnover": 2273.9,
+            "volume": 303871.0,
+            "source": "SHFE",
         },
     ],
     "total": 2,
@@ -232,11 +243,11 @@ FUTURES_PAGE_EXAMPLE = {
 }
 
 FUTURES_SERIES_EXAMPLE = {
-    "symbol": "GOLD",
+    "symbol": "AU",
     "items": [
-        {"date": "2026-03-06", "open": 2128.0, "high": 2140.6, "low": 2121.5, "close": 2138.4, "volume": 172300.0, "source": "Snowball"},
-        {"date": "2026-03-07", "open": 2138.4, "high": 2154.1, "low": 2131.7, "close": 2148.9, "volume": 176020.0, "source": "Snowball"},
-        {"date": "2026-03-10", "open": 2150.0, "high": 2172.3, "low": 2140.1, "close": 2165.4, "volume": 183245.0, "source": "Snowball"},
+        {"date": "2026-03-06", "contract_month": "2606", "open": 541.88, "high": 544.46, "low": 540.12, "close": 543.36, "settlement": 543.4, "open_interest": 172300.0, "turnover": 3200.1, "volume": 262541.0, "source": "SHFE"},
+        {"date": "2026-03-07", "contract_month": "2606", "open": 543.40, "high": 546.52, "low": 542.36, "close": 545.88, "settlement": 545.9, "open_interest": 176020.0, "turnover": 3256.4, "volume": 275160.0, "source": "SHFE"},
+        {"date": "2026-03-10", "contract_month": "2606", "open": 546.18, "high": 548.62, "low": 544.56, "close": 547.94, "settlement": 548.01, "open_interest": 178365.0, "turnover": 3319.4, "volume": 290419.0, "source": "SHFE"},
     ],
 }
 

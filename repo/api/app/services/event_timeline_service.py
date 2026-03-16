@@ -56,6 +56,7 @@ def list_event_timeline(
         keyword=keyword,
         start=start,
         end=end,
+        backfill_mode="async",
     )
     ordered = sort_event_feed_items(items, sort_by=sort_by, sort=sort)
     total = len(ordered)
