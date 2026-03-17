@@ -2,6 +2,15 @@ const REQUEST_CACHE_TTL_MS = 5000;
 const responseCache = new Map<string, { expiresAt: number; value: unknown }>();
 const inflightRequests = new Map<string, Promise<unknown>>();
 
+async function requestWithInit<T = any>(url: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(url, init);
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `Request failed: ${res.status}`);
+  }
+  return res.json() as Promise<T>;
+}
+
 async function request<T = any>(url: string): Promise<T> {
   const now = Date.now();
   const cached = responseCache.get(url);
@@ -14,14 +23,7 @@ async function request<T = any>(url: string): Promise<T> {
     return inflight as Promise<T>;
   }
 
-  const promise = fetch(url)
-    .then(async (res) => {
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || `请求失败: ${res.status}`);
-      }
-      return res.json() as Promise<T>;
-    })
+  const promise = requestWithInit<T>(url)
     .then((payload) => {
       responseCache.set(url, { expiresAt: Date.now() + REQUEST_CACHE_TTL_MS, value: payload });
       return payload;
@@ -32,6 +34,32 @@ async function request<T = any>(url: string): Promise<T> {
 
   inflightRequests.set(url, promise);
   return promise;
+}
+
+async function requestJson<T = any>(
+  url: string,
+  payload: Record<string, unknown>,
+  options?: { method?: "POST" | "PUT" | "PATCH"; token?: string },
+): Promise<T> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (options?.token) {
+    headers.Authorization = `Bearer ${options.token}`;
+  }
+  return requestWithInit<T>(url, {
+    method: options?.method ?? "POST",
+    headers,
+    body: JSON.stringify(payload),
+  });
+}
+
+async function requestAuthed<T = any>(url: string, token: string): Promise<T> {
+  return requestWithInit<T>(url, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
 }
 
 export async function getIndices(params?: { as_of?: string; sort?: "asc" | "desc"; limit?: number; offset?: number }) {
@@ -47,6 +75,7 @@ export async function getIndices(params?: { as_of?: string; sort?: "asc" | "desc
 export async function getStocks(params?: {
   market?: "A" | "HK" | "US";
   keyword?: string;
+  sector?: string;
   sort?: "asc" | "desc";
   limit?: number;
   offset?: number;
@@ -54,6 +83,7 @@ export async function getStocks(params?: {
   const query = new URLSearchParams();
   if (params?.market) query.set("market", params.market);
   if (params?.keyword) query.set("keyword", params.keyword);
+  if (params?.sector) query.set("sector", params.sector);
   if (params?.sort) query.set("sort", params.sort);
   if (params?.limit !== undefined) query.set("limit", String(params.limit));
   if (params?.offset !== undefined) query.set("offset", String(params.offset));
@@ -476,5 +506,17 @@ export async function getPortfolioAnalysis(userId: number, params?: { top_n?: nu
   if (params?.top_n !== undefined) query.set("top_n", String(params.top_n));
   const suffix = query.toString();
   return request(`/api/user/${userId}/portfolio/analysis${suffix ? `?${suffix}` : ""}`);
+}
+
+export async function registerUser(account: string, password: string) {
+  return requestJson("/api/auth/register", { account, password });
+}
+
+export async function loginUser(account: string, password: string) {
+  return requestJson("/api/auth/login", { account, password });
+}
+
+export async function getCurrentUser(token: string) {
+  return requestAuthed("/api/auth/me", token);
 }
 

@@ -29,7 +29,9 @@ class MarketSectorSourceTests(unittest.TestCase):
             {"symbol": "00700.HK", "sector": "ShouldNotApply"},
             {"symbol": "600000.SH", "sector": "货币金融服务"},
         ]
-        with patch("etl.fetchers.market_client.load_stock_basics_cache", return_value=[]), patch(
+        with patch("etl.fetchers.market_client.HK_PROFILE_ENRICH_ENABLED", False), patch(
+            "etl.fetchers.market_client.load_stock_basics_cache", return_value=[]
+        ), patch(
             "etl.fetchers.market_client.load_baostock_industry_cache",
             return_value=[],
         ), patch("etl.fetchers.market_client.list_stock_rows", return_value=[]), patch(
@@ -51,7 +53,9 @@ class MarketSectorSourceTests(unittest.TestCase):
         baostock_rows = [
             {"symbol": "000001.SZ", "name": "平安银行", "sector": "货币金融服务"},
         ]
-        with patch("etl.fetchers.market_client.load_stock_basics_cache", return_value=[]), patch(
+        with patch("etl.fetchers.market_client.HK_PROFILE_ENRICH_ENABLED", False), patch(
+            "etl.fetchers.market_client.load_stock_basics_cache", return_value=[]
+        ), patch(
             "etl.fetchers.market_client.load_baostock_industry_cache",
             return_value=[],
         ), patch("etl.fetchers.market_client.list_stock_rows", return_value=[]), patch(
@@ -72,7 +76,9 @@ class MarketSectorSourceTests(unittest.TestCase):
         cached_baostock_rows = [
             {"symbol": "000001.SZ", "name": "平安银行", "sector": "货币金融服务"},
         ]
-        with patch("etl.fetchers.market_client.load_stock_basics_cache", return_value=[]), patch(
+        with patch("etl.fetchers.market_client.HK_PROFILE_ENRICH_ENABLED", False), patch(
+            "etl.fetchers.market_client.load_stock_basics_cache", return_value=[]
+        ), patch(
             "etl.fetchers.market_client.load_baostock_industry_cache",
             return_value=cached_baostock_rows,
         ), patch("etl.fetchers.market_client.list_stock_rows", return_value=[]), patch(
@@ -96,7 +102,9 @@ class MarketSectorSourceTests(unittest.TestCase):
             {"symbol": "000001.SZ", "name": "平安银行", "sector": "货币金融服务"},
             {"symbol": "600000.SH", "name": "浦发银行", "sector": "货币金融服务"},
         ]
-        with patch("etl.fetchers.market_client.load_stock_basics_cache", return_value=stock_rows), patch(
+        with patch("etl.fetchers.market_client.HK_PROFILE_ENRICH_ENABLED", False), patch(
+            "etl.fetchers.market_client.load_stock_basics_cache", return_value=stock_rows
+        ), patch(
             "etl.fetchers.market_client.load_baostock_industry_cache",
             return_value=[fresh_baostock_rows[1]],
         ), patch("etl.fetchers.market_client.get_stock_industry", return_value=fresh_baostock_rows) as online_mock, patch(
@@ -115,7 +123,9 @@ class MarketSectorSourceTests(unittest.TestCase):
         cached_baostock_rows = [
             {"symbol": "000001.SZ", "name": "平安银行", "sector": "货币金融服务"},
         ]
-        with patch("etl.fetchers.market_client.load_stock_basics_cache", return_value=cached_stock_rows), patch(
+        with patch("etl.fetchers.market_client.HK_PROFILE_ENRICH_ENABLED", False), patch(
+            "etl.fetchers.market_client.load_stock_basics_cache", return_value=cached_stock_rows
+        ), patch(
             "etl.fetchers.market_client.load_baostock_industry_cache",
             return_value=cached_baostock_rows,
         ), patch("etl.fetchers.market_client.save_stock_basics_cache") as save_mock:

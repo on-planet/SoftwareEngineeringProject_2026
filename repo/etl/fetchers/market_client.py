@@ -9,7 +9,11 @@ import time
 from typing import List
 
 from etl.loaders.pg_loader import list_stock_rows, upsert_stocks
-from etl.fetchers.akshare_hk_stock_client import fetch_hk_stock_universe_rows
+from etl.fetchers.akshare_hk_stock_client import (
+    canonicalize_hk_sector,
+    fetch_hk_stock_profile_rows,
+    fetch_hk_stock_universe_rows,
+)
 from etl.fetchers.baostock_client import get_stock_industry
 from etl.fetchers.snowball_client import (
     get_daily_prices as sb_get_daily_prices,
@@ -33,7 +37,23 @@ HK_UNIVERSE_MIN_COUNT = max(100, int(os.getenv("HK_UNIVERSE_MIN_COUNT", "1500"))
 HK_UNIVERSE_REFRESH_COOLDOWN_SECONDS = max(
     300, int(os.getenv("HK_UNIVERSE_REFRESH_COOLDOWN_SECONDS", "1800"))
 )
+HK_UNIVERSE_SYNC_ON_REQUEST = os.getenv("HK_UNIVERSE_SYNC_ON_REQUEST", "0").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
 HK_UNIVERSE_SYNC_BATCH_SIZE = max(1, int(os.getenv("HK_UNIVERSE_SYNC_BATCH_SIZE", "200")))
+HK_PROFILE_ENRICH_BATCH_SIZE = max(1, int(os.getenv("HK_PROFILE_ENRICH_BATCH_SIZE", "120")))
+HK_PROFILE_ENRICH_ENABLED = os.getenv("HK_PROFILE_ENRICH_ENABLED", "1").strip().lower() not in {
+    "0",
+    "false",
+    "no",
+}
+HK_PROFILE_ENRICH_ON_REQUEST = os.getenv("HK_PROFILE_ENRICH_ON_REQUEST", "0").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
 _HK_UNIVERSE_LAST_ATTEMPT_AT = 0.0
 
 
@@ -46,6 +66,10 @@ def market_data_session():
 def _can_apply_baostock_sector(symbol: str) -> bool:
     normalized = str(symbol or "").strip().upper()
     return normalized.endswith((".SH", ".SZ", ".BJ"))
+
+
+def _is_hk_symbol(symbol: str | None) -> bool:
+    return str(symbol or "").strip().upper().endswith(".HK")
 
 
 def _should_replace_name(current_name: str | None, symbol: str) -> bool:
@@ -62,6 +86,13 @@ def _needs_baostock_sector(value: str | None) -> bool:
     if not text:
         return True
     return text in {"Unknown", "未知", "未分类"}
+
+
+def _needs_hk_sector(value: str | None) -> bool:
+    text = str(value or "").strip()
+    if _needs_baostock_sector(text):
+        return True
+    return text == "其他"
 
 
 def _needs_baostock_enrichment(row: dict) -> bool:
@@ -89,6 +120,63 @@ def _merge_baostock_rows(rows: List[dict], baostock_rows: List[dict]) -> List[di
         if baostock_name and _should_replace_name(str(row.get("name") or ""), symbol):
             row["name"] = baostock_name
     return rows
+
+
+def _needs_hk_profile_enrichment(row: dict) -> bool:
+    symbol = str(row.get("symbol") or "").strip()
+    if not _is_hk_symbol(symbol):
+        return False
+    return _should_replace_name(str(row.get("name") or ""), symbol) or _needs_hk_sector(row.get("sector"))
+
+
+def _merge_hk_profile_rows(rows: List[dict], hk_profile_rows: List[dict]) -> List[dict]:
+    if not rows or not hk_profile_rows:
+        return rows
+    by_symbol = {str(row.get("symbol") or "").strip(): row for row in hk_profile_rows if row.get("symbol")}
+    for row in rows:
+        symbol = str(row.get("symbol") or "").strip()
+        if not _is_hk_symbol(symbol):
+            continue
+        hk_row = by_symbol.get(symbol)
+        if not hk_row:
+            continue
+        hk_name = str(hk_row.get("name") or "").strip()
+        if hk_name and _should_replace_name(str(row.get("name") or ""), symbol):
+            row["name"] = hk_name
+        hk_sector = str(hk_row.get("sector") or "").strip()
+        if hk_sector and _needs_hk_sector(row.get("sector")):
+            row["sector"] = hk_sector
+        row["sector"] = canonicalize_hk_sector(row.get("sector"))
+    return rows
+
+
+def _normalize_hk_row_sectors(rows: List[dict]) -> List[dict]:
+    for row in rows:
+        symbol = str(row.get("symbol") or "").strip()
+        if not _is_hk_symbol(symbol):
+            continue
+        row["sector"] = canonicalize_hk_sector(row.get("sector"))
+    return rows
+
+
+def _enrich_hk_rows_with_akshare(rows: List[dict]) -> List[dict]:
+    if not HK_PROFILE_ENRICH_ENABLED or not rows:
+        return rows
+    rows = _normalize_hk_row_sectors(rows)
+    pending_symbols = sorted(
+        {
+            str(row.get("symbol") or "").strip()
+            for row in rows
+            if _needs_hk_profile_enrichment(row)
+        }
+    )
+    if not pending_symbols:
+        return rows
+    enriched_rows: list[dict] = []
+    for index in range(0, len(pending_symbols), HK_PROFILE_ENRICH_BATCH_SIZE):
+        batch = pending_symbols[index : index + HK_PROFILE_ENRICH_BATCH_SIZE]
+        enriched_rows.extend(fetch_hk_stock_profile_rows(batch))
+    return _normalize_hk_row_sectors(_merge_hk_profile_rows(rows, enriched_rows))
 
 
 def _enrich_with_cached_baostock(rows: List[dict], requested: list[str] | None = None) -> List[dict]:
@@ -123,6 +211,8 @@ def _has_requested_hk_symbols(rows: list[dict], requested: list[str] | None) -> 
 
 def _needs_hk_universe_sync(rows: list[dict], requested: list[str] | None) -> bool:
     if requested is not None:
+        if not HK_UNIVERSE_SYNC_ON_REQUEST:
+            return False
         return not _has_requested_hk_symbols(rows, requested)
     return _count_market_rows(rows, "HK") < HK_UNIVERSE_MIN_COUNT
 
@@ -181,6 +271,7 @@ def sync_hk_stock_universe(*, force: bool = False) -> int:
     start_index = min(start_index, len(rows))
     for batch_start in range(start_index, len(rows), HK_UNIVERSE_SYNC_BATCH_SIZE):
         batch = rows[batch_start : batch_start + HK_UNIVERSE_SYNC_BATCH_SIZE]
+        batch = _enrich_hk_rows_with_akshare(batch)
         batch_end = batch_start + len(batch)
         upsert_stocks(batch)
         save_stock_basics_cache(batch, merge=True)
@@ -209,25 +300,48 @@ def warm_stock_basic_enrichment(symbols: list[str] | None = None) -> int:
         if db_rows:
             save_stock_basics_cache(db_rows)
             stock_rows = load_stock_basics_cache(requested, allow_stale=True)
+    hk_before = {
+        str(row.get("symbol") or "").strip(): (
+            str(row.get("name") or "").strip(),
+            str(row.get("sector") or "").strip(),
+        )
+        for row in stock_rows
+        if _is_hk_symbol(str(row.get("symbol") or "").strip())
+    }
+    stock_rows = _enrich_hk_rows_with_akshare(stock_rows)
+    hk_after = {
+        str(row.get("symbol") or "").strip(): (
+            str(row.get("name") or "").strip(),
+            str(row.get("sector") or "").strip(),
+        )
+        for row in stock_rows
+        if _is_hk_symbol(str(row.get("symbol") or "").strip())
+    }
+    hk_changed_count = sum(1 for symbol, payload in hk_after.items() if hk_before.get(symbol) != payload)
     pending_symbols = [
         str(row.get("symbol") or "").strip()
         for row in stock_rows
         if _needs_baostock_enrichment(row)
     ]
     if not pending_symbols:
+        if hk_changed_count > 0:
+            save_stock_basics_cache(stock_rows, merge=True)
+            return hk_changed_count
         return 0
     cached_baostock = load_baostock_industry_cache(pending_symbols, allow_stale=True)
     covered = {str(row.get("symbol") or "").strip() for row in cached_baostock if row.get("symbol")}
     missing_symbols = [symbol for symbol in pending_symbols if symbol not in covered]
     if not missing_symbols:
         save_stock_basics_cache(_enrich_with_cached_baostock(stock_rows, requested), merge=True)
-        return len(cached_baostock)
+        return len(cached_baostock) + hk_changed_count
     fresh_rows = get_stock_industry(as_of=date.today())
     if not fresh_rows:
-        return len(cached_baostock)
+        if hk_changed_count > 0:
+            save_stock_basics_cache(stock_rows, merge=True)
+        return len(cached_baostock) + hk_changed_count
     save_baostock_industry_cache(fresh_rows, merge=True)
     save_stock_basics_cache(_enrich_with_cached_baostock(stock_rows, requested), merge=True)
-    return len(fresh_rows)
+    return len(fresh_rows) + hk_changed_count
 
 
 def get_stock_basic(
@@ -263,6 +377,11 @@ def get_stock_basic(
 
     rows = sb_get_stock_basics(requested)
     rows = _maybe_sync_hk_universe(rows, requested, force=force_refresh or requested is None)
+    if force_refresh:
+        if requested is None or HK_PROFILE_ENRICH_ON_REQUEST:
+            rows = _enrich_hk_rows_with_akshare(rows)
+        else:
+            rows = _normalize_hk_row_sectors(rows)
     if rows:
         baostock_rows = load_baostock_industry_cache(requested, allow_stale=True)
         rows = _merge_baostock_rows(rows, baostock_rows)

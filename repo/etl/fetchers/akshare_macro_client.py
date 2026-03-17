@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime
+import hashlib
+import re
 from typing import Iterable
 
 import pandas as pd
+import requests
 
 from etl.transformers.macro import normalize_macro_rows
 from etl.utils.logging import get_logger
@@ -26,6 +29,7 @@ class AkShareMacroSpec:
     mode: str
     invert: bool = False
     field_aliases: tuple[str, ...] = ()
+    group_aliases: tuple[str, ...] = ()
 
 
 AKSHARE_MACRO_SPECS: tuple[AkShareMacroSpec, ...] = (
@@ -43,6 +47,12 @@ AKSHARE_MACRO_SPECS: tuple[AkShareMacroSpec, ...] = (
     AkShareMacroSpec("macro_china_cx_services_pmi_yearly", "AK_CHN_CAIXIN_SERVICES_PMI", "CHN", "china_base"),
     AkShareMacroSpec("macro_china_non_man_pmi", "AK_CHN_NON_MAN_PMI", "CHN", "china_base"),
     AkShareMacroSpec("macro_china_fx_reserves_yearly", "AK_CHN_FX_RESERVES", "CHN", "china_base"),
+    AkShareMacroSpec(
+        "macro_bank_usa_interest_rate",
+        "AK_USA_FED_RATE",
+        "USA",
+        "report_labeled",
+    ),
     AkShareMacroSpec("macro_usa_cpi_yoy", "AK_USA_CPI_YOY", "USA", "report"),
     AkShareMacroSpec("macro_usa_gdp_monthly", "AK_USA_GDP", "USA", "report"),
     AkShareMacroSpec("macro_usa_retail_sales", "AK_USA_RETAIL_SALES", "USA", "report"),
@@ -52,6 +62,80 @@ AKSHARE_MACRO_SPECS: tuple[AkShareMacroSpec, ...] = (
     AkShareMacroSpec("macro_euro_gdp_yoy", "AK_EUR_GDP_YOY", "EUR", "report"),
     AkShareMacroSpec("macro_euro_cpi_yoy", "AK_EUR_CPI_YOY", "EUR", "report"),
     AkShareMacroSpec("macro_euro_unemployment_rate_mom", "AK_EUR_UNEMP", "EUR", "report", invert=True),
+    AkShareMacroSpec(
+        "macro_china_commodity_price_index",
+        "AK_CHN_COMMODITY_PRICE",
+        "CHN",
+        "wide",
+        field_aliases=("VALUE", "CHANGE", "CHG_3M", "CHG_6M", "CHG_1Y", "CHG_2Y", "CHG_3Y"),
+    ),
+    AkShareMacroSpec(
+        "macro_china_energy_index",
+        "AK_CHN_ENERGY_INDEX",
+        "CHN",
+        "wide",
+        field_aliases=("VALUE", "CHANGE", "CHG_3M", "CHG_6M", "CHG_1Y", "CHG_2Y", "CHG_3Y"),
+    ),
+    AkShareMacroSpec(
+        "macro_china_fdi",
+        "AK_CHN_FDI",
+        "CHN",
+        "wide",
+        field_aliases=("CURRENT", "CURRENT_YOY", "CURRENT_MOM", "CUMULATIVE", "CUMULATIVE_YOY"),
+    ),
+    AkShareMacroSpec(
+        "macro_china_lpr",
+        "AK_CHN_LPR",
+        "CHN",
+        "wide",
+        field_aliases=("LPR_1Y", "LPR_5Y", "RATE_1", "RATE_2"),
+    ),
+    AkShareMacroSpec("macro_china_urban_unemployment", "AK_CHN_URBAN_UNEMP", "CHN", "china_base", invert=True),
+    AkShareMacroSpec(
+        "macro_china_shrzgm",
+        "AK_CHN_SOCIAL_FINANCING",
+        "CHN",
+        "wide",
+        field_aliases=(
+            "TOTAL",
+            "RMB_LOAN",
+            "FX_LOAN",
+            "ENTRUSTED_LOAN",
+            "TRUST_LOAN",
+            "BANK_ACCEPTANCE",
+            "CORP_BOND",
+            "EQUITY_FINANCING",
+        ),
+    ),
+    AkShareMacroSpec(
+        "macro_china_new_financial_credit",
+        "AK_CHN_NEW_FIN_CREDIT",
+        "CHN",
+        "wide",
+        field_aliases=("CURRENT", "CURRENT_YOY", "CURRENT_MOM", "CUMULATIVE", "CUMULATIVE_YOY"),
+    ),
+    AkShareMacroSpec(
+        "macro_china_new_house_price",
+        "AK_CHN_NEW_HOUSE_PRICE",
+        "CHN",
+        "house_price",
+        field_aliases=("NEW_YOY", "NEW_MOM", "NEW_BASE", "SECOND_YOY", "SECOND_MOM", "SECOND_BASE"),
+        group_aliases=("BJ", "SH"),
+    ),
+    AkShareMacroSpec(
+        "macro_china_enterprise_boom_index",
+        "AK_CHN_ENTERPRISE_BOOM",
+        "CHN",
+        "wide",
+        field_aliases=("BOOM_INDEX", "BOOM_YOY", "BOOM_MOM", "CONFIDENCE_INDEX", "CONFIDENCE_YOY", "CONFIDENCE_MOM"),
+    ),
+    AkShareMacroSpec(
+        "macro_china_national_tax_receipts",
+        "AK_CHN_TAX_RECEIPTS",
+        "CHN",
+        "wide",
+        field_aliases=("TOTAL", "YOY", "QOQ"),
+    ),
     AkShareMacroSpec(
         "macro_cnbs",
         "AK_CNBS",
@@ -70,15 +154,21 @@ AKSHARE_MACRO_SPECS: tuple[AkShareMacroSpec, ...] = (
     ),
 )
 
+
 def _build_series_keys() -> tuple[str, ...]:
     keys: set[str] = set()
     for spec in AKSHARE_MACRO_SPECS:
         if spec.mode == "china_base":
             keys.add(f"{spec.series_prefix}:{spec.region}")
             continue
-        if spec.mode == "report":
+        if spec.mode in {"report", "report_labeled"}:
             for alias in ("ACTUAL", "FORECAST", "PREVIOUS"):
                 keys.add(f"{spec.series_prefix}_{alias}:{spec.region}")
+            continue
+        if spec.mode == "house_price":
+            for group_alias in spec.group_aliases:
+                for alias in spec.field_aliases:
+                    keys.add(f"{spec.series_prefix}_{group_alias}_{alias}:{spec.region}")
             continue
         for alias in spec.field_aliases:
             keys.add(f"{spec.series_prefix}_{alias}:{spec.region}")
@@ -96,9 +186,30 @@ def _to_date(value) -> date | None:
         return value
     if isinstance(value, datetime):
         return value.date()
+
     text = str(value).strip()
     if not text:
         return None
+
+    quarter_match = re.search(r"(\d{4})\s*[年/-]?\s*(?:Q|第)?\s*([1-4])\s*季", text, flags=re.IGNORECASE)
+    if quarter_match:
+        year = int(quarter_match.group(1))
+        quarter = int(quarter_match.group(2))
+        return date(year, (quarter - 1) * 3 + 1, 1)
+    quarter_match_alt = re.search(r"(\d{4})\s*Q\s*([1-4])", text, flags=re.IGNORECASE)
+    if quarter_match_alt:
+        year = int(quarter_match_alt.group(1))
+        quarter = int(quarter_match_alt.group(2))
+        return date(year, (quarter - 1) * 3 + 1, 1)
+
+    month_range_match = re.search(r"(\d{4})\s*年\s*(\d{1,2})(?:\s*[-~至]\s*(\d{1,2}))?\s*月", text)
+    if month_range_match:
+        year = int(month_range_match.group(1))
+        month_start = int(month_range_match.group(2))
+        month_end = int(month_range_match.group(3) or month_start)
+        month = min(12, max(1, month_end))
+        return date(year, month, 1)
+
     for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%Y-%m", "%Y/%m", "%Y%m%d", "%Y"):
         try:
             parsed = datetime.strptime(text[: len(fmt)], fmt)
@@ -109,6 +220,14 @@ def _to_date(value) -> date | None:
         if fmt in {"%Y-%m", "%Y/%m"}:
             return date(parsed.year, parsed.month, 1)
         return parsed.date()
+
+    digits_only = re.sub(r"\D", "", text)
+    if len(digits_only) == 6:
+        try:
+            return datetime.strptime(digits_only, "%Y%m").date().replace(day=1)
+        except Exception:
+            pass
+
     try:
         parsed = pd.to_datetime(text, errors="coerce")
     except Exception:
@@ -144,6 +263,46 @@ def _normalize_grouped_rows(rows: Iterable[dict], *, invert: bool = False) -> li
     return output
 
 
+def _normalize_alias_token(text: str) -> str:
+    cleaned = re.sub(r"[^0-9A-Za-z]+", "_", str(text or "").strip()).strip("_").upper()
+    if cleaned:
+        return cleaned
+    digest = hashlib.md5(str(text or "").encode("utf-8")).hexdigest()[:8].upper()
+    return f"X{digest}"
+
+
+def _fetch_macro_china_shrzgm_fallback() -> pd.DataFrame:
+    url_candidates = (
+        ("https://data.mofcom.gov.cn/datamofcom/front/gnmy/shrzgmQuery", True),
+        ("https://data.mofcom.gov.cn/datamofcom/front/gnmy/shrzgmQuery", False),
+        ("http://data.mofcom.gov.cn/datamofcom/front/gnmy/shrzgmQuery", None),
+    )
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/123.0.0.0 Safari/537.36"
+        )
+    }
+    for url, verify in url_candidates:
+        try:
+            request_kwargs = {"headers": headers, "timeout": 20}
+            if verify is not None and url.startswith("https://"):
+                request_kwargs["verify"] = verify
+            response = requests.post(url, **request_kwargs)
+            response.raise_for_status()
+            payload = response.json()
+            if not isinstance(payload, list):
+                continue
+            df = pd.DataFrame(payload)
+            if isinstance(df, pd.DataFrame) and not df.empty:
+                return df
+        except Exception as exc:
+            LOGGER.warning("akshare macro shrzgm fallback failed [%s verify=%s]: %s", url, verify, exc)
+            continue
+    return pd.DataFrame()
+
+
 def _call_akshare_function(spec: AkShareMacroSpec) -> pd.DataFrame:
     if ak is None:
         return pd.DataFrame()
@@ -155,8 +314,18 @@ def _call_akshare_function(spec: AkShareMacroSpec) -> pd.DataFrame:
         df = func()
     except Exception as exc:
         LOGGER.warning("akshare macro fetch failed [%s]: %s", spec.function_name, exc)
+        if spec.function_name == "macro_china_shrzgm":
+            fallback_df = _fetch_macro_china_shrzgm_fallback()
+            if not fallback_df.empty:
+                LOGGER.info("akshare macro fallback loaded rows for [%s]: %s", spec.function_name, len(fallback_df))
+                return fallback_df
         return pd.DataFrame()
     if not isinstance(df, pd.DataFrame) or df.empty:
+        if spec.function_name == "macro_china_shrzgm":
+            fallback_df = _fetch_macro_china_shrzgm_fallback()
+            if not fallback_df.empty:
+                LOGGER.info("akshare macro fallback loaded rows for [%s]: %s", spec.function_name, len(fallback_df))
+                return fallback_df
         return pd.DataFrame()
     return df.copy()
 
@@ -200,6 +369,26 @@ def _flatten_report(spec: AkShareMacroSpec, df: pd.DataFrame) -> list[dict]:
     return _normalize_grouped_rows(rows, invert=spec.invert)
 
 
+def _flatten_report_labeled(spec: AkShareMacroSpec, df: pd.DataFrame) -> list[dict]:
+    rows: list[dict] = []
+    for _, record in df.iterrows():
+        if len(record) < 3:
+            continue
+        row_date = _to_date(record.iloc[1])
+        if row_date is None:
+            continue
+        numeric_values: list[float] = []
+        for value in record.iloc[2:]:
+            converted = _to_float(value)
+            if converted is None:
+                continue
+            numeric_values.append(converted)
+        aliases = _report_aliases(len(numeric_values))
+        for alias, value in zip(aliases, numeric_values):
+            rows.append({"key": f"{spec.series_prefix}_{alias}:{spec.region}", "date": row_date, "value": value})
+    return _normalize_grouped_rows(rows, invert=spec.invert)
+
+
 def _flatten_wide(spec: AkShareMacroSpec, df: pd.DataFrame) -> list[dict]:
     rows: list[dict] = []
     for _, record in df.iterrows():
@@ -214,6 +403,37 @@ def _flatten_wide(spec: AkShareMacroSpec, df: pd.DataFrame) -> list[dict]:
     return _normalize_grouped_rows(rows, invert=spec.invert)
 
 
+def _flatten_house_price(spec: AkShareMacroSpec, df: pd.DataFrame) -> list[dict]:
+    rows: list[dict] = []
+    city_alias_map = {
+        "北京": "BJ",
+        "上海": "SH",
+    }
+    valid_groups = set(spec.group_aliases)
+    for _, record in df.iterrows():
+        if len(record) < 8:
+            continue
+        row_date = _to_date(record.iloc[0])
+        if row_date is None:
+            continue
+        city_raw = str(record.iloc[1] or "").strip()
+        city_alias = city_alias_map.get(city_raw, _normalize_alias_token(city_raw))
+        if valid_groups and city_alias not in valid_groups:
+            continue
+        for alias, value in zip(spec.field_aliases, record.iloc[2:]):
+            converted = _to_float(value)
+            if converted is None:
+                continue
+            rows.append(
+                {
+                    "key": f"{spec.series_prefix}_{city_alias}_{alias}:{spec.region}",
+                    "date": row_date,
+                    "value": converted,
+                }
+            )
+    return _normalize_grouped_rows(rows, invert=spec.invert)
+
+
 def _flatten_dataframe(spec: AkShareMacroSpec, df: pd.DataFrame) -> list[dict]:
     if df.empty:
         return []
@@ -221,8 +441,12 @@ def _flatten_dataframe(spec: AkShareMacroSpec, df: pd.DataFrame) -> list[dict]:
         return _flatten_china_base(spec, df)
     if spec.mode == "report":
         return _flatten_report(spec, df)
+    if spec.mode == "report_labeled":
+        return _flatten_report_labeled(spec, df)
     if spec.mode == "wide":
         return _flatten_wide(spec, df)
+    if spec.mode == "house_price":
+        return _flatten_house_price(spec, df)
     LOGGER.warning("unsupported akshare macro mode [%s] for %s", spec.mode, spec.function_name)
     return []
 

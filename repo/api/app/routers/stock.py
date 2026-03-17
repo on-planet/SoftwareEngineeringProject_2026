@@ -58,12 +58,14 @@ router = APIRouter(tags=["stock"])
 def list_stocks_route(
     market: str | None = Query(None, pattern="^(A|HK|US)$"),
     keyword: str | None = Query(None),
+    sector: str | None = Query(None),
     sorting: dict = Depends(sort_params),
     paging: dict = Depends(pagination_params),
 ):
     items, total = list_stocks(
         market=market,
         keyword=keyword,
+        sector=sector,
         limit=paging["limit"],
         offset=paging["offset"],
         sort=sorting["sort"],

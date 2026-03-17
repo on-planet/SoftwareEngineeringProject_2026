@@ -135,6 +135,67 @@ class AkshareMacroIntegrationTests(unittest.TestCase):
         self.assertIn("AK_CNBS_HOUSEHOLD:CHN", keys)
         self.assertIn("AK_CNBS_FIN_LIABILITY:CHN", keys)
 
+    def test_fetch_akshare_rows_for_report_labeled_spec_uses_second_column_as_date(self) -> None:
+        spec = akshare_macro_client.AkShareMacroSpec("demo", "AK_USA_FED_RATE", "USA", "report_labeled")
+        frame = pd.DataFrame(
+            [
+                ["美联储利率决议报告", "2024-01-01", 5.5, 5.5, 5.25],
+            ],
+            columns=["item", "date", "actual", "forecast", "previous"],
+        )
+        with patch.object(akshare_macro_client, "_call_akshare_function", return_value=frame):
+            rows = akshare_macro_client.fetch_akshare_rows_for_spec(spec)
+
+        keys = {row["key"] for row in rows}
+        self.assertIn("AK_USA_FED_RATE_ACTUAL:USA", keys)
+        self.assertIn("AK_USA_FED_RATE_FORECAST:USA", keys)
+        self.assertIn("AK_USA_FED_RATE_PREVIOUS:USA", keys)
+
+    def test_fetch_akshare_rows_for_house_price_spec_splits_city_keys(self) -> None:
+        spec = akshare_macro_client.AkShareMacroSpec(
+            "demo",
+            "AK_CHN_NEW_HOUSE_PRICE",
+            "CHN",
+            "house_price",
+            field_aliases=("NEW_YOY", "NEW_MOM", "NEW_BASE", "SECOND_YOY", "SECOND_MOM", "SECOND_BASE"),
+            group_aliases=("BJ", "SH"),
+        )
+        frame = pd.DataFrame(
+            [
+                ["2024-01-01", "北京", 1.0, 0.1, 100.0, 0.8, 0.0, 99.0],
+                ["2024-01-01", "上海", 0.9, 0.2, 101.0, 0.7, -0.1, 98.0],
+            ],
+            columns=["date", "city", "a", "b", "c", "d", "e", "f"],
+        )
+        with patch.object(akshare_macro_client, "_call_akshare_function", return_value=frame):
+            rows = akshare_macro_client.fetch_akshare_rows_for_spec(spec)
+
+        keys = {row["key"] for row in rows}
+        self.assertIn("AK_CHN_NEW_HOUSE_PRICE_BJ_NEW_YOY:CHN", keys)
+        self.assertIn("AK_CHN_NEW_HOUSE_PRICE_SH_SECOND_BASE:CHN", keys)
+
+    def test_to_date_parses_china_quarter_and_month_range(self) -> None:
+        self.assertEqual(akshare_macro_client._to_date("2024年第2季度"), date(2024, 4, 1))
+        self.assertEqual(akshare_macro_client._to_date("2024年1-2月份"), date(2024, 2, 1))
+
+    def test_call_akshare_function_uses_shrzgm_fallback_on_exception(self) -> None:
+        spec = akshare_macro_client.AkShareMacroSpec("macro_china_shrzgm", "AK_CHN_SOCIAL_FINANCING", "CHN", "wide")
+        fake_df = pd.DataFrame([["2024-01", 1.0]], columns=["date", "value"])
+
+        class DummyAk:
+            @staticmethod
+            def macro_china_shrzgm():
+                raise RuntimeError("ssl error")
+
+        with (
+            patch.object(akshare_macro_client, "ak", DummyAk()),
+            patch.object(akshare_macro_client, "_fetch_macro_china_shrzgm_fallback", return_value=fake_df) as fallback_mock,
+        ):
+            out = akshare_macro_client._call_akshare_function(spec)
+
+        self.assertFalse(out.empty)
+        fallback_mock.assert_called_once()
+
     def test_get_macro_series_refetches_akshare_key_when_db_empty(self) -> None:
         db = FakeSession([])
         fetched_rows = [

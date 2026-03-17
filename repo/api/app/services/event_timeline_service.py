@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
+import os
 
 from sqlalchemy.orm import Session
 
@@ -8,6 +9,8 @@ from app.core.cache import get_json, set_json
 from app.schemas.event_timeline import EventTimelineItem
 from app.services.cache_utils import item_to_dict
 from app.services.event_feed_service import load_or_backfill_event_feed, sort_event_feed_items
+
+EVENT_TIMELINE_CACHE_TTL = max(60, int(os.getenv("EVENT_TIMELINE_CACHE_TTL", "120")))
 
 
 def _cache_key(
@@ -47,7 +50,15 @@ def list_event_timeline(
     if isinstance(cached, dict) and isinstance(cached.get("items"), list) and isinstance(cached.get("total"), int):
         items = [EventTimelineItem(**item) for item in cached.get("items") if isinstance(item, dict)]
         if items or cached.get("total", 0) > 0:
-            return items, cached.get("total")
+            if start is None and end is None:
+                cutoff = date.today() - timedelta(days=1)
+                has_recent = any(item.date >= cutoff for item in items)
+                if not has_recent:
+                    items = []
+                else:
+                    return items, cached.get("total")
+            else:
+                return items, cached.get("total")
 
     items = load_or_backfill_event_feed(
         db,
@@ -61,5 +72,5 @@ def list_event_timeline(
     ordered = sort_event_feed_items(items, sort_by=sort_by, sort=sort)
     total = len(ordered)
     paged = ordered[offset : offset + limit]
-    set_json(cache_key, {"items": [item_to_dict(item) for item in paged], "total": total})
+    set_json(cache_key, {"items": [item_to_dict(item) for item in paged], "total": total}, ttl=EVENT_TIMELINE_CACHE_TTL)
     return paged, total

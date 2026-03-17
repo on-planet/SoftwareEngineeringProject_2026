@@ -31,6 +31,37 @@ def _validate_rows(rows: Iterable[dict], required: Iterable[str], context: str) 
     return output
 
 
+def _clip_text(value: object, max_length: int, *, default: str = "") -> str:
+    text = str(value or "").strip()
+    text = " ".join(text.split())
+    if not text:
+        return default
+    if len(text) <= max_length:
+        return text
+    return text[:max_length].strip()
+
+
+def _sanitize_stock_rows(rows: Iterable[dict]) -> list[dict]:
+    output: list[dict] = []
+    for row in rows:
+        symbol = _clip_text(row.get("symbol"), 32)
+        if not symbol:
+            continue
+        name = _clip_text(row.get("name"), 128, default=symbol)
+        market = _clip_text(row.get("market"), 16)
+        sector = _clip_text(row.get("sector"), 64, default="Unknown")
+        output.append(
+            {
+                **row,
+                "symbol": symbol,
+                "name": name,
+                "market": market,
+                "sector": sector,
+            }
+        )
+    return output
+
+
 class PgLoader:
     def __init__(
         self,
@@ -116,7 +147,7 @@ def upsert_stocks(rows: Iterable[dict]) -> int:
     ON CONFLICT (symbol)
     DO UPDATE SET name = EXCLUDED.name, market = EXCLUDED.market, sector = EXCLUDED.sector
     """
-    payload = _validate_rows(rows, ["symbol"], "stocks")
+    payload = _sanitize_stock_rows(_validate_rows(rows, ["symbol"], "stocks"))
     return _get_loader().execute_many(sql, payload)
 
 

@@ -19,6 +19,14 @@ type HeatmapPage = {
 
 type SortOrder = "asc" | "desc";
 
+type HeatmapProps = {
+  asOf?: string;
+  market?: string;
+  minChange?: number;
+  maxChange?: number;
+  showMarketSelector?: boolean;
+};
+
 const HEATMAP_CACHE_TTL_MS = 5 * 60 * 1000;
 
 function buildHeatmapCacheKey(params: {
@@ -51,12 +59,8 @@ export function Heatmap({
   market: initialMarket,
   minChange,
   maxChange,
-}: {
-  asOf?: string;
-  market?: string;
-  minChange?: number;
-  maxChange?: number;
-}) {
+  showMarketSelector = initialMarket === undefined,
+}: HeatmapProps) {
   const [market, setMarket] = useState(initialMarket ?? "");
   const [sort, setSort] = useState<SortOrder>("desc");
   const [limit, setLimit] = useState(24);
@@ -95,6 +99,7 @@ export function Heatmap({
     } else {
       setLoading(true);
     }
+
     getHeatmap({
       as_of: asOf,
       market: market || undefined,
@@ -125,6 +130,7 @@ export function Heatmap({
           setLoading(false);
         }
       });
+
     return () => {
       active = false;
     };
@@ -137,21 +143,23 @@ export function Heatmap({
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <div className="toolbar" style={{ justifyContent: "space-between" }}>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <label style={{ display: "flex", flexDirection: "column", fontSize: 12, gap: 6 }}>
-            市场
-            <select
-              className="select"
-              value={market}
-              onChange={(event) => {
-                setMarket(event.target.value);
-                setPage(1);
-              }}
-            >
-              <option value="">全部市场</option>
-              <option value="A">A股</option>
-              <option value="HK">港股</option>
-            </select>
-          </label>
+          {showMarketSelector ? (
+            <label style={{ display: "flex", flexDirection: "column", fontSize: 12, gap: 6 }}>
+              市场
+              <select
+                className="select"
+                value={market}
+                onChange={(event) => {
+                  setMarket(event.target.value);
+                  setPage(1);
+                }}
+              >
+                <option value="">全部市场</option>
+                <option value="A">A股</option>
+                <option value="HK">港股</option>
+              </select>
+            </label>
+          ) : null}
           <label style={{ display: "flex", flexDirection: "column", fontSize: 12, gap: 6 }}>
             排序
             <select

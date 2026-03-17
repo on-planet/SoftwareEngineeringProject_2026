@@ -50,8 +50,12 @@ AKSHARE_HK_DISABLE_PROXY = os.getenv("AKSHARE_HK_DISABLE_PROXY", "1").strip().lo
 AKSHARE_HK_PAGE_SIZE = max(100, int(os.getenv("AKSHARE_HK_PAGE_SIZE", "500")))
 AKSHARE_HK_REQUEST_TIMEOUT_SECONDS = max(5, int(os.getenv("AKSHARE_HK_REQUEST_TIMEOUT_SECONDS", "20")))
 AKSHARE_HK_PAGE_MAX_RETRIES = max(1, int(os.getenv("AKSHARE_HK_PAGE_MAX_RETRIES", "6")))
+AKSHARE_HK_PAGE_MAX_FAILED_PAGES = max(1, int(os.getenv("AKSHARE_HK_PAGE_MAX_FAILED_PAGES", "6")))
 AKSHARE_HK_PAGE_DELAY_SECONDS = max(0.0, float(os.getenv("AKSHARE_HK_PAGE_DELAY_SECONDS", "0.35")))
 AKSHARE_HK_PAGE_LOG_INTERVAL = max(1, int(os.getenv("AKSHARE_HK_PAGE_LOG_INTERVAL", "5")))
+AKSHARE_HK_DETAIL_DELAY_SECONDS = max(0.0, float(os.getenv("AKSHARE_HK_DETAIL_DELAY_SECONDS", "0.12")))
+AKSHARE_HK_DETAIL_MAX_RETRIES = max(1, int(os.getenv("AKSHARE_HK_DETAIL_MAX_RETRIES", "3")))
+AKSHARE_HK_DETAIL_LOG_INTERVAL = max(1, int(os.getenv("AKSHARE_HK_DETAIL_LOG_INTERVAL", "40")))
 EASTMONEY_HK_FIELDS = (
     "f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f12,f13,f14,f15,f16,f17,f18,f20,"
     "f21,f23,f24,f25,f22,f11,f62,f128,f136,f115,f152"
@@ -68,13 +72,59 @@ EASTMONEY_HK_ENDPOINTS = {
 }
 EASTMONEY_HEADERS = {
     "Accept": "application/json, text/plain, */*",
-    "Connection": "close",
+    "Connection": "keep-alive",
     "Referer": "https://quote.eastmoney.com/",
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
     ),
 }
+HK_PROFILE_KEY_COLUMN_CANDIDATES = ("item", "key", "field", "name", "名称", "项目", "字段", "指标")
+HK_PROFILE_VALUE_COLUMN_CANDIDATES = ("value", "val", "data", "内容", "值")
+HK_PROFILE_COMCNNAME_KEYS = (
+    "comcnname",
+    "cnname",
+    "companycnname",
+    "companynamecn",
+    "comnamecn",
+    "chinesename",
+    "zhname",
+)
+HK_PROFILE_MBU_KEYS = (
+    "mbu",
+    "mainbusiness",
+    "business",
+    "industry",
+    "sector",
+    "industryname",
+)
+UNKNOWN_SECTOR_VALUES = {"", "unknown", "未知", "未分类", "n/a", "na", "none", "null"}
+HK_SECTOR_BUCKETS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("金融", ("金融", "银行", "证券", "保险", "信托", "finance", "bank", "broker", "insurance")),
+    ("房地产", ("地产", "物业", "房产", "real estate", "property", "reit")),
+    ("医疗健康", ("医疗", "医药", "生物", "制药", "health", "healthcare", "medical", "biotech", "pharma")),
+    ("消费", ("消费", "零售", "食品", "饮料", "餐饮", "旅游", "酒店", "consumer", "retail", "food", "beverage")),
+    ("科技", ("科技", "互联网", "软件", "电子", "半导体", "芯片", "technology", "tech", "internet", "software")),
+    ("电信传媒", ("电信", "通信", "传媒", "广告", "娱乐", "游戏", "telecom", "media", "gaming")),
+    ("工业制造", ("工业", "制造", "机械", "设备", "运输", "汽车", "物流", "manufacturing", "industrial", "auto")),
+    ("能源材料", ("能源", "石油", "煤炭", "化工", "有色", "钢铁", "金属", "矿", "energy", "materials", "oil", "gas")),
+    ("公用事业", ("电力", "燃气", "水务", "环保", "utility", "utilities", "power", "water", "gas")),
+)
+
+
+def _normalize_profile_key(value: object) -> str:
+    text = str(value or "").strip().lower()
+    if not text:
+        return ""
+    return "".join(char for char in text if char.isalnum())
+
+
+def _first_profile_value(profile: dict[str, str], keys: Iterable[str]) -> str:
+    for key in keys:
+        value = str(profile.get(_normalize_profile_key(key)) or "").strip()
+        if value:
+            return value
+    return ""
 
 
 def _pick_column(columns: Iterable[str], candidates: Iterable[str]) -> str | None:
@@ -93,6 +143,38 @@ def _normalize_text(value: object) -> str:
     return text
 
 
+def _clip_text(value: object, max_length: int, *, default: str = "") -> str:
+    text = _normalize_text(value)
+    if not text:
+        return default
+    compact = " ".join(text.split())
+    if len(compact) <= max_length:
+        return compact
+    return compact[:max_length].strip()
+
+
+def canonicalize_hk_sector(value: object) -> str:
+    text = _clip_text(value, 512)
+    if not text:
+        return "Unknown"
+    for sep in ("；", ";", "。", "，", ",", "、", "/", "|", ":", "："):
+        if sep in text:
+            text = text.split(sep, 1)[0].strip()
+            break
+    normalized = text.strip()
+    lowered = normalized.lower()
+    if lowered in UNKNOWN_SECTOR_VALUES:
+        return "Unknown"
+    for sector, keywords in HK_SECTOR_BUCKETS:
+        if any(keyword in normalized or keyword in lowered for keyword in keywords):
+            return sector
+    return "其他"
+
+
+def _compact_hk_sector(value: object) -> str:
+    return canonicalize_hk_sector(value)
+
+
 def _normalize_hk_symbol(value: object) -> str:
     text = _normalize_text(value)
     if not text:
@@ -101,6 +183,13 @@ def _normalize_hk_symbol(value: object) -> str:
     if not digits:
         return ""
     return f"{digits.zfill(5)}.HK"
+
+
+def _hk_symbol_to_akshare_code(symbol: str) -> str:
+    normalized = _normalize_hk_symbol(symbol)
+    if not normalized:
+        return ""
+    return normalized.split(".", 1)[0]
 
 
 def _row_score(row: dict) -> int:
@@ -218,16 +307,47 @@ def _fetch_eastmoney_paginated_frame(function_name: str):
         per_page,
         total,
     )
+    failed_pages: list[int] = []
     for page in range(2, total_pages + 1):
         if AKSHARE_HK_PAGE_DELAY_SECONDS > 0:
             time.sleep(AKSHARE_HK_PAGE_DELAY_SECONDS + random.uniform(0.0, 0.35))
         params["pn"] = str(page)
-        page_payload = _request_eastmoney_page_json(function_name, str(config["url"]), params)
+        try:
+            page_payload = _request_eastmoney_page_json(function_name, str(config["url"]), params)
+        except Exception as exc:
+            failed_pages.append(page)
+            LOGGER.warning(
+                "akshare hk universe paging page failed [%s] %s/%s failed=%s/%s: %s",
+                function_name,
+                page,
+                total_pages,
+                len(failed_pages),
+                AKSHARE_HK_PAGE_MAX_FAILED_PAGES,
+                exc,
+            )
+            if len(failed_pages) >= AKSHARE_HK_PAGE_MAX_FAILED_PAGES:
+                LOGGER.warning(
+                    "akshare hk universe paging aborted early [%s] loaded_rows=%s failed_pages=%s",
+                    function_name,
+                    len(records),
+                    failed_pages[:10],
+                )
+                break
+            continue
         page_rows = (page_payload.get("data") or {}).get("diff") or []
         records.extend({"代码": item.get("f12"), "名称": item.get("f14")} for item in page_rows if isinstance(item, dict))
         if page == total_pages or page % AKSHARE_HK_PAGE_LOG_INTERVAL == 0:
             LOGGER.info("akshare hk universe paging progress [%s] %s/%s", function_name, page, total_pages)
 
+    if failed_pages:
+        LOGGER.warning(
+            "akshare hk universe paging finished with partial pages [%s] failed_pages=%s loaded_rows=%s",
+            function_name,
+            failed_pages[:10],
+            len(records),
+        )
+    if not records:
+        raise RuntimeError(f"akshare hk universe paging produced empty payload [{function_name}]")
     return pd.DataFrame.from_records(records, columns=["代码", "名称"])
 
 
@@ -254,7 +374,7 @@ def _normalize_frame(df) -> list[dict]:
                 "symbol": symbol,
                 "name": name or symbol,
                 "market": "HK",
-                "sector": sector or "Unknown",
+                "sector": _compact_hk_sector(sector),
             }
         )
 
@@ -264,6 +384,97 @@ def _normalize_frame(df) -> list[dict]:
         if current is None or _row_score(row) >= _row_score(current):
             by_symbol[row["symbol"]] = row
     return sorted(by_symbol.values(), key=lambda item: item["symbol"])
+
+
+def _extract_hk_profile_values(df) -> dict[str, str]:
+    if pd is None or df is None or getattr(df, "empty", True):
+        return {}
+    normalized_df = df.where(pd.notna(df), None)
+    records = normalized_df.to_dict(orient="records")
+    if not records:
+        return {}
+
+    key_col = _pick_column(df.columns, HK_PROFILE_KEY_COLUMN_CANDIDATES)
+    value_col = _pick_column(df.columns, HK_PROFILE_VALUE_COLUMN_CANDIDATES)
+
+    profile: dict[str, str] = {}
+    if key_col and value_col:
+        for record in records:
+            field_key = _normalize_profile_key(record.get(key_col))
+            field_value = _normalize_text(record.get(value_col))
+            if field_key and field_value:
+                profile[field_key] = field_value
+        if profile:
+            return profile
+
+    for record in records:
+        for key, value in record.items():
+            field_key = _normalize_profile_key(key)
+            field_value = _normalize_text(value)
+            if field_key and field_value and field_key not in profile:
+                profile[field_key] = field_value
+    return profile
+
+
+def _normalize_hk_profile_frame(df, symbol: str) -> dict | None:
+    profile = _extract_hk_profile_values(df)
+    if not profile:
+        return None
+    normalized_symbol = _normalize_hk_symbol(symbol)
+    if not normalized_symbol:
+        return None
+
+    comcnname = _first_profile_value(profile, HK_PROFILE_COMCNNAME_KEYS)
+    mbu = _first_profile_value(profile, HK_PROFILE_MBU_KEYS)
+    fallback_name = _first_profile_value(profile, ("comname", "name", "companyname", "secname", "stockname"))
+    name = _clip_text(comcnname or fallback_name or normalized_symbol, 128, default=normalized_symbol)
+    sector = _compact_hk_sector(mbu)
+    return {
+        "symbol": normalized_symbol,
+        "name": name,
+        "market": "HK",
+        "sector": sector,
+    }
+
+
+def fetch_hk_stock_profile_rows(symbols: Iterable[str]) -> list[dict]:
+    if ak is None or pd is None:
+        return []
+    requested_set: set[str] = set()
+    for symbol in symbols:
+        normalized = _normalize_hk_symbol(symbol)
+        if normalized:
+            requested_set.add(normalized)
+    requested = sorted(requested_set)
+    if not requested:
+        return []
+
+    output: dict[str, dict] = {}
+    for index, symbol in enumerate(requested, start=1):
+        code = _hk_symbol_to_akshare_code(symbol)
+        if not code:
+            continue
+        last_exception: Exception | None = None
+        for attempt in range(1, AKSHARE_HK_DETAIL_MAX_RETRIES + 1):
+            try:
+                with _proxy_bypass_context():
+                    df = ak.stock_individual_basic_info_hk_xq(symbol=code)
+                row = _normalize_hk_profile_frame(df, symbol)
+                if row:
+                    output[row["symbol"]] = row
+                break
+            except Exception as exc:
+                last_exception = exc
+                if attempt >= AKSHARE_HK_DETAIL_MAX_RETRIES:
+                    break
+                time.sleep(min(2.0, (1.5 ** (attempt - 1)) + random.uniform(0.1, 0.3)))
+        if last_exception is not None and symbol not in output:
+            LOGGER.warning("akshare hk profile fetch failed [%s]: %s", symbol, last_exception)
+        if index % AKSHARE_HK_DETAIL_LOG_INTERVAL == 0 or index == len(requested):
+            LOGGER.info("akshare hk profile fetch progress %s/%s", index, len(requested))
+        if AKSHARE_HK_DETAIL_DELAY_SECONDS > 0:
+            time.sleep(AKSHARE_HK_DETAIL_DELAY_SECONDS)
+    return sorted(output.values(), key=lambda item: item["symbol"])
 
 
 def _call_provider_function(function_name: str):

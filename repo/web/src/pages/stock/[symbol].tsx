@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/router";
 
 import { StockFundamental } from "../../components/StockFundamental";
+import { addWatchTarget, hasWatchTarget } from "../../utils/watchTargets";
 
 const StockKlinePanel = dynamic(
   () => import("../../components/StockKlinePanel").then((mod) => mod.StockKlinePanel),
@@ -87,12 +88,19 @@ export default function StockPage({ symbol = "000001.SZ" }: Props) {
   const routeSymbol = typeof router.query.symbol === "string" ? router.query.symbol : symbol;
   const normalizedRouteSymbol = useMemo(() => routeSymbol.trim().toUpperCase(), [routeSymbol]);
   const [currentSymbol, setCurrentSymbol] = useState(normalizedRouteSymbol);
+  const [watchMessage, setWatchMessage] = useState<string | null>(null);
+  const [isWatched, setIsWatched] = useState(false);
 
   useEffect(() => {
     setCurrentSymbol(normalizedRouteSymbol);
+    setWatchMessage(null);
   }, [normalizedRouteSymbol]);
 
   const appliedSymbol = currentSymbol.trim().toUpperCase() || normalizedRouteSymbol;
+
+  useEffect(() => {
+    setIsWatched(hasWatchTarget(appliedSymbol));
+  }, [appliedSymbol]);
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -101,6 +109,16 @@ export default function StockPage({ symbol = "000001.SZ" }: Props) {
       return;
     }
     void router.push(`/stock/${encodeURIComponent(nextSymbol)}`);
+  };
+
+  const handleAddWatchTarget = () => {
+    const targetSymbol = appliedSymbol.trim().toUpperCase();
+    if (!targetSymbol) {
+      return;
+    }
+    addWatchTarget(targetSymbol);
+    setIsWatched(true);
+    setWatchMessage(`已加入观察：${targetSymbol}`);
   };
 
   return (
@@ -122,7 +140,11 @@ export default function StockPage({ symbol = "000001.SZ" }: Props) {
             <button type="submit" className="primary-button">
               打开详情
             </button>
+            <button type="button" className="primary-button" onClick={handleAddWatchTarget} disabled={isWatched}>
+              {isWatched ? "已被观察" : "加入观察"}
+            </button>
           </form>
+          {watchMessage ? <div className="helper">{watchMessage}</div> : null}
         </div>
       </section>
 

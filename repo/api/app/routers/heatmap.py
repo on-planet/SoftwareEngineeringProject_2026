@@ -35,7 +35,8 @@ def get_heatmap_route(
     db: Session = Depends(get_db),
 ):
     """获取行业热力图。"""
-    items = get_cached_heatmap(as_of, sector, market, min_change, max_change, sorting["sort"])
+    should_use_cache = market is None
+    items = get_cached_heatmap(as_of, sector, market, min_change, max_change, sorting["sort"]) if should_use_cache else None
     if items is None:
         items = get_heatmap(db, sorting["sort"], sector, market, min_change, max_change, as_of)
     total = len(items)

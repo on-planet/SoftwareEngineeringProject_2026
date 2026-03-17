@@ -315,6 +315,11 @@ def sort_event_feed_items(items: list[EventTimelineItem], sort_by: list[str] | N
     return ordered
 
 
+def _has_recent_items(items: list[EventTimelineItem], *, lookback_days: int = 1) -> bool:
+    cutoff = date.today() - timedelta(days=max(0, lookback_days))
+    return any(item.date >= cutoff for item in items)
+
+
 def _remote_range(start: date | None = None, end: date | None = None) -> tuple[date, date] | None:
     range_end = end or date.today()
     range_start = start or (range_end - timedelta(days=EVENT_REMOTE_LOOKBACK_DAYS - 1))
@@ -361,7 +366,10 @@ def load_or_backfill_event_feed(
         end=end,
     )
     if cached:
-        return cached
+        if start is None and end is None and not _has_recent_items(cached, lookback_days=1):
+            pass
+        else:
+            return cached
 
     preloaded = load_preloaded_event_feed(
         symbols=symbols,

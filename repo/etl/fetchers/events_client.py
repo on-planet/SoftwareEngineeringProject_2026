@@ -11,6 +11,8 @@ from urllib.request import ProxyHandler, Request, build_opener, urlopen
 import json
 import os
 import re
+import shutil
+import subprocess
 import time
 import xml.etree.ElementTree as ET
 
@@ -50,6 +52,77 @@ except Exception as exc:  # pragma: no cover - runtime env dependent
     ball = None
     LOGGER.warning("pysnowball import failed: %s", exc)
 
+try:
+    import akshare as ak  # type: ignore
+except Exception as exc:  # pragma: no cover - runtime env dependent
+    ak = None
+    LOGGER.warning("akshare import failed in events client: %s", exc)
+
+AKSHARE_A_DYNAMIC_FUNCTION_NAME = "stock_zh_a_new"
+AKSHARE_A_DYNAMIC_FUNCTION_NAMES = ("stock_zh_a_new_em", "stock_zh_a_new")
+A_DYNAMIC_CODE_COLUMNS = (
+    "code",
+    "symbol",
+    "stock_code",
+    "security_code",
+    "代码",
+    "证券代码",
+    "股票代码",
+)
+A_DYNAMIC_NAME_COLUMNS = (
+    "name",
+    "stock_name",
+    "security_name",
+    "名称",
+    "股票简称",
+    "简称",
+    "证券简称",
+)
+A_DYNAMIC_TITLE_COLUMNS = ("title", "event", "news", "summary", "标题", "事件", "动态", "公告")
+A_DYNAMIC_DETAIL_COLUMNS = (
+    "detail",
+    "content",
+    "description",
+    "board",
+    "industry",
+    "细分行业",
+    "板块",
+    "行业",
+)
+A_DYNAMIC_DATE_COLUMNS = (
+    "date",
+    "publish_date",
+    "trade_date",
+    "update_date",
+    "list_date",
+    "time",
+    "日期",
+    "发布时间",
+    "上市日期",
+    "更新时间",
+)
+A_DYNAMIC_LINK_COLUMNS = ("link", "url", "article_url", "news_url", "公告链接", "链接")
+A_DYNAMIC_OPEN_COLUMNS = ("open", "开盘", "今开")
+A_DYNAMIC_HIGH_COLUMNS = ("high", "最高")
+A_DYNAMIC_LOW_COLUMNS = ("low", "最低")
+A_DYNAMIC_VOLUME_COLUMNS = ("volume", "成交量")
+A_DYNAMIC_AMOUNT_COLUMNS = ("amount", "成交额")
+AKSHARE_A_DYNAMIC_SINA_COUNT_URL = (
+    "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeStockCount"
+)
+AKSHARE_A_DYNAMIC_SINA_DATA_URL = (
+    "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeData"
+)
+AKSHARE_A_DYNAMIC_EM_URL = "https://40.push2.eastmoney.com/api/qt/clist/get"
+AKSHARE_A_DYNAMIC_PAGE_SIZE = max(1, int(os.getenv("AKSHARE_A_DYNAMIC_PAGE_SIZE", "80")))
+AKSHARE_A_DYNAMIC_MAX_PAGES = max(1, int(os.getenv("AKSHARE_A_DYNAMIC_MAX_PAGES", "25")))
+AKSHARE_A_DYNAMIC_CURL_TIMEOUT_SECONDS = max(
+    5, int(os.getenv("AKSHARE_A_DYNAMIC_CURL_TIMEOUT_SECONDS", "18"))
+)
+AKSHARE_A_DYNAMIC_CURL_FALLBACK_ENABLED = (
+    os.getenv("AKSHARE_A_DYNAMIC_CURL_FALLBACK_ENABLED", "1").strip().lower() not in {"0", "false", "no", "off"}
+)
+
 
 def _safe_float(value) -> float | None:
     if value is None:
@@ -68,6 +141,20 @@ def _safe_float(value) -> float | None:
     if number != number:
         return None
     return number
+
+
+def _is_windows_socket_block_error(exc: Exception) -> bool:
+    text = str(exc or "")
+    return "WinError 10013" in text or "access permissions" in text.lower() or "访问权限不允许" in text
+
+
+def _decode_http_payload(raw: bytes) -> str:
+    for encoding in ("utf-8", "gb18030", "gbk", "latin1"):
+        try:
+            return raw.decode(encoding)
+        except Exception:
+            continue
+    return raw.decode("utf-8", errors="ignore")
 
 
 def _to_date(value) -> date | None:
@@ -102,6 +189,73 @@ def _pick(record: dict, keys: Iterable[str]):
         if key in record and record.get(key) not in (None, ""):
             return record.get(key)
     return None
+
+
+def _pick_ci(record: dict, keys: Iterable[str]):
+    lowered: dict[str, object] = {}
+    for key, value in record.items():
+        normalized = str(key).strip().lower()
+        if normalized and normalized not in lowered:
+            lowered[normalized] = value
+    for key in keys:
+        value = lowered.get(str(key).strip().lower())
+        if value is None:
+            continue
+        text = str(value).strip()
+        if not text or text.lower() in {"nan", "none", "null"}:
+            continue
+        return value
+    return None
+
+
+def _clean_text(value: object, *, max_length: int) -> str:
+    text = str(value or "").strip()
+    if not text or text.lower() in {"nan", "none", "null"}:
+        return ""
+    compact = " ".join(text.split())
+    if len(compact) <= max_length:
+        return compact
+    return compact[:max_length].strip()
+
+
+def _normalize_a_symbol(value: object) -> str | None:
+    text = str(value or "").strip().upper()
+    if not text:
+        return None
+    normalized = normalize_symbol(text)
+    if normalized.endswith((".SH", ".SZ", ".BJ")) and len(normalized.split(".")[0]) == 6:
+        return normalized
+    digits = re.sub(r"\D", "", text)
+    if len(digits) != 6:
+        return None
+    if digits.startswith(("4", "8")):
+        return f"{digits}.BJ"
+    if digits.startswith(("5", "6", "9")):
+        return f"{digits}.SH"
+    return f"{digits}.SZ"
+
+
+def _as_record_rows(payload) -> list[dict]:
+    if payload is None:
+        return []
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict)]
+    if isinstance(payload, dict):
+        return [payload]
+    to_dict = getattr(payload, "to_dict", None)
+    if callable(to_dict):
+        try:
+            records = to_dict(orient="records")
+        except TypeError:
+            try:
+                records = to_dict("records")
+            except Exception:
+                return []
+        except Exception:
+            return []
+        if isinstance(records, list):
+            return [item for item in records if isinstance(item, dict)]
+    return []
 
 
 def _extract_dict_rows(payload) -> list[dict]:
@@ -167,8 +321,8 @@ def _symbol_from_hkex_title(title: str, link: str = "") -> str | None:
         return None
     patterns = [
         r"(?<!\d)(\d{5})\s*\.?\s*HK\b",
-        r"(?:股份代號|股票代號|股份编号|证券代号|Stock Code|Stock code|stock code)[:：\s#-]*([0-9]{1,5})",
-        r"^\(?([0-9]{5})\)?(?:\s|[:：\-])",
+        r"(?:股份代號|股票代號|股份编号|证券代码|Stock Code|Stock code|stock code)[:：\s#-]*([0-9]{1,5})",
+        r"^\(?([0-9]{5})\)?(?:\s|[:：-])",
         r"\(([0-9]{5})\)",
     ]
     for pattern in patterns:
@@ -497,9 +651,245 @@ def _fetch_symbol_insider_rows(symbol: str, as_of: date) -> list[dict]:
     return rows
 
 
+def _fetch_akshare_company_dynamic_events(as_of: date) -> list[dict]:
+    if as_of != date.today():
+        return []
+
+    def _fetch_stock_zh_a_new_em_records_via_curl() -> list[dict]:
+        if not AKSHARE_A_DYNAMIC_CURL_FALLBACK_ENABLED:
+            return []
+        curl_path = shutil.which("curl.exe") or shutil.which("curl")
+        if not curl_path:
+            return []
+
+        command = [
+            curl_path,
+            "-L",
+            "-sS",
+            AKSHARE_A_DYNAMIC_EM_URL,
+            "--get",
+            "--data-urlencode",
+            "pn=1",
+            "--data-urlencode",
+            f"pz={AKSHARE_A_DYNAMIC_PAGE_SIZE}",
+            "--data-urlencode",
+            "po=1",
+            "--data-urlencode",
+            "np=1",
+            "--data-urlencode",
+            "ut=bd1d9ddb04089700cf9c27f6f7426281",
+            "--data-urlencode",
+            "fltt=2",
+            "--data-urlencode",
+            "invt=2",
+            "--data-urlencode",
+            "fid=f26",
+            "--data-urlencode",
+            "fs=m:0 f:8,m:1 f:8",
+            "--data-urlencode",
+            "fields=f12,f14,f17,f15,f16,f5,f6",
+        ]
+        try:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                timeout=AKSHARE_A_DYNAMIC_CURL_TIMEOUT_SECONDS,
+                check=False,
+            )
+        except Exception as exc:
+            LOGGER.warning("curl akshare em event fetch failed: %s", exc)
+            return []
+        if result.returncode != 0 or not result.stdout:
+            return []
+        text = _decode_http_payload(result.stdout).strip()
+        if not text:
+            return []
+        try:
+            payload = json.loads(text)
+        except Exception:
+            return []
+        data = payload.get("data") if isinstance(payload, dict) else None
+        diff = data.get("diff") if isinstance(data, dict) else None
+        if not isinstance(diff, list):
+            return []
+        records: list[dict] = []
+        for item in diff:
+            if not isinstance(item, dict):
+                continue
+            records.append(
+                {
+                    "code": item.get("f12"),
+                    "name": item.get("f14"),
+                    "open": item.get("f17"),
+                    "high": item.get("f15"),
+                    "low": item.get("f16"),
+                    "volume": item.get("f5"),
+                    "amount": item.get("f6"),
+                }
+            )
+        return records
+
+    def _fetch_stock_zh_a_new_records_via_curl() -> list[dict]:
+        em_records = _fetch_stock_zh_a_new_em_records_via_curl()
+        if em_records:
+            return em_records
+        if not AKSHARE_A_DYNAMIC_CURL_FALLBACK_ENABLED:
+            return []
+        curl_path = shutil.which("curl.exe") or shutil.which("curl")
+        if not curl_path:
+            return []
+
+        count_cmd = [
+            curl_path,
+            "-L",
+            "-sS",
+            AKSHARE_A_DYNAMIC_SINA_COUNT_URL,
+            "--get",
+            "--data-urlencode",
+            "node=new_stock",
+        ]
+        try:
+            count_result = subprocess.run(
+                count_cmd,
+                capture_output=True,
+                timeout=AKSHARE_A_DYNAMIC_CURL_TIMEOUT_SECONDS,
+                check=False,
+            )
+        except Exception as exc:
+            LOGGER.warning("curl akshare event count failed: %s", exc)
+            return []
+        if count_result.returncode != 0:
+            return []
+        count_text = _decode_http_payload(count_result.stdout).strip()
+        match = re.search(r"\d+", count_text)
+        if not match:
+            return []
+        total = int(match.group(0))
+        total_pages = (total + AKSHARE_A_DYNAMIC_PAGE_SIZE - 1) // AKSHARE_A_DYNAMIC_PAGE_SIZE
+        total_pages = max(1, min(total_pages, AKSHARE_A_DYNAMIC_MAX_PAGES))
+
+        records: list[dict] = []
+        for page in range(1, total_pages + 1):
+            data_cmd = [
+                curl_path,
+                "-L",
+                "-sS",
+                AKSHARE_A_DYNAMIC_SINA_DATA_URL,
+                "--get",
+                "--data-urlencode",
+                f"page={page}",
+                "--data-urlencode",
+                f"num={AKSHARE_A_DYNAMIC_PAGE_SIZE}",
+                "--data-urlencode",
+                "sort=symbol",
+                "--data-urlencode",
+                "asc=1",
+                "--data-urlencode",
+                "node=new_stock",
+                "--data-urlencode",
+                "symbol=",
+                "--data-urlencode",
+                "_s_r_a=page",
+            ]
+            try:
+                data_result = subprocess.run(
+                    data_cmd,
+                    capture_output=True,
+                    timeout=AKSHARE_A_DYNAMIC_CURL_TIMEOUT_SECONDS,
+                    check=False,
+                )
+            except Exception:
+                continue
+            if data_result.returncode != 0 or not data_result.stdout:
+                continue
+            text = _decode_http_payload(data_result.stdout).strip()
+            if not text:
+                continue
+            try:
+                payload = json.loads(text)
+            except Exception:
+                continue
+            if isinstance(payload, list):
+                records.extend(item for item in payload if isinstance(item, dict))
+        return records
+
+    payload_rows: list[dict]
+    if ak is None:
+        payload_rows = _fetch_stock_zh_a_new_records_via_curl()
+    else:
+        func = None
+        func_name = AKSHARE_A_DYNAMIC_FUNCTION_NAME
+        for candidate in AKSHARE_A_DYNAMIC_FUNCTION_NAMES:
+            possible = getattr(ak, candidate, None)
+            if callable(possible):
+                func = possible
+                func_name = candidate
+                break
+        if func is None:
+            LOGGER.warning("akshare function missing: %s", AKSHARE_A_DYNAMIC_FUNCTION_NAME)
+            payload_rows = []
+        else:
+            try:
+                payload_rows = _as_record_rows(func())
+            except Exception as exc:
+                if _is_windows_socket_block_error(exc):
+                    LOGGER.info(
+                        "akshare event python network blocked [%s], fallback to curl",
+                        func_name,
+                    )
+                else:
+                    LOGGER.warning("akshare event fetch failed [%s]: %s", func_name, exc)
+                payload_rows = _fetch_stock_zh_a_new_records_via_curl()
+
+    rows: list[dict] = []
+    for record in payload_rows:
+        symbol = _normalize_a_symbol(_pick_ci(record, A_DYNAMIC_CODE_COLUMNS))
+        if not symbol:
+            continue
+        open_val = _safe_float(_pick_ci(record, A_DYNAMIC_OPEN_COLUMNS))
+        high_val = _safe_float(_pick_ci(record, A_DYNAMIC_HIGH_COLUMNS))
+        low_val = _safe_float(_pick_ci(record, A_DYNAMIC_LOW_COLUMNS))
+        volume_val = _safe_float(_pick_ci(record, A_DYNAMIC_VOLUME_COLUMNS))
+        amount_val = _safe_float(_pick_ci(record, A_DYNAMIC_AMOUNT_COLUMNS))
+        row_date = _to_date(_pick_ci(record, A_DYNAMIC_DATE_COLUMNS))
+        if row_date is None and any(value is not None for value in (open_val, high_val, low_val, volume_val, amount_val)):
+            row_date = as_of
+        if row_date != as_of:
+            continue
+        name = _clean_text(_pick_ci(record, A_DYNAMIC_NAME_COLUMNS), max_length=64)
+        title = _clean_text(_pick_ci(record, A_DYNAMIC_TITLE_COLUMNS), max_length=180)
+        detail = _clean_text(_pick_ci(record, A_DYNAMIC_DETAIL_COLUMNS), max_length=120)
+        if not title:
+            title = f"{name or symbol} company dynamic"
+            metrics: list[str] = []
+            if open_val is not None:
+                metrics.append(f"open {open_val:g}")
+            if high_val is not None:
+                metrics.append(f"high {high_val:g}")
+            if low_val is not None:
+                metrics.append(f"low {low_val:g}")
+            if metrics:
+                title = _clean_text(f"{title} ({', '.join(metrics)})", max_length=240)
+        if detail and detail not in title:
+            title = _clean_text(f"{title} | {detail}", max_length=240)
+        link = _clean_text(_pick_ci(record, A_DYNAMIC_LINK_COLUMNS), max_length=512)
+        rows.append(
+            {
+                "symbol": symbol,
+                "type": "company_dynamic",
+                "title": title,
+                "date": row_date,
+                "link": link,
+                "source": "AkShare stock_zh_a_new",
+            }
+        )
+    return rows
+
+
 def get_events(as_of: date) -> List[dict]:
     rows: list[dict] = []
     rows.extend(_get_hkex_regulatory_announcements(as_of))
+    rows.extend(_fetch_akshare_company_dynamic_events(as_of))
 
     if ball is None:
         LOGGER.warning("pysnowball unavailable, skip snowball events")
@@ -560,3 +950,6 @@ def get_insider_trade(as_of: date) -> List[dict]:
             except Exception as exc:
                 LOGGER.warning("symbol insider task failed [%s]: %s", symbol, exc)
     return ensure_required(rows, ["symbol", "date", "type", "shares"], "events.insider")
+
+
+

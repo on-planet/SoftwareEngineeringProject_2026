@@ -8,6 +8,12 @@ except Exception:  # pragma: no cover - dependency/version compatibility
     from pydantic.v1 import BaseSettings
 
 try:
+    import dotenv  # noqa: F401
+    _DOTENV_AVAILABLE = True
+except Exception:  # pragma: no cover
+    _DOTENV_AVAILABLE = False
+
+try:
     import yaml
 except Exception:  # pragma: no cover
     yaml = None
@@ -61,9 +67,21 @@ class Settings(BaseSettings):
     llm_provider: str = "openai"
     llm_api_key: str | None = None
     llm_model: str = "gpt-4o-mini"
+    auth_token_secret: str = "CHANGE_ME_TO_A_RANDOM_SECRET"
+    auth_token_expire_hours: int = 24
+    auth_code_expire_minutes: int = 10
+    auth_code_resend_seconds: int = 60
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_username: str | None = None
+    smtp_password: str | None = None
+    smtp_from: str | None = None
+    smtp_use_tls: bool = True
+    smtp_use_ssl: bool = False
 
     class Config:
-        env_file = ".env"
+        if _DOTENV_AVAILABLE:
+            env_file = (".env", ".env.local")
         env_file_encoding = "utf-8"
 
 

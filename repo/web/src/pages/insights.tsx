@@ -6,10 +6,10 @@ import { NewsAggregateList } from "../components/NewsAggregateList";
 import { SectorExposurePanel } from "../components/SectorExposurePanel";
 
 const TEXT = {
-  news: "\u65b0\u95fb\u805a\u5408",
-  events: "\u4e8b\u4ef6\u65f6\u95f4\u7ebf",
-  constituents: "\u6307\u6570\u6210\u5206\u80a1",
-  exposure: "\u884c\u4e1a\u66b4\u9732",
+  news: "新闻聚合",
+  events: "事件时间线",
+  constituents: "指数成分股",
+  exposure: "行业暴露",
 };
 
 export default function InsightsPage() {

@@ -3,7 +3,7 @@
 from collections import defaultdict
 from datetime import date
 
-from sqlalchemy import func
+from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
 
 from app.core.cache import get_json
@@ -73,14 +73,18 @@ def get_heatmap(
     as_of: date | None = None,
 ):
     sector_filter = normalize_sector_name(sector) if sector else None
-    latest_date_query = db.query(func.max(DailyPrice.date)).join(Stock, DailyPrice.symbol == Stock.symbol)
+    latest_by_symbol = (
+        db.query(
+            DailyPrice.symbol.label("symbol"),
+            func.max(DailyPrice.date).label("latest_date"),
+        )
+        .join(Stock, DailyPrice.symbol == Stock.symbol)
+    )
     if market:
-        latest_date_query = latest_date_query.filter(Stock.market == market)
+        latest_by_symbol = latest_by_symbol.filter(Stock.market == market)
     if as_of is not None:
-        latest_date_query = latest_date_query.filter(DailyPrice.date <= as_of)
-    latest_date = latest_date_query.scalar()
-    if latest_date is None:
-        return []
+        latest_by_symbol = latest_by_symbol.filter(DailyPrice.date <= as_of)
+    latest_by_symbol = latest_by_symbol.group_by(DailyPrice.symbol).subquery()
 
     query = (
         db.query(
@@ -89,8 +93,17 @@ def get_heatmap(
             func.sum(DailyPrice.close - DailyPrice.open).label("change_sum"),
             func.count(DailyPrice.symbol).label("symbol_count"),
         )
-        .join(DailyPrice, DailyPrice.symbol == Stock.symbol)
-        .filter(DailyPrice.date == latest_date)
+        .join(
+            latest_by_symbol,
+            Stock.symbol == latest_by_symbol.c.symbol,
+        )
+        .join(
+            DailyPrice,
+            and_(
+                DailyPrice.symbol == latest_by_symbol.c.symbol,
+                DailyPrice.date == latest_by_symbol.c.latest_date,
+            ),
+        )
         .group_by(Stock.sector)
     )
     if market:

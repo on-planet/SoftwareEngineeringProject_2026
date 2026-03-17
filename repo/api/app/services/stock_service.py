@@ -19,11 +19,19 @@ def list_stocks(
     *,
     market: str | None = None,
     keyword: str | None = None,
+    sector: str | None = None,
     limit: int = 100,
     offset: int = 0,
     sort: str = "asc",
 ):
-    return list_live_stocks(market=market, keyword=keyword, limit=limit, offset=offset, sort=sort)
+    return list_live_stocks(
+        market=market,
+        keyword=keyword,
+        sector=sector,
+        limit=limit,
+        offset=offset,
+        sort=sort,
+    )
 
 
 def get_stock_profile(symbol: str, *, prefer_live: bool = False):

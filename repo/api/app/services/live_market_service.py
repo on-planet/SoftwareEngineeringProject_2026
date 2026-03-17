@@ -138,14 +138,25 @@ def _dedupe_stock_rows(rows: Iterable[dict]) -> list[dict]:
     return output
 
 
-def _filter_stock_rows(rows: Iterable[dict], *, market: str | None = None, keyword: str | None = None) -> list[dict]:
+def _filter_stock_rows(
+    rows: Iterable[dict],
+    *,
+    market: str | None = None,
+    keyword: str | None = None,
+    sector: str | None = None,
+) -> list[dict]:
     normalized_rows = _dedupe_stock_rows(rows)
     keyword_text = keyword.strip().lower() if keyword else None
+    sector_text = sector.strip().lower() if sector else None
     output: list[dict] = []
     for row in normalized_rows:
         row_market = str(row.get("market") or "").upper()
         if market and row_market != market:
             continue
+        if sector_text:
+            row_sector = str(row.get("sector") or "").lower()
+            if sector_text not in row_sector:
+                continue
         if keyword_text:
             haystack = " ".join(
                 [
@@ -164,10 +175,11 @@ def _fallback_stock_rows(
     *,
     market: str | None = None,
     keyword: str | None = None,
+    sector: str | None = None,
     limit: int | None = 100,
 ) -> list[dict]:
     rows = load_stock_basics_cache(allow_stale=True)
-    filtered = _filter_stock_rows(rows, market=market, keyword=keyword)
+    filtered = _filter_stock_rows(rows, market=market, keyword=keyword, sector=sector)
     if limit is None:
         return filtered
     return filtered[:limit]
@@ -815,6 +827,14 @@ def _filter_points(points: list[KlinePoint], start: date | None, end: date | Non
     return filtered[-limit:]
 
 
+def _has_sufficient_kline_points(points: list[KlinePoint], period: LiveKlinePeriod) -> bool:
+    if not points:
+        return False
+    if period in {"1m", "30m", "60m"}:
+        return True
+    return len(points) > 1
+
+
 def _load_local_kline_points(
     symbol: str,
     *,
@@ -853,6 +873,7 @@ def list_live_stocks(
     *,
     market: str | None = None,
     keyword: str | None = None,
+    sector: str | None = None,
     limit: int = 100,
     offset: int = 0,
     sort: str = "asc",
@@ -860,10 +881,13 @@ def list_live_stocks(
     normalized_market = market.upper() if market else None
     keyword_text = keyword.strip() if keyword else None
     normalized_keyword = keyword.strip().lower() if keyword else None
+    sector_text = sector.strip() if sector else None
+    normalized_sector = sector.strip().lower() if sector else None
     page_cache_key = build_cache_key(
         "live:stocks:page",
         market=normalized_market,
         keyword=normalized_keyword,
+        sector=normalized_sector,
         limit=limit,
         offset=offset,
         sort=sort,
@@ -873,6 +897,7 @@ def list_live_stocks(
         "live:stocks:all",
         market=normalized_market,
         keyword=normalized_keyword,
+        sector=normalized_sector,
         sort=sort,
         version=1,
     )
@@ -892,7 +917,12 @@ def list_live_stocks(
         all_items = _dedupe_stock_rows(all_cached["items"])
         total = int(all_cached["total"])
     else:
-        all_items = _fallback_stock_rows(market=normalized_market, keyword=keyword_text, limit=None)
+        all_items = _fallback_stock_rows(
+            market=normalized_market,
+            keyword=keyword_text,
+            sector=sector_text,
+            limit=None,
+        )
         all_items = _dedupe_stock_rows(all_items)
         all_items.sort(key=lambda item: str(item.get("symbol", "")), reverse=sort == "desc")
         total = len(all_items)
@@ -1104,13 +1134,14 @@ def get_live_kline(
         is_index=is_index,
     )
     cached = get_json(cache_key)
+    cached_items: list[KlinePoint] = []
     if isinstance(cached, list):
-        items = [KlinePoint(**item) for item in cached if isinstance(item, dict)]
-        if items:
-            return items
+        cached_items = [KlinePoint(**item) for item in cached if isinstance(item, dict)]
+        if _has_sufficient_kline_points(cached_items, period):
+            return cached_items
 
     local_items = _load_local_kline_points(normalized, period=period, limit=limit, start=start, end=end, is_index=is_index)
-    if local_items:
+    if _has_sufficient_kline_points(local_items, period):
         set_json(cache_key, [item.dict() for item in local_items], ttl=LIVE_CACHE_TTL)
         return local_items
 
@@ -1125,13 +1156,15 @@ def get_live_kline(
             get_kline_history(normalized, period=period, count=fetch_count, as_of=end, is_index=is_index)
         )
     elif period == "quarter":
+        monthly_count = min(max(limit * 3 + 6, 36), 720)
         base_points = _points_from_rows(
-            get_kline_history(normalized, period="month", count=max(limit * 3 + 6, 36), as_of=end, is_index=is_index)
+            get_kline_history(normalized, period="month", count=monthly_count, as_of=end, is_index=is_index)
         )
         points = _aggregate_points(base_points, "quarter")
     else:
+        monthly_count = min(max(limit * 12 + 12, 120), 720)
         base_points = _points_from_rows(
-            get_kline_history(normalized, period="month", count=max(limit * 12 + 12, 120), as_of=end, is_index=is_index)
+            get_kline_history(normalized, period="month", count=monthly_count, as_of=end, is_index=is_index)
         )
         points = _aggregate_points(base_points, "year")
 
@@ -1140,6 +1173,8 @@ def get_live_kline(
         snapshot_row = _snapshot_daily_row(normalized)
         if snapshot_row is not None:
             items = _filter_points(_points_from_rows([snapshot_row]), start, end, limit)
+    if not items:
+        items = local_items or cached_items
     if items:
         set_json(cache_key, [item.dict() for item in items], ttl=LIVE_CACHE_TTL)
     return items

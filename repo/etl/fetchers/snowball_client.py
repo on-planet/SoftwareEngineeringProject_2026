@@ -3,9 +3,15 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
+from io import BytesIO
+from threading import Lock
 from typing import Iterable, List
+import json
 import os
 import re
+import shutil
+import subprocess
+import time
 
 from etl.utils.env import load_project_env
 from etl.utils.logging import get_logger
@@ -21,12 +27,47 @@ except Exception as exc:  # pragma: no cover - runtime env dependent
     ball = None
     LOGGER.warning("pysnowball import failed: %s", exc)
 
+try:
+    import akshare as ak  # type: ignore
+except Exception as exc:  # pragma: no cover - runtime env dependent
+    ak = None
+    LOGGER.warning("akshare import failed in snowball client: %s", exc)
+
+try:
+    import pandas as pd  # type: ignore
+except Exception as exc:  # pragma: no cover - runtime env dependent
+    pd = None
+    LOGGER.warning("pandas import failed in snowball client: %s", exc)
+
+try:
+    import requests  # type: ignore
+except Exception as exc:  # pragma: no cover - runtime env dependent
+    requests = None
+    LOGGER.warning("requests import failed in snowball client: %s", exc)
+
 _TOKEN_READY = False
 _TOKEN_READY_FINGERPRINT = ""
 _TOKEN_WARNING_SHOWN = False
 _TOKEN_BLOCKED = False
 _TOKEN_BLOCKED_VALUE = ""
 _TOKEN_BLOCK_WARNING_SHOWN = False
+AK_HK_SPOT_CACHE_TTL_SECONDS = max(3, int(os.getenv("AKSHARE_HK_SPOT_CACHE_SECONDS", "12")))
+_AK_HK_SPOT_CACHE_TS = 0.0
+_AK_HK_SPOT_CACHE_BY_SYMBOL: dict[str, dict] = {}
+_AK_HK_SPOT_CACHE_LOCK = Lock()
+AK_A_MARGIN_CACHE_TTL_SECONDS = max(60, int(os.getenv("AKSHARE_A_MARGIN_CACHE_SECONDS", "3600")))
+AK_A_MARGIN_LOOKBACK_DAYS = max(0, int(os.getenv("AKSHARE_A_MARGIN_LOOKBACK_DAYS", "10")))
+HK_KLINE_CURL_FALLBACK_ENABLED = os.getenv("HK_KLINE_CURL_FALLBACK_ENABLED", "1").strip().lower() not in {
+    "0",
+    "false",
+    "no",
+}
+HK_KLINE_CURL_TIMEOUT_SECONDS = max(5, int(os.getenv("HK_KLINE_CURL_TIMEOUT_SECONDS", "20")))
+_AK_A_MARGIN_CACHE_TS = 0.0
+_AK_A_MARGIN_CACHE_DATE = ""
+_AK_A_MARGIN_CACHE_ROWS: list[dict] = []
+_AK_A_MARGIN_CACHE_READY = False
+_AK_A_MARGIN_CACHE_LOCK = Lock()
 _SYMBOL_RE = re.compile(r"^[A-Z]{2}\d{6}$")
 _BJ_SYMBOL_RE = re.compile(r"^BJ\d{6}$")
 _HK_SYMBOL_RE = re.compile(r"^HK\d{1,5}$")
@@ -72,6 +113,9 @@ _INDEX_ALIAS_MAP = {
     "HSTECH": "HKHSTECH",
     "HKHSTECH": "HKHSTECH",
 }
+EASTMONEY_HK_KLINE_ENDPOINT = "https://33.push2his.eastmoney.com/api/qt/stock/kline/get"
+EASTMONEY_HK_KLINE_FIELDS1 = "f1,f2,f3,f4,f5,f6"
+EASTMONEY_HK_KLINE_FIELDS2 = "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61"
 
 
 def _safe_float(value) -> float | None:
@@ -424,6 +468,9 @@ def _call_with_token_retry(request_fn, *, context: str, ref: str):
         try:
             return request_fn()
         except Exception as exc:
+            if _is_windows_socket_block_error(exc):
+                LOGGER.info("%s network blocked [%s]: %s", context, ref, exc)
+                return None
             if attempt == 0 and _is_auth_error(exc):
                 LOGGER.warning("%s auth expired [%s], refreshing token and retry", context, ref)
                 if _refresh_token():
@@ -692,6 +739,670 @@ def _call_quotec(symbols: list[str]) -> list[dict]:
             if recovered:
                 output.append(recovered)
     return output
+
+
+def _pick_frame_column(columns: Iterable[object], candidates: Iterable[str]) -> str | None:
+    column_map = {str(item).strip().lower(): str(item) for item in columns}
+    for candidate in candidates:
+        value = column_map.get(str(candidate).strip().lower())
+        if value:
+            return value
+    return None
+
+
+def _is_windows_socket_block_error(exc: Exception) -> bool:
+    text = str(exc or "")
+    return "WinError 10013" in text or "access permissions" in text.lower() or "访问权限不允许" in text
+
+
+def _safe_text(value: object, *, max_length: int = 256) -> str:
+    text = str(value or "").strip()
+    if not text or text.lower() in {"nan", "none", "null"}:
+        return ""
+    compact = " ".join(text.split())
+    if len(compact) <= max_length:
+        return compact
+    return compact[:max_length].strip()
+
+
+def _to_record_dicts(frame) -> list[dict]:
+    if frame is None:
+        return []
+    if isinstance(frame, list):
+        return [item for item in frame if isinstance(item, dict)]
+    if isinstance(frame, dict):
+        return [frame]
+    to_dict = getattr(frame, "to_dict", None)
+    if not callable(to_dict):
+        return []
+    try:
+        records = to_dict(orient="records")
+    except TypeError:
+        try:
+            records = to_dict("records")
+        except Exception:
+            return []
+    except Exception:
+        return []
+    if not isinstance(records, list):
+        return []
+    return [item for item in records if isinstance(item, dict)]
+
+
+def _a_symbol_code(symbol: str) -> str:
+    normalized = normalize_symbol(symbol)
+    if "." not in normalized:
+        return normalized
+    return normalized.split(".", 1)[0]
+
+
+def _hk_symbol_code(symbol: str) -> str:
+    normalized = normalize_symbol(symbol)
+    if not normalized.endswith(".HK"):
+        return normalized
+    code = normalized[:-3]
+    digits = re.sub(r"\D", "", code)
+    if not digits:
+        return code
+    return digits.zfill(5)
+
+
+def _fetch_ak_a_margin_snapshot_compat(date_key: str) -> list[dict]:
+    if pd is None or requests is None:
+        return []
+    url = "https://www.szse.cn/api/report/ShowReport"
+    params = {
+        "SHOWTYPE": "xlsx",
+        "CATALOGID": "1834_xxpl",
+        "txtDate": "-".join([date_key[:4], date_key[4:6], date_key[6:]]),
+        "tab1PAGENO": "1",
+        "random": "0.7425245522795993",
+        "TABKEY": "tab1",
+    }
+    headers = {
+        "Referer": "https://www.szse.cn/disclosure/margin/object/index.html",
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        ),
+    }
+    try:
+        response = requests.get(url, params=params, headers=headers, timeout=20)
+        response.raise_for_status()
+    except Exception as exc:
+        LOGGER.warning("akshare szse margin compat request failed [%s]: %s", date_key, exc)
+        return []
+    try:
+        frame = pd.read_excel(BytesIO(response.content), engine="openpyxl", dtype={"证券代码": str})
+    except Exception as exc:
+        LOGGER.warning("akshare szse margin compat parse failed [%s]: %s", date_key, exc)
+        return []
+    return _to_record_dicts(frame)
+
+
+def _load_ak_a_margin_snapshot(*, as_of: date | None = None) -> tuple[list[dict], str]:
+    global _AK_A_MARGIN_CACHE_TS, _AK_A_MARGIN_CACHE_DATE, _AK_A_MARGIN_CACHE_ROWS, _AK_A_MARGIN_CACHE_READY
+    if ak is None:
+        return [], ""
+    fetch_fn = getattr(ak, "stock_margin_underlying_info_szse", None)
+    if fetch_fn is None:
+        return [], ""
+
+    now = time.monotonic()
+    with _AK_A_MARGIN_CACHE_LOCK:
+        if _AK_A_MARGIN_CACHE_READY and (now - _AK_A_MARGIN_CACHE_TS) <= AK_A_MARGIN_CACHE_TTL_SECONDS:
+            return list(_AK_A_MARGIN_CACHE_ROWS), _AK_A_MARGIN_CACHE_DATE
+
+    base_date = as_of or date.today()
+    rows: list[dict] = []
+    snapshot_date = ""
+    for delta in range(AK_A_MARGIN_LOOKBACK_DAYS + 1):
+        probe = base_date - timedelta(days=delta)
+        probe_key = probe.strftime("%Y%m%d")
+        try:
+            frame = fetch_fn(date=probe_key)
+            records = _to_record_dicts(frame)
+        except Exception as exc:
+            text = str(exc)
+            if "Expected file path name or file-like object, got <class 'bytes'> type" in text:
+                records = _fetch_ak_a_margin_snapshot_compat(probe_key)
+            else:
+                LOGGER.warning("akshare szse margin fetch failed [%s]: %s", probe_key, exc)
+                continue
+        if not records:
+            continue
+        rows = records
+        snapshot_date = probe_key
+        break
+
+    with _AK_A_MARGIN_CACHE_LOCK:
+        _AK_A_MARGIN_CACHE_TS = time.monotonic()
+        _AK_A_MARGIN_CACHE_DATE = snapshot_date
+        _AK_A_MARGIN_CACHE_ROWS = list(rows)
+        _AK_A_MARGIN_CACHE_READY = True
+        return list(_AK_A_MARGIN_CACHE_ROWS), _AK_A_MARGIN_CACHE_DATE
+
+
+def _build_ak_a_margin_research_rows(symbol: str, *, limit: int = 10) -> list[dict]:
+    normalized = normalize_symbol(symbol)
+    if not normalized.endswith(".SZ"):
+        return []
+    snapshot_rows, snapshot_key = _load_ak_a_margin_snapshot()
+    if not snapshot_rows:
+        return []
+
+    sample = snapshot_rows[0]
+    code_col = _pick_frame_column(
+        sample.keys(),
+        ("code", "symbol", "security_code", "\u8bc1\u5238\u4ee3\u7801", "\u4ee3\u7801", "\u80a1\u7968\u4ee3\u7801"),
+    )
+    name_col = _pick_frame_column(
+        sample.keys(),
+        ("name", "security_name", "stock_name", "\u8bc1\u5238\u7b80\u79f0", "\u8bc1\u5238\u540d\u79f0", "\u7b80\u79f0"),
+    )
+    if not code_col:
+        return []
+
+    matched: dict | None = None
+    target_code = _a_symbol_code(normalized)
+    for row in snapshot_rows:
+        raw_code = _safe_text(row.get(code_col), max_length=32)
+        if not raw_code:
+            continue
+        digits = re.sub(r"\D", "", raw_code)
+        code = digits[-6:] if len(digits) >= 6 else raw_code
+        if code == target_code:
+            matched = row
+            break
+    if not matched:
+        return []
+
+    published_at = _to_datetime(snapshot_key) if snapshot_key else None
+    name = _safe_text(matched.get(name_col), max_length=64) if name_col else normalized
+    summary_parts: list[str] = []
+    for key in (
+        "\u878d\u8d44\u4e70\u5165\u6807\u7684",
+        "\u878d\u5238\u5356\u51fa\u6807\u7684",
+        "\u878d\u8d44\u4fdd\u8bc1\u91d1\u6bd4\u4f8b",
+        "\u878d\u5238\u4fdd\u8bc1\u91d1\u6bd4\u4f8b",
+        "\u6807\u7684\u8bc1\u5238\u7c7b\u578b",
+    ):
+        if key not in matched:
+            continue
+        value = _safe_text(matched.get(key), max_length=64)
+        if not value:
+            continue
+        summary_parts.append(f"{key}:{value}")
+    summary = " | ".join(summary_parts)
+    row = {
+        "title": f"{name or normalized} SZSE margin underlying",
+        "published_at": published_at,
+        "link": "",
+        "summary": summary,
+        "institution": "SZSE",
+        "rating": "\u878d\u8d44\u878d\u5238",
+        "source": "AkShare SZSE Margin Underlying",
+    }
+    return [row][: max(1, limit)]
+
+
+def _build_ak_hk_profit_forecast_rows(symbol: str, *, limit: int = 10) -> list[dict]:
+    normalized = normalize_symbol(symbol)
+    if not normalized.endswith(".HK") or ak is None:
+        return []
+    fetch_fn = getattr(ak, "stock_hk_profit_forecast_et", None)
+    if fetch_fn is None:
+        return []
+
+    code = _hk_symbol_code(normalized)
+    indicators = ("\u76c8\u5229\u9884\u6d4b\u6982\u89c8", "\u76c8\u5229\u9884\u6d4b")
+    frame = None
+    last_exception: Exception | None = None
+    for indicator in indicators:
+        try:
+            frame = fetch_fn(symbol=code, indicator=indicator)
+            break
+        except Exception as exc:
+            last_exception = exc
+            message = str(exc).lower()
+            if isinstance(exc, IndexError) or "list index out of range" in message or "out of bounds" in message:
+                LOGGER.info("akshare hk profit forecast no data [%s] indicator=%s", normalized, indicator)
+                continue
+            LOGGER.warning("akshare hk profit forecast fetch failed [%s] indicator=%s: %s", normalized, indicator, exc)
+            return []
+    if frame is None:
+        if last_exception is not None:
+            LOGGER.info("akshare hk profit forecast unavailable [%s]: %s", normalized, last_exception)
+        return []
+
+    records = _to_record_dicts(frame)
+    if not records:
+        return []
+
+    sample = records[0]
+    institution_col = _pick_frame_column(
+        sample.keys(),
+        ("institution", "org", "broker", "\u673a\u6784", "\u7814\u62a5\u673a\u6784", "\u8bc1\u5238\u516c\u53f8"),
+    )
+    rating_col = _pick_frame_column(
+        sample.keys(),
+        ("rating", "latest_rating", "\u8bc4\u7ea7", "\u6700\u65b0\u8bc4\u7ea7", "\u6295\u8d44\u8bc4\u7ea7"),
+    )
+    date_col = _pick_frame_column(
+        sample.keys(),
+        ("date", "publish_date", "report_date", "\u65e5\u671f", "\u53d1\u5e03\u65e5\u671f", "\u7814\u62a5\u65e5\u671f"),
+    )
+    link_col = _pick_frame_column(sample.keys(), ("url", "link", "\u94fe\u63a5", "\u516c\u544a\u5730\u5740"))
+    title_col = _pick_frame_column(sample.keys(), ("title", "report_title", "\u6807\u9898", "\u5185\u5bb9"))
+
+    rows: list[dict] = []
+    seen: set[tuple[str, str, str]] = set()
+    for record in records:
+        institution = _safe_text(record.get(institution_col), max_length=128) if institution_col else ""
+        rating = _safe_text(record.get(rating_col), max_length=128) if rating_col else ""
+        published_at = _to_datetime(record.get(date_col)) if date_col else None
+        link = _safe_text(record.get(link_col), max_length=512) if link_col else ""
+        explicit_title = _safe_text(record.get(title_col), max_length=160) if title_col else ""
+        if explicit_title:
+            title = explicit_title
+        elif institution and rating:
+            title = f"{institution} profit forecast ({rating})"
+        elif institution:
+            title = f"{institution} profit forecast"
+        else:
+            title = f"{normalized} profit forecast"
+
+        summary_parts: list[str] = []
+        for key, value in record.items():
+            if value in (None, "", [], {}):
+                continue
+            key_text = _safe_text(key, max_length=32)
+            value_text = _safe_text(value, max_length=48)
+            if not key_text or not value_text:
+                continue
+            if key_text.lower() in {
+                str(institution_col or "").lower(),
+                str(rating_col or "").lower(),
+                str(date_col or "").lower(),
+                str(link_col or "").lower(),
+                str(title_col or "").lower(),
+            }:
+                continue
+            summary_parts.append(f"{key_text}:{value_text}")
+            if len(summary_parts) >= 5:
+                break
+        summary = " | ".join(summary_parts)
+        dedupe_key = (
+            title,
+            published_at.isoformat() if published_at else "",
+            link,
+        )
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        rows.append(
+            {
+                "title": title,
+                "published_at": published_at,
+                "link": link,
+                "summary": summary,
+                "institution": institution,
+                "rating": rating,
+                "source": "AkShare HK Profit Forecast",
+            }
+        )
+    rows.sort(key=lambda item: item.get("published_at") or datetime.min, reverse=True)
+    return rows[: max(1, limit)]
+
+
+def _normalize_hk_quote_symbol(value: object) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    digits = "".join(ch for ch in text if ch.isdigit())
+    if not digits:
+        return ""
+    return f"{digits.zfill(5)}.HK"
+
+
+def _build_ak_hk_spot_cache(df) -> dict[str, dict]:
+    if pd is None or df is None or getattr(df, "empty", True):
+        return {}
+    symbol_col = _pick_frame_column(df.columns, ("代码", "代號", "code", "symbol", "证券代码", "股票代码"))
+    if not symbol_col:
+        return {}
+    name_col = _pick_frame_column(df.columns, ("名称", "name", "简称", "证券简称", "股票名称"))
+    current_col = _pick_frame_column(df.columns, ("最新价", "最新", "最新價", "price", "current", "last"))
+    change_col = _pick_frame_column(df.columns, ("涨跌额", "漲跌額", "change", "chg"))
+    percent_col = _pick_frame_column(df.columns, ("涨跌幅", "漲跌幅", "percent", "pct", "chg_percent"))
+    open_col = _pick_frame_column(df.columns, ("今开", "今開", "open"))
+    high_col = _pick_frame_column(df.columns, ("最高", "high"))
+    low_col = _pick_frame_column(df.columns, ("最低", "low"))
+    last_close_col = _pick_frame_column(df.columns, ("昨收", "昨收盘", "昨收盤", "preclose", "last_close", "prev_close"))
+    volume_col = _pick_frame_column(df.columns, ("成交量", "volume", "vol"))
+    amount_col = _pick_frame_column(df.columns, ("成交额", "成交額", "amount", "turnover"))
+
+    normalized_df = df.where(pd.notna(df), None)
+    now = datetime.now(tz=CN_TZ)
+    by_symbol: dict[str, dict] = {}
+    for record in normalized_df.to_dict(orient="records"):
+        symbol = _normalize_hk_quote_symbol(record.get(symbol_col))
+        if not symbol:
+            continue
+        by_symbol[symbol] = {
+            "symbol": symbol,
+            "name": str(record.get(name_col) or symbol) if name_col else symbol,
+            "current": _safe_float(record.get(current_col)) if current_col else None,
+            "change": _safe_float(record.get(change_col)) if change_col else None,
+            "percent": _safe_float(record.get(percent_col)) if percent_col else None,
+            "open": _safe_float(record.get(open_col)) if open_col else None,
+            "high": _safe_float(record.get(high_col)) if high_col else None,
+            "low": _safe_float(record.get(low_col)) if low_col else None,
+            "last_close": _safe_float(record.get(last_close_col)) if last_close_col else None,
+            "volume": _safe_float(record.get(volume_col)) if volume_col else None,
+            "amount": _safe_float(record.get(amount_col)) if amount_col else None,
+            "timestamp": now,
+        }
+    return by_symbol
+
+
+def _fetch_ak_hk_spot_cache() -> dict[str, dict]:
+    if ak is None or pd is None:
+        return {}
+    fetch_fn = getattr(ak, "stock_hk_spot", None) or getattr(ak, "stock_hk_spot_em", None)
+    if fetch_fn is None:
+        return {}
+    try:
+        frame = fetch_fn()
+    except Exception as exc:
+        LOGGER.warning("akshare hk spot fetch failed: %s", exc)
+        return {}
+    return _build_ak_hk_spot_cache(frame)
+
+
+def _get_ak_hk_spot_quote(symbol: str, *, allow_refresh: bool = False) -> dict:
+    global _AK_HK_SPOT_CACHE_TS, _AK_HK_SPOT_CACHE_BY_SYMBOL
+    normalized = normalize_symbol(symbol)
+    if not normalized.endswith(".HK"):
+        return {}
+    now = time.monotonic()
+    with _AK_HK_SPOT_CACHE_LOCK:
+        cache_hit = (
+            _AK_HK_SPOT_CACHE_BY_SYMBOL
+            and (now - _AK_HK_SPOT_CACHE_TS) <= AK_HK_SPOT_CACHE_TTL_SECONDS
+            and normalized in _AK_HK_SPOT_CACHE_BY_SYMBOL
+        )
+        if cache_hit:
+            return dict(_AK_HK_SPOT_CACHE_BY_SYMBOL.get(normalized) or {})
+
+    if not allow_refresh:
+        return {}
+
+    refreshed = _fetch_ak_hk_spot_cache()
+    with _AK_HK_SPOT_CACHE_LOCK:
+        if refreshed:
+            _AK_HK_SPOT_CACHE_TS = time.monotonic()
+            _AK_HK_SPOT_CACHE_BY_SYMBOL = refreshed
+        return dict(_AK_HK_SPOT_CACHE_BY_SYMBOL.get(normalized) or {})
+
+
+def _fetch_ak_hk_kline_history(
+    symbol: str,
+    *,
+    period: str,
+    count: int,
+    as_of: date | None = None,
+) -> list[dict]:
+    if ak is None or pd is None:
+        return []
+    normalized = normalize_symbol(symbol)
+    if not normalized.endswith(".HK"):
+        return []
+    code = _hk_symbol_code(normalized)
+
+    def _curl_fallback_rows() -> list[dict]:
+        if period not in {"day", "week", "month"}:
+            return []
+        return _fetch_eastmoney_hk_kline_history_via_curl(
+            normalized,
+            period=period,
+            count=count,
+            as_of=as_of,
+        )
+
+    rows: list[dict] = []
+    if period in {"1m", "30m", "60m"}:
+        fetch_fn = getattr(ak, "stock_hk_hist_min_em", None)
+        if fetch_fn is None:
+            return []
+        period_map = {"1m": "1", "30m": "30", "60m": "60"}
+        end_at = as_of or date.today()
+        try:
+            frame = fetch_fn(
+                symbol=code,
+                period=period_map[period],
+                adjust="",
+                start_date="1979-09-01 09:32:00",
+                end_date=f"{end_at.isoformat()} 23:59:59",
+            )
+        except Exception as exc:
+            LOGGER.warning("akshare hk kline fetch failed [%s %s]: %s", normalized, period, exc)
+            return []
+        for record in _to_record_dicts(frame):
+            row_time = _to_datetime(
+                _pick(record, ("\u65f6\u95f4", "\u65e5\u671f", "time", "datetime", "date", "timestamp"))
+            )
+            if row_time is None:
+                continue
+            if as_of is not None and row_time.date() > as_of:
+                continue
+            open_val = _safe_float(_pick(record, ("\u5f00\u76d8", "open")))
+            high_val = _safe_float(_pick(record, ("\u6700\u9ad8", "high")))
+            low_val = _safe_float(_pick(record, ("\u6700\u4f4e", "low")))
+            close_val = _safe_float(_pick(record, ("\u6536\u76d8", "\u6700\u65b0\u4ef7", "close", "price")))
+            volume_val = _safe_float(_pick(record, ("\u6210\u4ea4\u91cf", "volume")))
+            if None in (open_val, high_val, low_val, close_val, volume_val):
+                continue
+            rows.append(
+                {
+                    "symbol": normalized,
+                    "date": row_time,
+                    "open": open_val,
+                    "high": high_val,
+                    "low": low_val,
+                    "close": close_val,
+                    "volume": volume_val,
+                }
+            )
+    elif period in {"day", "week", "month"}:
+        fetch_fn = getattr(ak, "stock_hk_hist", None)
+        if fetch_fn is None:
+            return []
+        period_map = {"day": "daily", "week": "weekly", "month": "monthly"}
+        end_at = as_of or date.today()
+        lookback_days = {"day": max(400, count * 3), "week": max(800, count * 14), "month": max(1500, count * 40)}[period]
+        start_at = end_at - timedelta(days=lookback_days)
+        try:
+            frame = fetch_fn(
+                symbol=code,
+                period=period_map[period],
+                start_date=start_at.strftime("%Y%m%d"),
+                end_date=end_at.strftime("%Y%m%d"),
+                adjust="",
+            )
+        except Exception as exc:
+            if _is_windows_socket_block_error(exc):
+                LOGGER.info("akshare hk kline python network blocked [%s %s]: %s", normalized, period, exc)
+                return _curl_fallback_rows()
+            LOGGER.warning("akshare hk kline fetch failed [%s %s]: %s", normalized, period, exc)
+            return []
+        for record in _to_record_dicts(frame):
+            row_date = _to_date(_pick(record, ("\u65e5\u671f", "\u65f6\u95f4", "date", "time")))
+            if row_date is None:
+                continue
+            if as_of is not None and row_date > as_of:
+                continue
+            open_val = _safe_float(_pick(record, ("\u5f00\u76d8", "open")))
+            high_val = _safe_float(_pick(record, ("\u6700\u9ad8", "high")))
+            low_val = _safe_float(_pick(record, ("\u6700\u4f4e", "low")))
+            close_val = _safe_float(_pick(record, ("\u6536\u76d8", "close")))
+            volume_val = _safe_float(_pick(record, ("\u6210\u4ea4\u91cf", "volume")))
+            if None in (open_val, high_val, low_val, close_val, volume_val):
+                continue
+            rows.append(
+                {
+                    "symbol": normalized,
+                    "date": row_date,
+                    "open": open_val,
+                    "high": high_val,
+                    "low": low_val,
+                    "close": close_val,
+                    "volume": volume_val,
+                }
+            )
+        if not rows:
+            return _curl_fallback_rows()
+    else:
+        return []
+
+    rows.sort(key=lambda item: (item.get("date") or datetime.min, str(item.get("symbol") or "")))
+    if count > 0:
+        rows = rows[-count:]
+    return rows
+
+
+def _fetch_eastmoney_hk_kline_history_via_curl(
+    symbol: str,
+    *,
+    period: str,
+    count: int,
+    as_of: date | None = None,
+) -> list[dict]:
+    if not HK_KLINE_CURL_FALLBACK_ENABLED:
+        return []
+    if period not in {"day", "week", "month"}:
+        return []
+    normalized = normalize_symbol(symbol)
+    if not normalized.endswith(".HK"):
+        return []
+    code = _hk_symbol_code(normalized)
+    klt_map = {"day": "101", "week": "102", "month": "103"}
+    curl_path = shutil.which("curl.exe") or shutil.which("curl")
+    if not curl_path:
+        return []
+    command = [
+        curl_path,
+        "-L",
+        "-sS",
+        EASTMONEY_HK_KLINE_ENDPOINT,
+        "--get",
+        "--data-urlencode",
+        f"secid=116.{code}",
+        "--data-urlencode",
+        f"fields1={EASTMONEY_HK_KLINE_FIELDS1}",
+        "--data-urlencode",
+        f"fields2={EASTMONEY_HK_KLINE_FIELDS2}",
+        "--data-urlencode",
+        f"klt={klt_map[period]}",
+        "--data-urlencode",
+        "fqt=0",
+        "--data-urlencode",
+        "end=20500000",
+        "--data-urlencode",
+        "lmt=1000000",
+    ]
+    try:
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=HK_KLINE_CURL_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except Exception as exc:
+        LOGGER.warning("curl hk kline fetch failed [%s %s]: %s", normalized, period, exc)
+        return []
+    if completed.returncode != 0 or not str(completed.stdout or "").strip():
+        stderr = str(completed.stderr or "").strip()
+        if stderr:
+            LOGGER.warning("curl hk kline fetch failed [%s %s]: %s", normalized, period, stderr)
+        return []
+    try:
+        payload = json.loads(completed.stdout)
+    except Exception as exc:
+        LOGGER.warning("curl hk kline parse failed [%s %s]: %s", normalized, period, exc)
+        return []
+    data = payload.get("data") or {}
+    klines = data.get("klines") or []
+    if not isinstance(klines, list):
+        return []
+    rows: list[dict] = []
+    for item in klines:
+        parts = str(item or "").split(",")
+        if len(parts) < 6:
+            continue
+        row_date = _to_date(parts[0])
+        if row_date is None:
+            continue
+        if as_of is not None and row_date > as_of:
+            continue
+        open_val = _safe_float(parts[1])
+        close_val = _safe_float(parts[2])
+        high_val = _safe_float(parts[3])
+        low_val = _safe_float(parts[4])
+        volume_val = _safe_float(parts[5])
+        if None in (open_val, high_val, low_val, close_val, volume_val):
+            continue
+        rows.append(
+            {
+                "symbol": normalized,
+                "date": row_date,
+                "open": open_val,
+                "high": high_val,
+                "low": low_val,
+                "close": close_val,
+                "volume": volume_val,
+            }
+        )
+    rows.sort(key=lambda item: (item.get("date") or datetime.min.date(), str(item.get("symbol") or "")))
+    if count > 0:
+        rows = rows[-count:]
+    return rows
+
+
+def _fetch_snowball_kline_history(
+    symbol: str,
+    *,
+    period: str,
+    count: int,
+    as_of: date | None = None,
+    is_index: bool = False,
+) -> list[dict]:
+    if ball is None or not _ensure_token():
+        return []
+    for snow_symbol in _snowball_symbol_candidates(symbol, is_index=is_index):
+        payload = _call_kline_with_retry(
+            snow_symbol,
+            period=period,
+            count=max(30, count),
+            context="snowball kline history",
+        )
+        if payload is None:
+            continue
+        rows = _parse_kline_history_rows(
+            symbol,
+            _extract_kline_rows(payload),
+            as_of=as_of,
+            preserve_time=period in {"1m", "30m", "60m"},
+        )
+        if rows:
+            return ensure_required(
+                rows,
+                ["symbol", "date", "open", "high", "low", "close", "volume"],
+                "snowball.kline_history",
+            )
+    return []
 
 
 def _extract_name(item: dict, fallback: str) -> str:
@@ -1110,9 +1821,13 @@ def get_stock_quote(symbol: str) -> dict:
         recovered = _call_quotec_single(normalized)
         if recovered:
             record = recovered
-    if not record:
-        return {}
-    return _quote_from_record(normalized, record)
+    if record:
+        return _quote_from_record(normalized, record)
+    if normalized.endswith(".HK"):
+        hk_quote = _get_ak_hk_spot_quote(normalized, allow_refresh=False)
+        if hk_quote:
+            return _quote_from_record(normalized, hk_quote)
+    return {}
 
 
 def get_stock_quote_detail(symbol: str) -> dict:
@@ -1330,31 +2045,38 @@ def get_kline_history(
     as_of: date | None = None,
     is_index: bool = False,
 ) -> List[dict]:
-    if ball is None or not _ensure_token():
-        return []
     normalized = normalize_index_symbol(symbol) if is_index else normalize_symbol(symbol)
-    for snow_symbol in _snowball_symbol_candidates(normalized, is_index=is_index):
-        payload = _call_kline_with_retry(
-            snow_symbol,
+    if not is_index and normalized.endswith(".HK"):
+        snow_rows = _fetch_snowball_kline_history(
+            normalized,
             period=period,
             count=max(30, count),
-            context="snowball kline history",
-        )
-        if payload is None:
-            continue
-        rows = _parse_kline_history_rows(
-            normalized,
-            _extract_kline_rows(payload),
             as_of=as_of,
-            preserve_time=period in {"1m", "30m", "60m"},
+            is_index=False,
         )
-        if rows:
+        # Prefer Snowball for HK; if it only returns one bar, fallback to AkShare for stability.
+        if snow_rows and (period in {"1m", "30m", "60m"} or len(snow_rows) > 1):
+            return snow_rows
+        ak_rows = _fetch_ak_hk_kline_history(
+            normalized,
+            period=period,
+            count=max(30, count),
+            as_of=as_of,
+        )
+        if ak_rows:
             return ensure_required(
-                rows,
+                ak_rows,
                 ["symbol", "date", "open", "high", "low", "close", "volume"],
                 "snowball.kline_history",
             )
-    return []
+        return snow_rows
+    return _fetch_snowball_kline_history(
+        normalized,
+        period=period,
+        count=max(30, count),
+        as_of=as_of,
+        is_index=is_index,
+    )
 
 
 def get_index_history(symbol: str, *, count: int = 480, as_of: date | None = None) -> List[dict]:
@@ -1606,6 +2328,16 @@ def _extract_disclosure_items(payload, *, source: str, limit: int) -> List[dict]
 
 def get_stock_reports(symbol: str, *, limit: int = 10) -> List[dict]:
     normalized = normalize_symbol(symbol)
+    market = market_from_symbol(normalized)
+    if market == "A":
+        ak_rows = _build_ak_a_margin_research_rows(normalized, limit=limit)
+        if ak_rows:
+            return ak_rows
+    elif market == "HK":
+        ak_rows = _build_ak_hk_profit_forecast_rows(normalized, limit=limit)
+        if ak_rows:
+            return ak_rows
+
     primary = to_snowball_symbol(normalized)
     payload = _call_with_token_retry(
         lambda: ball.report(primary),
@@ -1633,6 +2365,11 @@ def get_stock_reports(symbol: str, *, limit: int = 10) -> List[dict]:
 
 def get_stock_earning_forecasts(symbol: str, *, limit: int = 10) -> List[dict]:
     normalized = normalize_symbol(symbol)
+    if market_from_symbol(normalized) == "HK":
+        ak_rows = _build_ak_hk_profit_forecast_rows(normalized, limit=limit)
+        if ak_rows:
+            return ak_rows
+
     primary = to_snowball_symbol(normalized)
     payload = _call_with_token_retry(
         lambda: ball.earningforecast(primary),

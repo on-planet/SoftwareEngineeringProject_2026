@@ -6,8 +6,10 @@ from app.core.db import engine
 from app.models.base import Base
 
 # Import models so SQLAlchemy metadata contains every table before create_all().
+from app.models.auth_user import AuthUser  # noqa: F401
 from app.models.buyback import Buyback  # noqa: F401
 from app.models.daily_prices import DailyPrice  # noqa: F401
+from app.models.email_verification_code import EmailVerificationCode  # noqa: F401
 from app.models.events import Event  # noqa: F401
 from app.models.financials import Financial  # noqa: F401
 from app.models.fund_holdings import FundHolding  # noqa: F401

@@ -145,6 +145,51 @@ class LiveMarketFallbackTests(unittest.TestCase):
         self.assertEqual(len(items), 2)
         self.assertEqual(items[-1].close, 10.6)
 
+    def test_get_live_kline_uses_remote_when_local_day_series_only_has_one_point(self) -> None:
+        db_rows = [
+            {
+                "symbol": "00700.HK",
+                "date": date(2026, 3, 14),
+                "open": 318.0,
+                "high": 321.0,
+                "low": 317.5,
+                "close": 320.0,
+                "volume": 1000.0,
+            }
+        ]
+        remote_rows = [
+            {
+                "symbol": "00700.HK",
+                "date": date(2026, 3, 14),
+                "open": 318.0,
+                "high": 321.0,
+                "low": 317.5,
+                "close": 320.0,
+                "volume": 1000.0,
+            },
+            {
+                "symbol": "00700.HK",
+                "date": date(2026, 3, 17),
+                "open": 320.0,
+                "high": 323.0,
+                "low": 319.8,
+                "close": 322.5,
+                "volume": 1200.0,
+            },
+        ]
+        with patch("app.services.live_market_service.get_json", return_value=None), patch(
+            "app.services.live_market_service._load_db_daily_rows",
+            return_value=db_rows,
+        ), patch(
+            "app.services.live_market_service.get_kline_history",
+            return_value=remote_rows,
+        ) as remote_kline, patch("app.services.live_market_service.set_json"):
+            items = get_live_kline("00700.HK", period="day", limit=60)
+
+        remote_kline.assert_called_once()
+        self.assertEqual(len(items), 2)
+        self.assertEqual(items[-1].close, 322.5)
+
     def test_get_live_kline_prefers_local_intraday_rows_for_1m_series(self) -> None:
         db_rows = [
             {
@@ -177,6 +222,70 @@ class LiveMarketFallbackTests(unittest.TestCase):
         remote_kline.assert_not_called()
         self.assertEqual(len(items), 2)
         self.assertEqual(items[-1].close, 10.18)
+
+    def test_get_live_kline_uses_remote_months_when_local_year_series_only_has_one_point(self) -> None:
+        cached = [
+            {
+                "date": date(2026, 3, 17),
+                "open": 320.0,
+                "high": 323.0,
+                "low": 319.8,
+                "close": 322.5,
+            }
+        ]
+        db_rows = [
+            {
+                "symbol": "00700.HK",
+                "date": date(2026, 3, 17),
+                "open": 320.0,
+                "high": 323.0,
+                "low": 319.8,
+                "close": 322.5,
+                "volume": 1200.0,
+            }
+        ]
+        remote_month_rows = [
+            {
+                "symbol": "00700.HK",
+                "date": date(2025, 1, 31),
+                "open": 280.0,
+                "high": 300.0,
+                "low": 270.0,
+                "close": 295.0,
+                "volume": 1000.0,
+            },
+            {
+                "symbol": "00700.HK",
+                "date": date(2025, 12, 31),
+                "open": 300.0,
+                "high": 340.0,
+                "low": 290.0,
+                "close": 330.0,
+                "volume": 1000.0,
+            },
+            {
+                "symbol": "00700.HK",
+                "date": date(2026, 3, 31),
+                "open": 320.0,
+                "high": 350.0,
+                "low": 310.0,
+                "close": 345.0,
+                "volume": 1000.0,
+            },
+        ]
+        with patch("app.services.live_market_service.get_json", return_value=cached), patch(
+            "app.services.live_market_service._load_db_daily_rows",
+            return_value=db_rows,
+        ), patch(
+            "app.services.live_market_service.get_kline_history",
+            return_value=remote_month_rows,
+        ) as remote_kline, patch("app.services.live_market_service.set_json"):
+            items = get_live_kline("00700.HK", period="year", limit=10)
+
+        remote_kline.assert_called_once_with("00700.HK", period="month", count=132, as_of=None, is_index=False)
+        self.assertEqual(len(items), 2)
+        self.assertEqual(items[0].date, date(2025, 12, 31))
+        self.assertEqual(items[-1].close, 345.0)
 
     def test_get_live_financials_prefers_local_rows_when_available(self) -> None:
         local_rows = [

@@ -5,6 +5,7 @@ from app.core.middleware import RequestLogMiddleware
 from app.core.schema import init_schema
 from etl.utils.env import load_project_env
 from app.routers import (
+    auth,
     index,
     stock,
     news,
@@ -43,6 +44,7 @@ def startup() -> None:
     init_schema()
 
 app.include_router(index.router, prefix="/api")
+app.include_router(auth.router, prefix="/api")
 app.include_router(stock.router, prefix="/api")
 app.include_router(news.router, prefix="/api")
 app.include_router(news_aggregate.router, prefix="/api")
