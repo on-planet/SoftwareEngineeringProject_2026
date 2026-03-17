@@ -120,7 +120,10 @@ def save_stock_basics_cache(rows: Iterable[dict], *, merge: bool = False) -> int
         "items": sorted(by_symbol.values(), key=lambda item: item["symbol"]),
     }
     _ensure_state_dir()
-    CACHE_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    # Write atomically to avoid readers seeing partially-written JSON.
+    temp_path = CACHE_PATH.with_suffix(".tmp")
+    temp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    temp_path.replace(CACHE_PATH)
     return len(payload["items"])
 
 

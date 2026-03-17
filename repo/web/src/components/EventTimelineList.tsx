@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 
 import { getEventTimeline } from "../services/api";
+import { readPersistentCache, writePersistentCache } from "../utils/persistentCache";
 
 const PLACEHOLDER_IMAGE =
   "https://images.unsplash.com/flagged/photo-1559116315-702b0b4774ce?auto=format&fit=crop&w=800&q=60";
@@ -32,6 +33,12 @@ type EventPage = {
   offset: number;
 };
 
+const EVENT_TIMELINE_CACHE_TTL_MS = 5 * 60 * 1000;
+
+function buildEventTimelineCacheKey() {
+  return "event-timeline:list:limit=20:offset=0:sort=desc";
+}
+
 export function EventTimelineList() {
   const [items, setItems] = useState<EventItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -40,7 +47,15 @@ export function EventTimelineList() {
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
+    const cacheKey = buildEventTimelineCacheKey();
+    const cachedPage = readPersistentCache<EventPage>(cacheKey, EVENT_TIMELINE_CACHE_TTL_MS);
+    if (cachedPage) {
+      setItems(cachedPage.items ?? []);
+      setTotal(cachedPage.total ?? 0);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     getEventTimeline({ limit: 20, offset: 0, sort: "desc" })
       .then((res) => {
         if (!active) {
@@ -49,6 +64,7 @@ export function EventTimelineList() {
         const page = res as EventPage;
         setItems(page.items ?? []);
         setTotal(page.total ?? 0);
+        writePersistentCache(cacheKey, page);
         setError(null);
       })
       .catch((err: Error) => {

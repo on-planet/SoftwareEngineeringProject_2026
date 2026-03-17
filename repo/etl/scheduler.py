@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 import json
@@ -27,7 +28,6 @@ from etl.jobs.cache_metrics_job import (
 from etl.loaders.pg_loader import (
     delete_events_before,
     delete_index_constituents_before,
-    delete_macro_before,
     delete_news_before,
     delete_buyback_before,
     delete_insider_trade_before,
@@ -47,6 +47,14 @@ class JobConfig:
     name: str
     at: str
     runner: Callable[[date, date], int]
+    stage: str = "core"
+
+
+@dataclass
+class PlannedJob:
+    config: JobConfig
+    start: date
+    end: date
 
 
 def _get_db_session(database_url: str | None) -> Session:
@@ -141,7 +149,7 @@ def _should_skip_job(
         return False
     if not incremental:
         return False
-    if job_name == "macro_job" and not macro_snapshot_is_healthy():
+    if job_name == "macro_job" and not macro_snapshot_is_healthy(include_world_bank=True):
         return False
     state = get_job_state(job_name)
     return state.last_success_date is not None and state.last_success_date >= job_end
@@ -149,12 +157,79 @@ def _should_skip_job(
 
 def _cleanup_retention(target_date: date, *, days: int = 7) -> None:
     cutoff = target_date - timedelta(days=days - 1)
-    delete_macro_before(cutoff)
     delete_news_before(cutoff)
     delete_events_before(cutoff)
     delete_buyback_before(cutoff)
     delete_insider_trade_before(cutoff)
     delete_index_constituents_before(cutoff)
+
+
+def _plan_jobs(
+    jobs: list[JobConfig],
+    target_date: date,
+    *,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    incremental: bool = True,
+    force: bool = False,
+    lookback_days: int = 0,
+) -> list[PlannedJob]:
+    planned: list[PlannedJob] = []
+    for job in jobs:
+        job_start, job_end = _resolve_range(
+            job.name,
+            target_date,
+            start_date=start_date,
+            end_date=end_date,
+            incremental=incremental,
+            lookback_days=lookback_days,
+        )
+        if job.name in {"macro_job", "news_job", "events_job", "index_constituent_job", "sector_exposure_job"}:
+            job_start = target_date
+            job_end = target_date
+        if _should_skip_job(
+            job.name,
+            job_end,
+            start_date=start_date,
+            end_date=end_date,
+            incremental=incremental,
+            force=force,
+        ):
+            LOGGER.info("Skipping %s because last_success_date already covers %s", job.name, job_end)
+            continue
+        planned.append(PlannedJob(config=job, start=job_start, end=job_end))
+    return planned
+
+
+def _run_planned_job(job: PlannedJob) -> tuple[str, int]:
+    LOGGER.info("Running %s [%s -> %s]", job.config.name, job.start, job.end)
+    result = job.config.runner(job.start, job.end)
+    if job.config.name == "macro_job" and not macro_snapshot_is_healthy(include_world_bank=True):
+        LOGGER.warning("macro_job completed but full macro snapshot is still incomplete")
+    update_job_state(job.config.name, job.end)
+    return job.config.name, int(result or 0)
+
+
+def _run_job_stage(stage_name: str, jobs: list[PlannedJob], *, max_workers: int) -> tuple[list[str], bool]:
+    if not jobs:
+        return [], False
+    errors: list[str] = []
+    any_job_ran = False
+    worker_count = max(1, min(max_workers, len(jobs)))
+    LOGGER.info("Running ETL stage %s with workers=%s jobs=%s", stage_name, worker_count, len(jobs))
+    with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix=f"etl_{stage_name}") as executor:
+        future_map = {executor.submit(_run_planned_job, job): job for job in jobs}
+        for future in as_completed(future_map):
+            job = future_map[future]
+            try:
+                job_name, row_count = future.result()
+                LOGGER.info("Completed %s rows=%s", job_name, row_count)
+                any_job_ran = True
+            except Exception as exc:
+                LOGGER.exception("Job failed: %s", job.config.name, exc_info=exc)
+                errors.append(f"{job.config.name}: {exc}")
+                notify_error(job.config.name, str(exc))
+    return errors, any_job_ran
 
 
 def run_once(
@@ -175,52 +250,35 @@ def run_once(
         try:
             target_date = to_t1(as_of or date.today(), config.t1_offset_days)
             lookback_days = int(config.raw.get("etl", {}).get("incremental_lookback_days", 0))
+            parallel_workers = max(1, int(config.raw.get("etl", {}).get("parallel_workers", 4)))
             jobs = [
-                JobConfig("index_job", config.raw.get("etl", {}).get("schedules", {}).get("index_job", "00:30"), run_index_job),
-                JobConfig("financial_job", config.raw.get("etl", {}).get("schedules", {}).get("financial_job", "01:00"), run_financial_job),
-                JobConfig("news_job", config.raw.get("etl", {}).get("schedules", {}).get("news_job", "01:30"), run_news_job),
-                JobConfig("macro_job", config.raw.get("etl", {}).get("schedules", {}).get("macro_job", "02:00"), run_macro_job),
-                JobConfig("events_job", config.raw.get("etl", {}).get("schedules", {}).get("events_job", "02:30"), run_events_job),
-                JobConfig("index_constituent_job", config.raw.get("etl", {}).get("schedules", {}).get("index_constituent_job", "03:00"), run_index_constituent_job),
-                JobConfig("sector_exposure_job", config.raw.get("etl", {}).get("schedules", {}).get("sector_exposure_job", "03:30"), run_sector_exposure_job),
-                JobConfig("fund_holdings_job", config.raw.get("etl", {}).get("schedules", {}).get("fund_holdings_job", "04:00"), run_fund_holdings_job),
-                JobConfig("futures_job", config.raw.get("etl", {}).get("schedules", {}).get("futures_job", "04:30"), run_futures_job),
+                JobConfig("index_job", config.raw.get("etl", {}).get("schedules", {}).get("index_job", "00:30"), run_index_job, stage="source"),
+                JobConfig("financial_job", config.raw.get("etl", {}).get("schedules", {}).get("financial_job", "01:00"), run_financial_job, stage="source"),
+                JobConfig("news_job", config.raw.get("etl", {}).get("schedules", {}).get("news_job", "01:30"), run_news_job, stage="source"),
+                JobConfig("macro_job", config.raw.get("etl", {}).get("schedules", {}).get("macro_job", "02:00"), run_macro_job, stage="source"),
+                JobConfig("events_job", config.raw.get("etl", {}).get("schedules", {}).get("events_job", "02:30"), run_events_job, stage="source"),
+                JobConfig("index_constituent_job", config.raw.get("etl", {}).get("schedules", {}).get("index_constituent_job", "03:00"), run_index_constituent_job, stage="source"),
+                JobConfig("fund_holdings_job", config.raw.get("etl", {}).get("schedules", {}).get("fund_holdings_job", "04:00"), run_fund_holdings_job, stage="source"),
+                JobConfig("futures_job", config.raw.get("etl", {}).get("schedules", {}).get("futures_job", "04:30"), run_futures_job, stage="source"),
+                JobConfig("sector_exposure_job", config.raw.get("etl", {}).get("schedules", {}).get("sector_exposure_job", "03:30"), run_sector_exposure_job, stage="derived"),
             ]
-            errors = []
+            planned_jobs = _plan_jobs(
+                jobs,
+                target_date,
+                start_date=start_date,
+                end_date=end_date,
+                incremental=incremental,
+                force=force,
+                lookback_days=lookback_days,
+            )
+            stage_order = ("source", "derived", "background")
+            errors: list[str] = []
             any_job_ran = False
-            for job in jobs:
-                try:
-                    job_start, job_end = _resolve_range(
-                        job.name,
-                        target_date,
-                        start_date=start_date,
-                        end_date=end_date,
-                        incremental=incremental,
-                        lookback_days=lookback_days,
-                    )
-                    if job.name in {"macro_job", "news_job", "events_job", "index_constituent_job", "sector_exposure_job"}:
-                        job_start = target_date
-                        job_end = target_date
-                    if _should_skip_job(
-                        job.name,
-                        job_end,
-                        start_date=start_date,
-                        end_date=end_date,
-                        incremental=incremental,
-                        force=force,
-                    ):
-                        LOGGER.info("Skipping %s because last_success_date already covers %s", job.name, job_end)
-                        continue
-                    LOGGER.info("Running %s", job.name)
-                    job.runner(job_start, job_end)
-                    if job.name == "macro_job" and not macro_snapshot_is_healthy():
-                        raise RuntimeError("macro snapshot remains incomplete after macro_job")
-                    update_job_state(job.name, job_end)
-                    any_job_ran = True
-                except Exception as exc:
-                    LOGGER.exception("Job failed: %s", job.name, exc_info=exc)
-                    errors.append(f"{job.name}: {exc}")
-                    notify_error(job.name, str(exc))
+            for stage_name in stage_order:
+                stage_jobs = [job for job in planned_jobs if job.config.stage == stage_name]
+                stage_errors, stage_ran = _run_job_stage(stage_name, stage_jobs, max_workers=parallel_workers)
+                errors.extend(stage_errors)
+                any_job_ran = any_job_ran or stage_ran
             if errors:
                 notify_batch(errors)
             _cleanup_retention(target_date, days=7)

@@ -17,6 +17,8 @@ class NewsOut(BaseModel):
     source_category: str | None = None
     topic_category: str | None = None
     time_bucket: str | None = None
+    related_symbols: str | None = None
+    related_sectors: str | None = None
 
     class Config:
         from_attributes = True
@@ -33,6 +35,8 @@ class NewsCreate(BaseModel):
     source_category: str | None = None
     topic_category: str | None = None
     time_bucket: str | None = None
+    related_symbols: str | None = None
+    related_sectors: str | None = None
 
 
 class NewsUpdate(BaseModel):
@@ -45,3 +49,5 @@ class NewsUpdate(BaseModel):
     source_category: str | None = None
     topic_category: str | None = None
     time_bucket: str | None = None
+    related_symbols: str | None = None
+    related_sectors: str | None = None

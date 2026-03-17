@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 
 import { getNewsAggregate } from "../services/api";
+import { readPersistentCache, writePersistentCache } from "../utils/persistentCache";
 
 const PLACEHOLDER_IMAGE =
   "https://images.unsplash.com/photo-1504711434969-e33886168f5c?auto=format&fit=crop&w=800&q=60";
@@ -53,6 +54,8 @@ type NewsItem = {
   source_category?: string;
   topic_category?: string;
   time_bucket?: string;
+  related_symbols?: string;
+  related_sectors?: string;
 };
 
 type NewsPage = {
@@ -61,6 +64,25 @@ type NewsPage = {
   limit: number;
   offset: number;
 };
+
+const NEWS_AGGREGATE_CACHE_TTL_MS = 5 * 60 * 1000;
+
+function buildNewsAggregateCacheKey(params: {
+  page: number;
+  limit: number;
+  sourceCategory: string;
+  topicCategory: string;
+  timeBucket: string;
+}) {
+  return [
+    "news-aggregate",
+    `page=${params.page}`,
+    `limit=${params.limit}`,
+    `source=${params.sourceCategory || "none"}`,
+    `topic=${params.topicCategory || "none"}`,
+    `time=${params.timeBucket || "none"}`,
+  ].join(":");
+}
 
 function formatSentiment(value: string) {
   if (value === "positive") {
@@ -102,7 +124,21 @@ export function NewsAggregateList() {
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
+    const cacheKey = buildNewsAggregateCacheKey({
+      page,
+      limit,
+      sourceCategory,
+      topicCategory,
+      timeBucket,
+    });
+    const cachedPage = readPersistentCache<NewsPage>(cacheKey, NEWS_AGGREGATE_CACHE_TTL_MS);
+    if (cachedPage) {
+      setItems(cachedPage.items ?? []);
+      setTotal(cachedPage.total ?? 0);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     getNewsAggregate({
       limit,
       offset,
@@ -118,6 +154,7 @@ export function NewsAggregateList() {
         const pageData = res as NewsPage;
         setItems(pageData.items ?? []);
         setTotal(pageData.total ?? 0);
+        writePersistentCache(cacheKey, pageData);
         setError(null);
       })
       .catch((err: Error) => {
@@ -242,6 +279,12 @@ export function NewsAggregateList() {
               <span>主题：{TOPIC_CATEGORY_LABELS[item.topic_category || ""] || item.topic_category || "未知"}</span>
               <span>时间分类：{TIME_BUCKET_LABELS[item.time_bucket || ""] || item.time_bucket || "未知"}</span>
             </div>
+            {item.related_symbols || item.related_sectors ? (
+              <div className="helper" style={{ marginTop: 6, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {item.related_symbols ? <span>关联个股：{item.related_symbols}</span> : null}
+                {item.related_sectors ? <span>关联板块：{item.related_sectors}</span> : null}
+              </div>
+            ) : null}
             <div style={{ marginTop: 6, fontSize: 12 }}>
               情绪：
               <span style={{ color: sentimentColor(item.sentiment), fontWeight: 600, marginLeft: 4 }}>

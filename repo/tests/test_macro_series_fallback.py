@@ -63,7 +63,21 @@ class MacroSeriesFallbackTests(unittest.TestCase):
         self.assertIsNone(macro_service._parse_world_bank_series_key("SHIBOR"))
         self.assertIsNone(macro_service._parse_world_bank_series_key("GDP:XXX"))
 
-    def test_get_macro_series_refetches_when_cache_is_empty_and_db_has_no_rows(self) -> None:
+    def test_get_macro_series_does_not_refetch_world_bank_key_by_default(self) -> None:
+        db = FakeSession([])
+
+        with (
+            patch.object(macro_service, "get_json", return_value=[]),
+            patch.object(macro_service, "_fetch_world_bank_series_rows") as fetch_mock,
+            patch.object(macro_service, "set_json") as set_json_mock,
+        ):
+            items = macro_service.get_macro_series(db, "GDP:USA")
+
+        self.assertEqual(items, [])
+        fetch_mock.assert_not_called()
+        set_json_mock.assert_called_once()
+
+    def test_get_macro_series_refetches_world_bank_key_when_sync_fetch_enabled(self) -> None:
         db = FakeSession([])
         fetched_rows = [
             {"key": "GDP:USA", "date": date(2024, 1, 1), "value": 120.0, "score": 0.3},
@@ -71,6 +85,7 @@ class MacroSeriesFallbackTests(unittest.TestCase):
         ]
 
         with (
+            patch.object(macro_service, "WORLD_BANK_SYNC_FETCH_ENABLED", True),
             patch.object(macro_service, "get_json", return_value=[]),
             patch.object(macro_service, "_fetch_world_bank_series_rows", return_value=fetched_rows) as fetch_mock,
             patch.object(macro_service, "_upsert_macro_rows") as upsert_mock,

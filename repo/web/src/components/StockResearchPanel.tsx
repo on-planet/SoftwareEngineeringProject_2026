@@ -1,6 +1,7 @@
-﻿import React, { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 
 import { getStockResearch } from "../services/api";
+import { readPersistentCache, writePersistentCache } from "../utils/persistentCache";
 
 type ResearchItem = {
   title: string;
@@ -21,6 +22,12 @@ type ResearchResponse = {
 type Props = {
   symbol: string;
 };
+
+const STOCK_RESEARCH_CACHE_TTL_MS = 30 * 60 * 1000;
+
+function buildStockResearchCacheKey(symbol: string) {
+  return `stock-research:${symbol}:report_limit=8:forecast_limit=8`;
+}
 
 function ResearchList({ title, items, emptyText }: { title: string; items: ResearchItem[]; emptyText: string }) {
   return (
@@ -65,13 +72,22 @@ export function StockResearchPanel({ symbol }: Props) {
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
+    const cacheKey = buildStockResearchCacheKey(symbol);
+    const cachedPayload = readPersistentCache<ResearchResponse>(cacheKey, STOCK_RESEARCH_CACHE_TTL_MS);
+    if (cachedPayload) {
+      setPayload(cachedPayload);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     getStockResearch(symbol, { report_limit: 8, forecast_limit: 8 })
       .then((res) => {
         if (!active) {
           return;
         }
-        setPayload(res as ResearchResponse);
+        const nextPayload = res as ResearchResponse;
+        setPayload(nextPayload);
+        writePersistentCache(cacheKey, nextPayload);
         setError(null);
       })
       .catch((err: Error) => {

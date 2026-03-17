@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 
 import { getHeatmap } from "../services/api";
 import { formatNumber, formatSigned } from "../utils/format";
+import { readPersistentCache, writePersistentCache } from "../utils/persistentCache";
 
 type HeatmapItem = {
   sector: string;
@@ -17,6 +18,29 @@ type HeatmapPage = {
 };
 
 type SortOrder = "asc" | "desc";
+
+const HEATMAP_CACHE_TTL_MS = 5 * 60 * 1000;
+
+function buildHeatmapCacheKey(params: {
+  asOf?: string;
+  market: string;
+  minChange?: number;
+  maxChange?: number;
+  sort: SortOrder;
+  limit: number;
+  offset: number;
+}) {
+  return [
+    "heatmap",
+    `asOf=${params.asOf || "latest"}`,
+    `market=${params.market || "all"}`,
+    `minChange=${params.minChange ?? "none"}`,
+    `maxChange=${params.maxChange ?? "none"}`,
+    `sort=${params.sort}`,
+    `limit=${params.limit}`,
+    `offset=${params.offset}`,
+  ].join(":");
+}
 
 function displaySectorName(value: string) {
   return value === "Unknown" ? "未知" : value;
@@ -54,7 +78,23 @@ export function Heatmap({
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
+    const cacheKey = buildHeatmapCacheKey({
+      asOf,
+      market,
+      minChange,
+      maxChange,
+      sort,
+      limit,
+      offset,
+    });
+    const cachedPage = readPersistentCache<HeatmapPage>(cacheKey, HEATMAP_CACHE_TTL_MS);
+    if (cachedPage) {
+      setItems(cachedPage.items ?? []);
+      setTotal(cachedPage.total ?? 0);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     getHeatmap({
       as_of: asOf,
       market: market || undefined,
@@ -71,6 +111,7 @@ export function Heatmap({
         const pageData = res as HeatmapPage;
         setItems(pageData.items ?? []);
         setTotal(pageData.total ?? 0);
+        writePersistentCache(cacheKey, pageData);
         setError(null);
       })
       .catch((err: Error) => {

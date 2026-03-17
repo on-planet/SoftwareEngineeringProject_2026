@@ -19,3 +19,5 @@ class News(Base):
     source_category = Column(String)
     topic_category = Column(String)
     time_bucket = Column(String)
+    related_symbols = Column(String)
+    related_sectors = Column(String)

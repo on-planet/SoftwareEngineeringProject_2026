@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { getFutures } from "../services/api";
 import { formatNumber, formatPercent, formatSigned } from "../utils/format";
 import { formatContractMonth, FUTURES_LABELS, sortPreferredFutures } from "../utils/futures";
+import { readPersistentCache, writePersistentCache } from "../utils/persistentCache";
 
 type FuturesItem = {
   symbol: string;
@@ -23,6 +24,12 @@ type FuturesPage = {
   limit: number;
   offset: number;
 };
+
+const FUTURES_CARDS_CACHE_TTL_MS = 10 * 60 * 1000;
+
+function buildFuturesCardsCacheKey() {
+  return "futures-cards:latest";
+}
 
 function toLatestBySymbol(items: FuturesItem[]): FuturesItem[] {
   const map = new Map<string, FuturesItem>();
@@ -45,14 +52,23 @@ export function FuturesCards() {
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
+    const cacheKey = buildFuturesCardsCacheKey();
+    const cachedItems = readPersistentCache<FuturesItem[]>(cacheKey, FUTURES_CARDS_CACHE_TTL_MS);
+    if (cachedItems?.length) {
+      setItems(cachedItems);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     getFutures({ sort: "desc", limit: 240 })
       .then((res) => {
         if (!active) {
           return;
         }
         const page = res as FuturesPage;
-        setItems(toLatestBySymbol(page.items ?? []));
+        const latest = toLatestBySymbol(page.items ?? []);
+        setItems(latest);
+        writePersistentCache(cacheKey, latest);
         setError(null);
       })
       .catch((err: Error) => {

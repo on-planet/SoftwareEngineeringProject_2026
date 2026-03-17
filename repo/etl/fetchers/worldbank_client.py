@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import date, datetime
 from typing import List
 from urllib.parse import urlencode
@@ -13,6 +14,8 @@ from etl.utils.normalize import ensure_required
 LOGGER = get_logger(__name__)
 
 BASE_URL = "https://api.worldbank.org/v2"
+WORLD_BANK_TIMEOUT = max(3, int(os.getenv("WORLD_BANK_TIMEOUT", "12")))
+WORLD_BANK_RETRIES = max(0, int(os.getenv("WORLD_BANK_RETRIES", "0")))
 
 
 def _to_date(value: str | None) -> date | None:
@@ -24,7 +27,7 @@ def _to_date(value: str | None) -> date | None:
         return None
 
 
-def _fetch_json(url: str, *, timeout: int = 45, retries: int = 2) -> list:
+def _fetch_json(url: str, *, timeout: int = WORLD_BANK_TIMEOUT, retries: int = WORLD_BANK_RETRIES) -> list:
     for attempt in range(retries + 1):
         try:
             with urlopen(url, timeout=timeout) as resp:

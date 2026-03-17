@@ -38,6 +38,7 @@ from app.services import event_feed_service, event_timeline_service
 class EventTimelineNonBlockingTests(unittest.TestCase):
     def test_load_or_backfill_uses_async_mode_without_blocking_request(self) -> None:
         with (
+            patch.object(event_feed_service, "_load_cached_event_feed", return_value=None),
             patch.object(event_feed_service, "load_preloaded_event_feed", return_value=None),
             patch.object(event_feed_service, "_query_event_feed", side_effect=[[], []]) as query_mock,
             patch.object(event_feed_service, "_schedule_remote_backfill", return_value=True) as schedule_mock,

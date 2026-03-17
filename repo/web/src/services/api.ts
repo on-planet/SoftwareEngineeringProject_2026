@@ -146,7 +146,23 @@ export async function getRiskSeries(symbol: string, params?: {
 }
 
 export async function getIndicators(symbol: string, params?: {
-  indicator?: "ma" | "rsi";
+  indicator?:
+    | "ma"
+    | "sma"
+    | "ema"
+    | "wma"
+    | "rsi"
+    | "macd"
+    | "boll"
+    | "kdj"
+    | "atr"
+    | "cci"
+    | "wr"
+    | "obv"
+    | "roc"
+    | "mom"
+    | "adx"
+    | "mfi";
   window?: number;
   limit?: number;
   start?: string;
@@ -242,12 +258,26 @@ export async function getStock(symbol: string) {
     return request(`/api/stock/${symbol}`);
 }
 
-export async function getStockOverview(symbol: string) {
-  return request(`/api/stock/${encodeURIComponent(symbol)}/overview`);
+export async function getStockOverview(
+  symbol: string,
+  params?: { prefer_live?: boolean; refresh_key?: string | number }
+) {
+  const query = new URLSearchParams();
+  if (params?.prefer_live) query.set("prefer_live", "true");
+  if (params?.refresh_key !== undefined) query.set("_ts", String(params.refresh_key));
+  const suffix = query.toString();
+  return request(`/api/stock/${encodeURIComponent(symbol)}/overview${suffix ? `?${suffix}` : ""}`);
 }
 
-export async function getStockExtras(symbol: string) {
-  return request(`/api/stock/${encodeURIComponent(symbol)}/extras`);
+export async function getStockExtras(
+  symbol: string,
+  params?: { prefer_live?: boolean; refresh_key?: string | number }
+) {
+  const query = new URLSearchParams();
+  if (params?.prefer_live) query.set("prefer_live", "true");
+  if (params?.refresh_key !== undefined) query.set("_ts", String(params.refresh_key));
+  const suffix = query.toString();
+  return request(`/api/stock/${encodeURIComponent(symbol)}/extras${suffix ? `?${suffix}` : ""}`);
 }
 
 export async function getFundamental(symbol: string) {
@@ -333,6 +363,10 @@ export async function getNewsAggregate(params?: {
   topic_categories?: string[];
   time_bucket?: string;
   time_buckets?: string[];
+  related_symbol?: string;
+  related_symbols?: string[];
+  related_sector?: string;
+  related_sectors?: string[];
   keyword?: string;
   sort_by?: string[];
   start?: string;
@@ -354,6 +388,10 @@ export async function getNewsAggregate(params?: {
   params?.topic_categories?.forEach((item) => query.append("topic_categories", item));
   if (params?.time_bucket) query.set("time_bucket", params.time_bucket);
   params?.time_buckets?.forEach((item) => query.append("time_buckets", item));
+  if (params?.related_symbol) query.set("related_symbol", params.related_symbol);
+  params?.related_symbols?.forEach((item) => query.append("related_symbols", item));
+  if (params?.related_sector) query.set("related_sector", params.related_sector);
+  params?.related_sectors?.forEach((item) => query.append("related_sectors", item));
   if (params?.keyword) query.set("keyword", params.keyword);
   params?.sort_by?.forEach((item) => query.append("sort_by", item));
   if (params?.start) query.set("start", params.start);

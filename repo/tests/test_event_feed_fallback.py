@@ -78,23 +78,28 @@ class EventFeedFallbackTests(unittest.TestCase):
         expected = [EventTimelineItem(symbol="000001.SZ", type="report", title="事件", date=date(2026, 3, 10))]
 
         with (
+            patch.object(event_feed_service, "_load_cached_event_feed", return_value=None),
             patch.object(event_feed_service, "load_preloaded_event_feed", return_value=None),
             patch.object(event_feed_service, "_query_event_feed", side_effect=[[], [], expected]) as query_mock,
             patch.object(event_feed_service, "run_events_job") as backfill_mock,
+            patch.object(event_feed_service, "_cache_event_feed") as cache_mock,
         ):
             items = event_feed_service.load_or_backfill_event_feed(object(), start=date(2026, 3, 10), end=date(2026, 3, 10))
 
         self.assertEqual(items, expected)
         self.assertEqual(query_mock.call_count, 3)
         backfill_mock.assert_called_once_with(date(2026, 3, 10), date(2026, 3, 10))
+        cache_mock.assert_called_once()
 
     def test_load_or_backfill_event_feed_skips_remote_job_when_range_already_has_data(self) -> None:
         existing = [EventTimelineItem(symbol="600519.SH", type="report", title="已有事件", date=date(2026, 3, 10))]
 
         with (
+            patch.object(event_feed_service, "_load_cached_event_feed", return_value=None),
             patch.object(event_feed_service, "load_preloaded_event_feed", return_value=None),
             patch.object(event_feed_service, "_query_event_feed", side_effect=[[], existing]) as query_mock,
             patch.object(event_feed_service, "run_events_job") as backfill_mock,
+            patch.object(event_feed_service, "_cache_event_feed") as cache_mock,
         ):
             items = event_feed_service.load_or_backfill_event_feed(
                 object(),
@@ -105,6 +110,23 @@ class EventFeedFallbackTests(unittest.TestCase):
 
         self.assertEqual(items, [])
         self.assertEqual(query_mock.call_count, 2)
+        backfill_mock.assert_not_called()
+        cache_mock.assert_not_called()
+
+    def test_load_or_backfill_event_feed_returns_cached_items_without_query(self) -> None:
+        cached = [EventTimelineItem(symbol="00700.HK", type="announcement", title="cached-event", date=date(2026, 3, 11))]
+
+        with (
+            patch.object(event_feed_service, "_load_cached_event_feed", return_value=cached),
+            patch.object(event_feed_service, "load_preloaded_event_feed") as preload_mock,
+            patch.object(event_feed_service, "_query_event_feed") as query_mock,
+            patch.object(event_feed_service, "run_events_job") as backfill_mock,
+        ):
+            items = event_feed_service.load_or_backfill_event_feed(object(), start=date(2026, 3, 11), end=date(2026, 3, 11))
+
+        self.assertEqual(items, cached)
+        preload_mock.assert_not_called()
+        query_mock.assert_not_called()
         backfill_mock.assert_not_called()
 
     def test_event_stats_ignore_cached_empty_payloads(self) -> None:

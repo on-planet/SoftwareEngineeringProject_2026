@@ -26,16 +26,16 @@ def list_stocks(
     return list_live_stocks(market=market, keyword=keyword, limit=limit, offset=offset, sort=sort)
 
 
-def get_stock_profile(symbol: str):
-    return get_live_stock_profile(symbol)
+def get_stock_profile(symbol: str, *, prefer_live: bool = False):
+    return get_live_stock_profile(symbol, prefer_live=prefer_live)
 
 
-def get_stock_overview_profile(symbol: str):
-    return get_live_stock_overview_profile(symbol)
+def get_stock_overview_profile(symbol: str, *, prefer_live: bool = False):
+    return get_live_stock_overview_profile(symbol, prefer_live=prefer_live)
 
 
-def get_stock_profile_extras(symbol: str):
-    return get_live_stock_profile_extras(symbol)
+def get_stock_profile_extras(symbol: str, *, prefer_live: bool = False):
+    return get_live_stock_profile_extras(symbol, prefer_live=prefer_live)
 
 
 def get_stock_daily(

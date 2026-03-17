@@ -75,14 +75,6 @@ SOURCE_NAME_RULES: list[tuple[str, dict[str, str]]] = [
         },
     ),
     (
-        "RSSHub Xueqiu News",
-        {
-            "source_site": "Xueqiu",
-            "source_category": "investment_community",
-            "topic_category": "stock_news",
-        },
-    ),
-    (
         "RSSHub CLS Telegraph",
         {
             "source_site": "CLS",

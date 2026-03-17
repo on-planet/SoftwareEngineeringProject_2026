@@ -56,7 +56,9 @@ CREATE TABLE IF NOT EXISTS news (
     source_site VARCHAR(128),
     source_category VARCHAR(64),
     topic_category VARCHAR(64),
-    time_bucket VARCHAR(32)
+    time_bucket VARCHAR(32),
+    related_symbols TEXT,
+    related_sectors TEXT
 );
 
 CREATE TABLE IF NOT EXISTS events (
@@ -142,6 +144,63 @@ CREATE TABLE IF NOT EXISTS stock_valuation_snapshots (
     PRIMARY KEY (symbol, date)
 );
 
+CREATE TABLE IF NOT EXISTS stock_live_snapshots (
+    symbol VARCHAR(32) PRIMARY KEY,
+    as_of TIMESTAMP,
+    current DOUBLE PRECISION,
+    change DOUBLE PRECISION,
+    percent DOUBLE PRECISION,
+    open DOUBLE PRECISION,
+    high DOUBLE PRECISION,
+    low DOUBLE PRECISION,
+    last_close DOUBLE PRECISION,
+    volume DOUBLE PRECISION,
+    amount DOUBLE PRECISION,
+    turnover_rate DOUBLE PRECISION,
+    amplitude DOUBLE PRECISION,
+    quote_timestamp TIMESTAMP,
+    pe_ttm DOUBLE PRECISION,
+    pb DOUBLE PRECISION,
+    ps_ttm DOUBLE PRECISION,
+    pcf DOUBLE PRECISION,
+    market_cap DOUBLE PRECISION,
+    float_market_cap DOUBLE PRECISION,
+    dividend_yield DOUBLE PRECISION,
+    volume_ratio DOUBLE PRECISION,
+    lot_size DOUBLE PRECISION,
+    pankou_diff DOUBLE PRECISION,
+    pankou_ratio DOUBLE PRECISION,
+    pankou_timestamp TIMESTAMP,
+    pankou_bids_json TEXT,
+    pankou_asks_json TEXT,
+    source VARCHAR(64)
+);
+
+CREATE TABLE IF NOT EXISTS stock_research_items (
+    id SERIAL PRIMARY KEY,
+    symbol VARCHAR(32),
+    item_type VARCHAR(32),
+    title TEXT,
+    published_at TIMESTAMP,
+    link TEXT,
+    summary TEXT,
+    institution VARCHAR(128),
+    rating VARCHAR(128),
+    source VARCHAR(128)
+);
+
+CREATE TABLE IF NOT EXISTS stock_intraday_kline (
+    symbol VARCHAR(32) NOT NULL,
+    period VARCHAR(16) NOT NULL,
+    timestamp TIMESTAMP NOT NULL,
+    open DOUBLE PRECISION,
+    high DOUBLE PRECISION,
+    low DOUBLE PRECISION,
+    close DOUBLE PRECISION,
+    volume DOUBLE PRECISION,
+    PRIMARY KEY (symbol, period, timestamp)
+);
+
 CREATE TABLE IF NOT EXISTS fund_holdings (
     fund_code VARCHAR(32) NOT NULL,
     symbol VARCHAR(32) NOT NULL,
@@ -214,3 +273,11 @@ CREATE INDEX IF NOT EXISTS idx_futures_prices_date ON futures_prices(date);
 CREATE INDEX IF NOT EXISTS idx_futures_prices_symbol ON futures_prices(symbol);
 CREATE INDEX IF NOT EXISTS idx_futures_weekly_prices_date ON futures_weekly_prices(date);
 CREATE INDEX IF NOT EXISTS idx_futures_weekly_prices_symbol ON futures_weekly_prices(symbol);
+CREATE INDEX IF NOT EXISTS idx_stock_live_snapshots_as_of ON stock_live_snapshots(as_of);
+CREATE INDEX IF NOT EXISTS idx_stock_research_items_symbol ON stock_research_items(symbol);
+CREATE INDEX IF NOT EXISTS idx_stock_research_items_type ON stock_research_items(item_type);
+CREATE INDEX IF NOT EXISTS idx_stock_research_items_published_at ON stock_research_items(published_at);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_stock_research_items_identity
+ON stock_research_items(symbol, item_type, title, published_at, link);
+CREATE INDEX IF NOT EXISTS idx_stock_intraday_kline_symbol_period ON stock_intraday_kline(symbol, period);
+CREATE INDEX IF NOT EXISTS idx_stock_intraday_kline_timestamp ON stock_intraday_kline(timestamp);

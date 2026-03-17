@@ -1,14 +1,115 @@
 from __future__ import annotations
 
 from datetime import date
+import os
 
-from app.core.cache import get_json
+from app.core.cache import get_json, set_json
 from sqlalchemy.orm import Session
 
 from app.models.buyback import Buyback
-from app.schemas.buyback import BuybackOut
-from app.schemas.buyback import BuybackCreate, BuybackUpdate
+from app.schemas.buyback import BuybackCreate, BuybackOut, BuybackUpdate
+from app.services.cache_utils import build_cache_key, item_to_dict
 from app.utils.query_params import SortOrder
+
+BUYBACK_CACHE_TTL = max(60, int(os.getenv("BUYBACK_CACHE_TTL", "300")))
+
+
+def _cache_key(
+    *,
+    symbol: str,
+    limit: int,
+    offset: int,
+    start: date | None,
+    end: date | None,
+    min_amount: float | None,
+    max_amount: float | None,
+    sort: SortOrder,
+) -> str:
+    return build_cache_key(
+        "buyback",
+        symbol=symbol,
+        limit=limit,
+        offset=offset,
+        start=start,
+        end=end,
+        min_amount=min_amount,
+        max_amount=max_amount,
+        sort=sort,
+    )
+
+
+def _load_cached_buyback(
+    *,
+    symbol: str,
+    limit: int,
+    offset: int,
+    start: date | None,
+    end: date | None,
+    min_amount: float | None,
+    max_amount: float | None,
+    sort: SortOrder,
+) -> tuple[list[BuybackOut], int] | None:
+    payload = get_json(
+        _cache_key(
+            symbol=symbol,
+            limit=limit,
+            offset=offset,
+            start=start,
+            end=end,
+            min_amount=min_amount,
+            max_amount=max_amount,
+            sort=sort,
+        )
+    )
+    if not isinstance(payload, dict):
+        return None
+    raw_items = payload.get("items")
+    total = payload.get("total")
+    if not isinstance(raw_items, list) or not isinstance(total, int):
+        return None
+    items: list[BuybackOut] = []
+    for row in raw_items:
+        if not isinstance(row, dict):
+            continue
+        try:
+            items.append(BuybackOut(**row))
+        except Exception:
+            continue
+    return items, total
+
+
+def _cache_buyback(
+    items: list[BuybackOut] | list[Buyback],
+    total: int,
+    *,
+    symbol: str,
+    limit: int,
+    offset: int,
+    start: date | None,
+    end: date | None,
+    min_amount: float | None,
+    max_amount: float | None,
+    sort: SortOrder,
+) -> None:
+    if total <= 0 and not items:
+        return
+    set_json(
+        _cache_key(
+            symbol=symbol,
+            limit=limit,
+            offset=offset,
+            start=start,
+            end=end,
+            min_amount=min_amount,
+            max_amount=max_amount,
+            sort=sort,
+        ),
+        {
+            "items": [item_to_dict(item) for item in items],
+            "total": total,
+        },
+        ttl=BUYBACK_CACHE_TTL,
+    )
 
 
 def _load_preloaded_buyback(
@@ -64,8 +165,34 @@ def list_buyback(
     sort: SortOrder = "desc",
 ):
     """List buyback disclosures by symbol."""
+    cached = _load_cached_buyback(
+        symbol=symbol,
+        limit=limit,
+        offset=offset,
+        start=start,
+        end=end,
+        min_amount=min_amount,
+        max_amount=max_amount,
+        sort=sort,
+    )
+    if cached is not None:
+        return cached
+
     preloaded = _load_preloaded_buyback(symbol, start, end, min_amount, max_amount, sort, limit, offset)
     if preloaded is not None:
+        items, total = preloaded
+        _cache_buyback(
+            items,
+            total,
+            symbol=symbol,
+            limit=limit,
+            offset=offset,
+            start=start,
+            end=end,
+            min_amount=min_amount,
+            max_amount=max_amount,
+            sort=sort,
+        )
         return preloaded
 
     query = db.query(Buyback).filter(Buyback.symbol == symbol)
@@ -84,6 +211,18 @@ def list_buyback(
         .offset(offset)
         .limit(limit)
         .all()
+    )
+    _cache_buyback(
+        items,
+        total,
+        symbol=symbol,
+        limit=limit,
+        offset=offset,
+        start=start,
+        end=end,
+        min_amount=min_amount,
+        max_amount=max_amount,
+        sort=sort,
     )
     return items, total
 

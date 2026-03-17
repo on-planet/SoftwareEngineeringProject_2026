@@ -1,14 +1,4 @@
-﻿import React, { useEffect, useMemo, useState } from "react";
-
-const FALLBACK_SECTOR_LABEL = "未分类";
-const normalizeSector = (value?: string | null) => {
-  const text = String(value ?? "").trim();
-  if (!text || text.toLowerCase() === "unknown" || text === "未知") {
-    return FALLBACK_SECTOR_LABEL;
-  }
-  return text;
-};
-
+﻿import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { getStockExtras, getStockOverview } from "../services/api";
 import {
   formatLoosePercent,
@@ -20,6 +10,14 @@ import {
 } from "../utils/format";
 import { readPersistentCache, writePersistentCache } from "../utils/persistentCache";
 import { getPrimaryStockName, getSecondaryStockName } from "../utils/stockNames";
+const FALLBACK_SECTOR_LABEL = "未分类";
+const normalizeSector = (value?: string | null) => {
+  const text = String(value ?? "").trim();
+  if (!text || text.toLowerCase() === "unknown" || text === "未知") {
+    return FALLBACK_SECTOR_LABEL;
+  }
+  return text;
+};
 
 type Quote = {
   current?: number | null;
@@ -163,10 +161,80 @@ export function StockFundamental({ symbol }: Props) {
   const [profile, setProfile] = useState<StockProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [extrasLoading, setExtrasLoading] = useState(false);
+  const [liveRefreshing, setLiveRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const fetchOverview = useCallback(
+    async ({
+      preferLive,
+      skipLoadingState = false,
+      refreshKey,
+      onMissingLiveError,
+    }: {
+      preferLive: boolean;
+      skipLoadingState?: boolean;
+      refreshKey?: number;
+      onMissingLiveError?: boolean;
+    }) => {
+      if (!skipLoadingState) {
+        setLoading(true);
+      }
+      try {
+        const profileRes = await getStockOverview(symbol, {
+          prefer_live: preferLive,
+          refresh_key: refreshKey,
+        });
+        const nextProfile = profileRes as StockProfile;
+        writePersistentCache(buildOverviewCacheKey(symbol), nextProfile);
+        setProfile((current) => mergeProfile(current, nextProfile));
+        setError(null);
+      } catch (err) {
+        if (onMissingLiveError) {
+          const nextError = err instanceof Error ? err.message : "实时行情获取失败";
+          setError(nextError || "实时行情获取失败");
+        }
+      } finally {
+        if (!skipLoadingState) {
+          setLoading(false);
+        }
+      }
+    },
+    [symbol]
+  );
+
+  const fetchExtras = useCallback(
+    async ({
+      preferLive,
+      skipLoadingState = false,
+      refreshKey,
+    }: {
+      preferLive: boolean;
+      skipLoadingState?: boolean;
+      refreshKey?: number;
+    }) => {
+      if (!skipLoadingState) {
+        setExtrasLoading(true);
+      }
+      try {
+        const extrasRes = await getStockExtras(symbol, {
+          prefer_live: preferLive,
+          refresh_key: refreshKey,
+        });
+        const extras = extrasRes as Pick<StockProfile, "quote_detail" | "pankou">;
+        writePersistentCache(buildExtrasCacheKey(symbol), extras);
+        setProfile((current) => (current ? { ...current, ...extras } : current));
+      } catch {
+        // Keep stale extras on failure.
+      } finally {
+        if (!skipLoadingState) {
+          setExtrasLoading(false);
+        }
+      }
+    },
+    [symbol]
+  );
+
   useEffect(() => {
-    let active = true;
     const overviewCacheKey = buildOverviewCacheKey(symbol);
     const extrasCacheKey = buildExtrasCacheKey(symbol);
     const cachedOverview = readPersistentCache<StockProfile>(overviewCacheKey, OVERVIEW_CACHE_MAX_AGE_MS);
@@ -175,70 +243,35 @@ export function StockFundamental({ symbol }: Props) {
       EXTRAS_CACHE_MAX_AGE_MS
     );
     setProfile(cachedOverview ? mergeProfile(cachedOverview, cachedExtras) : null);
-    setLoading(!cachedOverview);
     setError(null);
-    getStockOverview(symbol)
-      .then((profileRes) => {
-        if (!active) {
-          return;
-        }
-        const nextProfile = profileRes as StockProfile;
-        writePersistentCache(overviewCacheKey, nextProfile);
-        setProfile((current) => mergeProfile(current, nextProfile));
-        setError(null);
-      })
-      .catch((err: Error) => {
-        if (!active) {
-          return;
-        }
-        if (!cachedOverview) {
-          setError(err.message || "个股概览加载失败");
-        }
-      })
-      .finally(() => {
-        if (active) {
-          setLoading(false);
-        }
-      });
-    return () => {
-      active = false;
-    };
-  }, [symbol]);
-
-  useEffect(() => {
-    let active = true;
-    const extrasCacheKey = buildExtrasCacheKey(symbol);
-    const cachedExtras = readPersistentCache<Pick<StockProfile, "quote_detail" | "pankou">>(
-      extrasCacheKey,
-      EXTRAS_CACHE_MAX_AGE_MS
-    );
+    setLoading(!cachedOverview);
+    setExtrasLoading(!cachedExtras);
+    void fetchOverview({
+      preferLive: false,
+      skipLoadingState: !!cachedOverview,
+      onMissingLiveError: true,
+    });
     if (cachedExtras) {
       setProfile((current) => (current ? { ...current, ...cachedExtras } : current));
     }
-    setExtrasLoading(!cachedExtras);
-    getStockExtras(symbol)
-      .then((extrasRes) => {
-        if (!active) {
-          return;
-        }
-        const extras = extrasRes as Pick<StockProfile, "quote_detail" | "pankou">;
-        writePersistentCache(extrasCacheKey, extras);
-        setProfile((current) => (current ? { ...current, ...extras } : current));
-      })
-      .catch(() => {
-        if (!active) {
-          return;
-        }
-      })
-      .finally(() => {
-        if (active) {
-          setExtrasLoading(false);
-        }
-      });
-    return () => {
-      active = false;
-    };
-  }, [symbol]);
+    void fetchExtras({
+      preferLive: false,
+      skipLoadingState: !!cachedExtras,
+    });
+  }, [fetchExtras, fetchOverview, symbol]);
+
+  const handleRefreshLiveQuote = useCallback(async () => {
+    const refreshKey = Date.now();
+    setLiveRefreshing(true);
+    try {
+      await Promise.all([
+        fetchOverview({ preferLive: true, skipLoadingState: true, refreshKey }),
+        fetchExtras({ preferLive: true, skipLoadingState: true, refreshKey }),
+      ]);
+    } finally {
+      setLiveRefreshing(false);
+    }
+  }, [fetchExtras, fetchOverview]);
 
   const priceChange = useMemo(() => {
     const change = profile?.quote?.change;
@@ -304,6 +337,18 @@ export function StockFundamental({ symbol }: Props) {
               行情时间：{new Date(quote.timestamp).toLocaleString("zh-CN")}
             </div>
           ) : null}
+          <div style={{ marginTop: 12 }}>
+            <button
+              type="button"
+              className="input"
+              onClick={() => {
+                void handleRefreshLiveQuote();
+              }}
+              disabled={liveRefreshing}
+            >
+              {liveRefreshing ? "实时行情刷新中..." : "获取实时行情"}
+            </button>
+          </div>
         </div>
         <div className="quote-hero">
           <div className="quote-current">{formatNullableNumber(quote?.current)}</div>
@@ -362,3 +407,6 @@ export function StockFundamental({ symbol }: Props) {
     </div>
   );
 }
+
+
+

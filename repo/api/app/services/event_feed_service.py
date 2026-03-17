@@ -6,15 +6,17 @@ import os
 
 from sqlalchemy.orm import Session
 
-from app.core.cache import get_json
+from app.core.cache import get_json, set_json
 from app.models.buyback import Buyback
 from app.models.events import Event
 from app.models.insider_trade import InsiderTrade
 from app.schemas.event_timeline import EventTimelineItem
+from app.services.cache_utils import build_cache_key, item_to_dict
 from etl.jobs.events_job import run_events_job
 
 EVENT_REMOTE_LOOKBACK_DAYS = max(1, int(os.getenv("EVENT_REMOTE_LOOKBACK_DAYS", "30")))
 EVENT_REMOTE_MAX_RANGE_DAYS = max(1, int(os.getenv("EVENT_REMOTE_MAX_RANGE_DAYS", "31")))
+EVENT_FEED_CACHE_TTL = max(60, int(os.getenv("EVENT_FEED_CACHE_TTL", "300")))
 _EVENT_BACKFILL_LOCK = Lock()
 _EVENT_BACKFILL_INFLIGHT: set[tuple[date, date]] = set()
 
@@ -157,6 +159,76 @@ def load_preloaded_event_feed(
     )
 
 
+def _cache_key(
+    *,
+    symbols: list[str] | None = None,
+    event_types: list[str] | None = None,
+    keyword: str | None = None,
+    start: date | None = None,
+    end: date | None = None,
+) -> str:
+    return build_cache_key(
+        "event_feed",
+        symbols=sorted(symbols) if symbols else None,
+        event_types=sorted(event_types) if event_types else None,
+        keyword=keyword,
+        start=start,
+        end=end,
+    )
+
+
+def _load_cached_event_feed(
+    *,
+    symbols: list[str] | None = None,
+    event_types: list[str] | None = None,
+    keyword: str | None = None,
+    start: date | None = None,
+    end: date | None = None,
+) -> list[EventTimelineItem] | None:
+    payload = get_json(
+        _cache_key(
+            symbols=symbols,
+            event_types=event_types,
+            keyword=keyword,
+            start=start,
+            end=end,
+        )
+    )
+    if not isinstance(payload, list):
+        return None
+    items: list[EventTimelineItem] = []
+    for row in payload:
+        if not isinstance(row, dict):
+            continue
+        try:
+            items.append(EventTimelineItem(**row))
+        except Exception:
+            continue
+    return items
+
+
+def _cache_event_feed(
+    items: list[EventTimelineItem],
+    *,
+    symbols: list[str] | None = None,
+    event_types: list[str] | None = None,
+    keyword: str | None = None,
+    start: date | None = None,
+    end: date | None = None,
+) -> None:
+    set_json(
+        _cache_key(
+            symbols=symbols,
+            event_types=event_types,
+            keyword=keyword,
+            start=start,
+            end=end,
+        ),
+        [item_to_dict(item) for item in items],
+        ttl=EVENT_FEED_CACHE_TTL,
+    )
+
+
 def _query_event_feed(
     db: Session,
     *,
@@ -281,6 +353,16 @@ def load_or_backfill_event_feed(
     end: date | None = None,
     backfill_mode: str = "sync",
 ) -> list[EventTimelineItem]:
+    cached = _load_cached_event_feed(
+        symbols=symbols,
+        event_types=event_types,
+        keyword=keyword,
+        start=start,
+        end=end,
+    )
+    if cached:
+        return cached
+
     preloaded = load_preloaded_event_feed(
         symbols=symbols,
         event_types=event_types,
@@ -289,6 +371,14 @@ def load_or_backfill_event_feed(
         end=end,
     )
     if preloaded:
+        _cache_event_feed(
+            preloaded,
+            symbols=symbols,
+            event_types=event_types,
+            keyword=keyword,
+            start=start,
+            end=end,
+        )
         return preloaded
 
     items = _query_event_feed(
@@ -300,6 +390,14 @@ def load_or_backfill_event_feed(
         end=end,
     )
     if items:
+        _cache_event_feed(
+            items,
+            symbols=symbols,
+            event_types=event_types,
+            keyword=keyword,
+            start=start,
+            end=end,
+        )
         return items
 
     remote_range = _remote_range(start=start, end=end)
@@ -330,9 +428,17 @@ def load_or_backfill_event_feed(
         end=end,
     )
     if refreshed:
+        _cache_event_feed(
+            refreshed,
+            symbols=symbols,
+            event_types=event_types,
+            keyword=keyword,
+            start=start,
+            end=end,
+        )
         return refreshed
 
-    return _query_event_feed(
+    refreshed_items = _query_event_feed(
         db,
         symbols=symbols,
         event_types=event_types,
@@ -340,3 +446,13 @@ def load_or_backfill_event_feed(
         start=start,
         end=end,
     )
+    if refreshed_items:
+        _cache_event_feed(
+            refreshed_items,
+            symbols=symbols,
+            event_types=event_types,
+            keyword=keyword,
+            start=start,
+            end=end,
+        )
+    return refreshed_items

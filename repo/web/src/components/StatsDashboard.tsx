@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import ReactECharts from "echarts-for-react";
 
 import { getEventStats, getNewsStats } from "../services/api";
+import { readPersistentCache, writePersistentCache } from "../utils/persistentCache";
 
 type EventStat = {
   date: string;
@@ -47,6 +48,36 @@ type NewsStatsResponse = {
 };
 
 type Granularity = "day" | "week" | "month";
+
+type StatsDashboardCachePayload = {
+  events: EventStatsResponse;
+  news: NewsStatsResponse;
+};
+
+const STATS_DASHBOARD_CACHE_TTL_MS = 5 * 60 * 1000;
+
+function buildStatsDashboardCacheKey(params: {
+  symbol?: string;
+  start?: string;
+  end?: string;
+  granularity: Granularity;
+  topDate: number;
+  topType: number;
+  topSymbol: number;
+  topSentiment: number;
+}) {
+  return [
+    "stats-dashboard",
+    `symbol=${params.symbol || "all"}`,
+    `start=${params.start || "none"}`,
+    `end=${params.end || "none"}`,
+    `granularity=${params.granularity}`,
+    `topDate=${params.topDate}`,
+    `topType=${params.topType}`,
+    `topSymbol=${params.topSymbol}`,
+    `topSentiment=${params.topSentiment}`,
+  ].join(":");
+}
 
 type StatCardProps<T> = {
   title: string;
@@ -184,7 +215,27 @@ export function StatsDashboard({
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
+    const cacheKey = buildStatsDashboardCacheKey({
+      symbol,
+      start,
+      end,
+      granularity,
+      topDate,
+      topType,
+      topSymbol,
+      topSentiment,
+    });
+    const cachedPayload = readPersistentCache<StatsDashboardCachePayload>(
+      cacheKey,
+      STATS_DASHBOARD_CACHE_TTL_MS,
+    );
+    if (cachedPayload) {
+      setEvents(cachedPayload.events);
+      setNews(cachedPayload.news);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     Promise.all([
       getEventStats({
         symbol: symbol || undefined,
@@ -209,8 +260,14 @@ export function StatsDashboard({
         if (!active) {
           return;
         }
-        setEvents(eventRes as EventStatsResponse);
-        setNews(newsRes as NewsStatsResponse);
+        const eventPayload = eventRes as EventStatsResponse;
+        const newsPayload = newsRes as NewsStatsResponse;
+        setEvents(eventPayload);
+        setNews(newsPayload);
+        writePersistentCache(cacheKey, {
+          events: eventPayload,
+          news: newsPayload,
+        });
         setError(null);
       })
       .catch((err: Error) => {

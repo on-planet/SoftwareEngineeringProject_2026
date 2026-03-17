@@ -8,7 +8,7 @@ set "POWERSHELL_EXE=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
 set "ENV_FILE=%PROJECT_DIR%.env.local"
 set "ETL_WORKDIR=%REPO_DIR%\etl"
 set "LOCK_FILE=%REPO_DIR%\state\etl.lock"
-set "CHECK_CMD=import importlib.util,sys;mods='fastapi,uvicorn,sqlalchemy,psycopg2,pydantic,redis,yaml,pysnowball,baostock'.split(',');missing=[m for m in mods if importlib.util.find_spec(m) is None];print('Missing Python modules: ' + ', '.join(missing)) if missing else None;sys.exit(1 if missing else 0)"
+set "CHECK_CMD=import importlib.util,sys;mods='fastapi,uvicorn,sqlalchemy,psycopg2,pydantic,redis,yaml,pysnowball,baostock,akshare'.split(',');missing=[m for m in mods if importlib.util.find_spec(m) is None];print('Missing Python modules: ' + ', '.join(missing)) if missing else None;sys.exit(1 if missing else 0)"
 
 if exist "%ENV_FILE%" (
   for /f "usebackq delims=" %%A in ("%ENV_FILE%") do (

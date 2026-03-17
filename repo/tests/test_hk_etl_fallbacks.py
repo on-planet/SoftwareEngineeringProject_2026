@@ -16,12 +16,10 @@ from etl.fetchers import events_client, news_client, snowball_client
 
 
 class HongKongEtlFallbackTests(unittest.TestCase):
-    def test_news_symbols_fall_back_to_cached_hk_universe(self) -> None:
-        with (
-            patch.dict(os.environ, {}, clear=True),
-            patch.object(news_client, "list_cached_symbols", return_value=["00700.HK", "00005.HK"]),
-        ):
-            self.assertEqual(news_client._rss_symbols(), ["00700.HK", "00005.HK"])
+    def test_external_market_feeds_include_quanwenrss_sources(self) -> None:
+        feeds = news_client._external_market_feeds()
+        self.assertIn("https://quanwenrss.com/caixin/economy", feeds)
+        self.assertIn("https://quanwenrss.com/politico/finance", feeds)
 
     def test_event_symbols_expand_with_cached_hk_universe(self) -> None:
         with (
@@ -33,13 +31,8 @@ class HongKongEtlFallbackTests(unittest.TestCase):
                 ["600000.SH", "000001.SZ", "600519.SH", "00700.HK", "00005.HK"],
             )
 
-    def test_buyback_symbols_fall_back_to_cached_hk_universe(self) -> None:
-        with (
-            patch.dict(os.environ, {}, clear=True),
-            patch.object(events_client, "get_cache_string", return_value=""),
-            patch.object(events_client, "list_cached_symbols", return_value=["00700.HK", "00005.HK"]),
-        ):
-            self.assertEqual(events_client._rsshub_hk_symbols(), ["00700.HK", "00005.HK"])
+    def test_buyback_uses_hkex_official_feed(self) -> None:
+        self.assertIn("hkex.com.hk", events_client._hkex_regulatory_announcements_rss())
 
     def test_zero_only_financial_rows_are_treated_as_invalid(self) -> None:
         self.assertFalse(

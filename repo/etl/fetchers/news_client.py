@@ -13,10 +13,8 @@ import os
 import time
 import xml.etree.ElementTree as ET
 
-from etl.fetchers.snowball_client import normalize_symbol, to_snowball_symbol
-from etl.loaders.redis_cache import get_cache_string
-from etl.utils.stock_basics_cache import list_cached_symbols
 from etl.utils.logging import get_logger
+from etl.utils.news_relevance import infer_news_relevance
 from etl.utils.news_taxonomy import classify_news_metadata
 from etl.utils.normalize import ensure_required
 
@@ -42,42 +40,6 @@ RSS_NO_PROXY = {
     if item.strip()
 }
 RSS_DISABLE_ENV_PROXY = os.getenv("RSS_DISABLE_ENV_PROXY", "0").strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _rsshub_base() -> str:
-    base = os.getenv("RSSHUB_BASE")
-    if base:
-        return base.rstrip("/")
-    return "https://rsshub.liumingye.cn"
-
-
-def _rss_symbols() -> list[str]:
-    raw = os.getenv("SNOWBALL_RSS_SYMBOLS", "").strip() or os.getenv("SNOWBALL_STOCK_SYMBOLS", "").strip()
-    output: list[str] = []
-    seen: set[str] = set()
-    if raw:
-        for item in raw.split(","):
-            symbol = normalize_symbol(item.strip())
-            if not symbol or symbol in seen:
-                continue
-            seen.add(symbol)
-            output.append(symbol)
-        return output
-
-    cached_limit = max(1, int(os.getenv("SNOWBALL_RSS_HK_LIMIT", "200")))
-    for symbol in list_cached_symbols(markets=("HK",), limit=cached_limit):
-        if symbol in seen:
-            continue
-        seen.add(symbol)
-        output.append(symbol)
-    if output:
-        return output
-    return ["00700.HK", "00005.HK", "00941.HK"]
-
-
-def _rsshub_xueqiu_news(symbol: str) -> str:
-    return f"{_rsshub_base()}/xueqiu/stock_info/{to_snowball_symbol(symbol)}/news"
-
 
 def _rsshub_cls_telegraph() -> str:
     override = os.getenv("CLS_TELEGRAPH_RSS", "").strip()
@@ -293,6 +255,7 @@ def _append_rows(rows: List[dict], symbol: str, items: list[dict], as_of: date, 
             link=item.get("link") or "",
             published_at=published_at,
         )
+        relevance = infer_news_relevance(item.get("title") or "", symbol=symbol)
         rows.append(
             {
                 "symbol": symbol,
@@ -305,6 +268,8 @@ def _append_rows(rows: List[dict], symbol: str, items: list[dict], as_of: date, 
                 "source_category": metadata.get("source_category"),
                 "topic_category": metadata.get("topic_category"),
                 "time_bucket": metadata.get("time_bucket"),
+                "related_symbols": relevance.get("related_symbols"),
+                "related_sectors": relevance.get("related_sectors"),
             }
         )
 
@@ -328,10 +293,6 @@ def _dedupe_rows(rows: List[dict]) -> List[dict]:
 def get_news(as_of: date) -> List[dict]:
     rows: List[dict] = []
 
-    symbol_urls: dict[str, str] = {}
-    for symbol in _rss_symbols():
-        symbol_urls[symbol] = _rsshub_xueqiu_news(symbol)
-
     cls_telegraph_url = _rsshub_cls_telegraph()
     yahoo_urls = {
         "https://tw.stock.yahoo.com/rss?category=intl-markets": "Yahoo TW Intl Markets",
@@ -344,28 +305,17 @@ def get_news(as_of: date) -> List[dict]:
     }
     external_urls = _external_market_feeds()
     url_map = {
-        **{url: symbol for symbol, url in symbol_urls.items()},
         cls_telegraph_url: "CLS_TELEGRAPH",
         **{url: f"YAHOO::{source}" for url, source in yahoo_urls.items()},
         **{url: f"EXTERNAL::{source}" for url, source in external_urls.items()},
     }
     fetched = _fetch_rss_batch(url_map.keys())
 
-    for symbol, url in symbol_urls.items():
-        _append_rows(rows, symbol, fetched.get(url, []), as_of, "RSSHub Xueqiu News")
     _append_rows(rows, "ALL", fetched.get(cls_telegraph_url, []), as_of, "RSSHub CLS Telegraph")
     for url, source in yahoo_urls.items():
         _append_rows(rows, "ALL", fetched.get(url, []), as_of, source)
     for url, source in external_urls.items():
         _append_rows(rows, "ALL", fetched.get(url, []), as_of, source)
-
-    # Optional: Redis-cached HK symbols as broad market feed targets.
-    hk_symbols_raw = get_cache_string("hk_rss_symbols")
-    if hk_symbols_raw:
-        for item in hk_symbols_raw.split(","):
-            symbol = normalize_symbol(item.strip())
-            if symbol.endswith(".HK"):
-                _append_rows(rows, symbol, fetched.get(symbol_urls.get(symbol, ""), []), as_of, "RSSHub Xueqiu News")
 
     return ensure_required(
         _dedupe_rows(rows),

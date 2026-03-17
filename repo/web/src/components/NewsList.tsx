@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 
 import { getNews } from "../services/api";
+import { readPersistentCache, writePersistentCache } from "../utils/persistentCache";
 
 type NewsItem = {
   id: number;
@@ -21,6 +22,12 @@ type Props = {
   symbol: string;
 };
 
+const NEWS_LIST_CACHE_TTL_MS = 5 * 60 * 1000;
+
+function buildNewsListCacheKey(symbol: string, limit: number) {
+  return `news-list:${symbol}:limit=${limit}`;
+}
+
 export function NewsList({ symbol }: Props) {
   const [items, setItems] = useState<NewsItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -29,7 +36,14 @@ export function NewsList({ symbol }: Props) {
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
+    const cacheKey = buildNewsListCacheKey(symbol, limit);
+    const cachedPage = readPersistentCache<NewsPage>(cacheKey, NEWS_LIST_CACHE_TTL_MS);
+    if (cachedPage) {
+      setItems(cachedPage.items ?? []);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     getNews(symbol, { limit })
       .then((res) => {
         if (!active) {
@@ -37,6 +51,7 @@ export function NewsList({ symbol }: Props) {
         }
         const page = res as NewsPage;
         setItems(page.items ?? []);
+        writePersistentCache(cacheKey, page);
         setError(null);
       })
       .catch((err: Error) => {

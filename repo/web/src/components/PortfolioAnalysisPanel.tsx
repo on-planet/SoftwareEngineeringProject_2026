@@ -4,6 +4,7 @@ import ReactECharts from "echarts-for-react";
 
 import { getPortfolioAnalysis, getSectorExposure } from "../services/api";
 import { formatNumber, formatPercent } from "../utils/format";
+import { readPersistentCache, writePersistentCache } from "../utils/persistentCache";
 
 type SectorExposureItem = {
   sector: string;
@@ -53,7 +54,23 @@ type PortfolioAnalysisResponse = {
   top_holdings: PortfolioHolding[];
 };
 
+type PortfolioAnalysisCachePayload = {
+  analysis: PortfolioAnalysisResponse;
+  sectorExposure: SectorExposureItem[];
+};
+
 const DEFAULT_USER_ID = 1;
+const PORTFOLIO_ANALYSIS_CACHE_TTL_MS = 5 * 60 * 1000;
+
+function buildPortfolioAnalysisCacheKey(userId: number, topN: number, market: string, asOf: string) {
+  return [
+    "portfolio-analysis",
+    `userId=${userId}`,
+    `topN=${topN}`,
+    `market=${market || "all"}`,
+    `asOf=${asOf || "none"}`,
+  ].join(":");
+}
 
 export function PortfolioAnalysisPanel() {
   const [userId, setUserId] = useState(DEFAULT_USER_ID);
@@ -67,16 +84,33 @@ export function PortfolioAnalysisPanel() {
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
+    const cacheKey = buildPortfolioAnalysisCacheKey(userId, topN, market, asOf);
+    const cachedPayload = readPersistentCache<PortfolioAnalysisCachePayload>(
+      cacheKey,
+      PORTFOLIO_ANALYSIS_CACHE_TTL_MS,
+    );
+    if (cachedPayload) {
+      setAnalysis(cachedPayload.analysis);
+      setSectorExposure(cachedPayload.sectorExposure);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     Promise.all([
       getPortfolioAnalysis(userId, { top_n: topN }),
       getSectorExposure({ market: market || undefined, as_of: asOf || undefined, limit: 50 }),
     ])
       .then(([analysisRes, sectorRes]) => {
         if (!active) return;
-        setAnalysis(analysisRes as PortfolioAnalysisResponse);
+        const nextAnalysis = analysisRes as PortfolioAnalysisResponse;
         const exposurePayload = sectorRes as SectorExposureResponse;
-        setSectorExposure(exposurePayload.items ?? []);
+        const nextSectorExposure = exposurePayload.items ?? [];
+        setAnalysis(nextAnalysis);
+        setSectorExposure(nextSectorExposure);
+        writePersistentCache(cacheKey, {
+          analysis: nextAnalysis,
+          sectorExposure: nextSectorExposure,
+        });
         setError(null);
       })
       .catch((err: Error) => {

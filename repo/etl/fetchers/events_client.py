@@ -10,11 +10,11 @@ from urllib.parse import urlparse
 from urllib.request import ProxyHandler, Request, build_opener, urlopen
 import json
 import os
+import re
 import time
 import xml.etree.ElementTree as ET
 
 from etl.fetchers.snowball_client import normalize_symbol, to_snowball_symbol
-from etl.loaders.redis_cache import get_cache_string
 from etl.utils.logging import get_logger
 from etl.utils.normalize import ensure_required
 from etl.utils.stock_basics_cache import list_cached_symbols
@@ -42,6 +42,7 @@ RSS_NO_PROXY = {
     if item.strip()
 }
 RSS_DISABLE_ENV_PROXY = os.getenv("RSS_DISABLE_ENV_PROXY", "0").strip().lower() in {"1", "true", "yes", "on"}
+EVENTS_SYMBOL_WORKERS = max(1, int(os.getenv("EVENTS_SYMBOL_WORKERS", "8")))
 
 try:
     import pysnowball as ball  # type: ignore
@@ -145,43 +146,87 @@ def _event_symbols() -> list[str]:
         output.append(symbol)
     return output
 
+def _hkex_regulatory_announcements_rss() -> str:
+    override = os.getenv("HKEX_REGULATORY_ANNOUNCEMENTS_RSS", "").strip()
+    if override:
+        return override
+    return "https://www.hkex.com.hk/Services/RSS-Feeds/regulatory-announcements?sc_lang=zh-HK"
 
-def _rsshub_bases() -> list[str]:
-    configured = os.getenv("RSSHUB_BASES", "").strip()
-    if configured:
-        raw_items = configured.split(",")
-    else:
-        raw_items = [
-            os.getenv("RSSHUB_BASE", "").strip(),
-            "https://rsshub.liumingye.cn",
-            "https://rsshub.app",
-        ]
-    bases: list[str] = []
-    seen: set[str] = set()
-    for item in raw_items:
-        base = str(item or "").strip().rstrip("/")
-        if not base or base in seen:
+
+def _normalize_hk_code(value: str | None) -> str | None:
+    text = str(value or "").strip()
+    if not text.isdigit():
+        return None
+    digits = text.zfill(5)
+    return f"{digits}.HK"
+
+
+def _symbol_from_hkex_title(title: str, link: str = "") -> str | None:
+    text = str(title or "").strip()
+    if not text:
+        return None
+    patterns = [
+        r"(?<!\d)(\d{5})\s*\.?\s*HK\b",
+        r"(?:股份代號|股票代號|股份编号|证券代号|Stock Code|Stock code|stock code)[:：\s#-]*([0-9]{1,5})",
+        r"^\(?([0-9]{5})\)?(?:\s|[:：\-])",
+        r"\(([0-9]{5})\)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if not match:
             continue
-        seen.add(base)
-        bases.append(base)
-    return bases
+        symbol = _normalize_hk_code(match.group(1))
+        if symbol:
+            return symbol
+
+    link_text = str(link or "")
+    link_match = re.search(r"(?<!\d)(\d{5})(?!\d)", link_text)
+    if link_match:
+        return _normalize_hk_code(link_match.group(1))
+    return None
 
 
-def _rsshub_hk_symbols() -> list[str]:
-    raw = get_cache_string("hk_rss_symbols") or os.getenv("RSSHUB_HK_SYMBOLS", "")
-    output: list[str] = []
-    if not raw:
-        return list_cached_symbols(markets=("HK",), limit=max(1, int(os.getenv("RSSHUB_HK_LIMIT", "200"))))
-    for item in raw.split(","):
-        symbol = normalize_symbol(item.strip())
-        if symbol.endswith(".HK"):
-            output.append(symbol)
+def _dedupe_event_rows(rows: List[dict]) -> List[dict]:
+    seen: set[tuple[str, str, str, str]] = set()
+    output: list[dict] = []
+    for row in rows:
+        key = (
+            str(row.get("symbol") or ""),
+            str(row.get("type") or ""),
+            str(row.get("title") or ""),
+            str(row.get("link") or ""),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        output.append(row)
     return output
 
 
-def _rsshub_xueqiu_announcement_urls(symbol: str) -> list[str]:
-    snow_symbol = to_snowball_symbol(symbol)
-    return [f"{base}/xueqiu/stock_info/{snow_symbol}/announcement" for base in _rsshub_bases()]
+def _get_hkex_regulatory_announcements(as_of: date) -> list[dict]:
+    rows: list[dict] = []
+    url = _hkex_regulatory_announcements_rss()
+    items = _fetch_rss(url)
+    for item in items:
+        published_at = item.get("published_at")
+        if not published_at or published_at.date() != as_of:
+            continue
+        title = str(item.get("title") or "").strip()
+        link = str(item.get("link") or "").strip()
+        symbol = _symbol_from_hkex_title(title, link)
+        if not symbol:
+            continue
+        rows.append(
+            {
+                "symbol": symbol,
+                "type": "announcement",
+                "title": title,
+                "date": as_of,
+                "link": link,
+                "source": "HKEX Regulatory Announcement",
+            }
+        )
+    return rows
 
 
 def _is_buyback_title(title: str) -> bool:
@@ -361,18 +406,6 @@ def _fetch_rss(url: str) -> List[dict]:
     return items
 
 
-def _fetch_rss_with_fallback(urls: Iterable[str]) -> List[dict]:
-    for url in urls:
-        items = _fetch_rss(url)
-        if items:
-            return items
-    for url in urls:
-        cached = _load_cache(url, allow_stale=True)
-        if cached:
-            return cached
-    return []
-
-
 def _fetch_rss_batch(urls: list[str]) -> dict[str, List[dict]]:
     results: dict[str, List[dict]] = {}
     url_list = [url for url in urls if url]
@@ -391,88 +424,122 @@ def _fetch_rss_batch(urls: list[str]) -> dict[str, List[dict]]:
     return results
 
 
-def get_events(as_of: date) -> List[dict]:
+def _fetch_symbol_report_rows(symbol: str, as_of: date) -> list[dict]:
     if ball is None:
-        LOGGER.warning("pysnowball unavailable, skip events")
+        return []
+    snow_symbol = to_snowball_symbol(symbol)
+    try:
+        payload = ball.report(snow_symbol)
+    except Exception as exc:
+        LOGGER.warning("snowball report failed [%s]: %s", snow_symbol, exc)
         return []
 
     rows: list[dict] = []
-    for symbol in _event_symbols():
-        snow_symbol = to_snowball_symbol(symbol)
-        try:
-            payload = ball.report(snow_symbol)
-        except Exception as exc:
-            LOGGER.warning("snowball report failed [%s]: %s", snow_symbol, exc)
+    for record in _extract_dict_rows(payload):
+        row_date = _to_date(
+            _pick(
+                record,
+                (
+                    "publish_date",
+                    "pub_date",
+                    "report_date",
+                    "date",
+                    "ctime",
+                    "timestamp",
+                ),
+            )
+        )
+        if row_date != as_of:
             continue
-        for record in _extract_dict_rows(payload):
-            row_date = _to_date(
-                _pick(
-                    record,
-                    (
-                        "publish_date",
-                        "pub_date",
-                        "report_date",
-                        "date",
-                        "ctime",
-                        "timestamp",
-                    ),
-                )
-            )
-            if row_date != as_of:
-                continue
-            title = _pick(record, ("title", "name", "report_name", "notice_title"))
-            if title in (None, ""):
-                continue
-            rows.append(
-                {
-                    "symbol": symbol,
-                    "type": "report",
-                    "title": str(title),
-                    "date": row_date,
-                    "link": str(_pick(record, ("url", "link", "pdf_url", "article_url")) or ""),
-                    "source": "Snowball Report",
-                }
-            )
-    return ensure_required(rows, ["symbol", "type", "title", "date"], "events.events")
+        title = _pick(record, ("title", "name", "report_name", "notice_title"))
+        if title in (None, ""):
+            continue
+        rows.append(
+            {
+                "symbol": symbol,
+                "type": "report",
+                "title": str(title),
+                "date": row_date,
+                "link": str(_pick(record, ("url", "link", "pdf_url", "article_url")) or ""),
+                "source": "Snowball Report",
+            }
+        )
+    return rows
+
+
+def _fetch_symbol_insider_rows(symbol: str, as_of: date) -> list[dict]:
+    if ball is None:
+        return []
+    snow_symbol = to_snowball_symbol(symbol)
+    try:
+        payload = ball.skholderchg(snow_symbol)
+    except Exception as exc:
+        LOGGER.warning("snowball skholderchg failed [%s]: %s", snow_symbol, exc)
+        return []
+
+    rows: list[dict] = []
+    for record in _extract_dict_rows(payload):
+        row_date = _to_date(_pick(record, ("change_date", "date", "publish_date", "ctime", "timestamp")))
+        if row_date != as_of:
+            continue
+        shares = _safe_float(_pick(record, ("change_amount", "shares", "volume", "chg_num"))) or 0.0
+        trade_type = _pick(record, ("change_type", "direction", "type", "change_reason")) or "trade"
+        rows.append(
+            {
+                "symbol": symbol,
+                "date": row_date,
+                "type": str(trade_type),
+                "shares": shares,
+                "link": str(_pick(record, ("url", "link")) or ""),
+                "source": "Snowball F10",
+            }
+        )
+    return rows
+
+
+def get_events(as_of: date) -> List[dict]:
+    rows: list[dict] = []
+    rows.extend(_get_hkex_regulatory_announcements(as_of))
+
+    if ball is None:
+        LOGGER.warning("pysnowball unavailable, skip snowball events")
+        return ensure_required(_dedupe_event_rows(rows), ["symbol", "type", "title", "date"], "events.events")
+
+    symbols = _event_symbols()
+    workers = max(1, min(EVENTS_SYMBOL_WORKERS, len(symbols)))
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="event_reports") as executor:
+        future_map = {executor.submit(_fetch_symbol_report_rows, symbol, as_of): symbol for symbol in symbols}
+        for future in as_completed(future_map):
+            symbol = future_map[future]
+            try:
+                rows.extend(future.result())
+            except Exception as exc:
+                LOGGER.warning("symbol report task failed [%s]: %s", symbol, exc)
+    return ensure_required(_dedupe_event_rows(rows), ["symbol", "type", "title", "date"], "events.events")
 
 
 def get_buyback(as_of: date) -> List[dict]:
     rows: list[dict] = []
-    symbols = _rsshub_hk_symbols()
-    symbol_urls = {symbol: _rsshub_xueqiu_announcement_urls(symbol) for symbol in symbols}
-    with ThreadPoolExecutor(max_workers=max(1, min(RSS_MAX_WORKERS, len(symbol_urls)))) as executor:
-        future_map = {
-            executor.submit(_fetch_rss_with_fallback, urls): symbol
-            for symbol, urls in symbol_urls.items()
-        }
-        fetched_by_symbol: dict[str, List[dict]] = {}
-        for future in as_completed(future_map):
-            symbol = future_map[future]
-            try:
-                fetched_by_symbol[symbol] = future.result()
-            except Exception as exc:
-                LOGGER.warning("fetch rss batch failed [%s]: %s", symbol, exc)
-                fetched_by_symbol[symbol] = []
-
-    for symbol, items in fetched_by_symbol.items():
-        for item in items:
-            published_at = item.get("published_at")
-            if not published_at:
-                continue
-            if published_at.date() != as_of:
-                continue
-            title = item.get("title") or ""
-            if not _is_buyback_title(title):
-                continue
-            rows.append(
-                {
-                    "symbol": symbol,
-                    "date": as_of,
-                    "amount": 0.0,
-                    "link": item.get("link") or "",
-                    "source": "RSSHub Xueqiu Announcement",
-                }
-            )
+    items = _fetch_rss(_hkex_regulatory_announcements_rss())
+    for item in items:
+        published_at = item.get("published_at")
+        if not published_at or published_at.date() != as_of:
+            continue
+        title = str(item.get("title") or "")
+        if not _is_buyback_title(title):
+            continue
+        symbol = _symbol_from_hkex_title(title, str(item.get("link") or ""))
+        if not symbol:
+            continue
+        rows.append(
+            {
+                "symbol": symbol,
+                "date": as_of,
+                "amount": 0.0,
+                "link": item.get("link") or "",
+                "source": "HKEX Regulatory Announcement",
+            }
+        )
     return ensure_required(rows, ["symbol", "date", "amount"], "events.buyback")
 
 
@@ -482,27 +549,14 @@ def get_insider_trade(as_of: date) -> List[dict]:
         return []
 
     rows: list[dict] = []
-    for symbol in _event_symbols():
-        snow_symbol = to_snowball_symbol(symbol)
-        try:
-            payload = ball.skholderchg(snow_symbol)
-        except Exception as exc:
-            LOGGER.warning("snowball skholderchg failed [%s]: %s", snow_symbol, exc)
-            continue
-        for record in _extract_dict_rows(payload):
-            row_date = _to_date(_pick(record, ("change_date", "date", "publish_date", "ctime", "timestamp")))
-            if row_date != as_of:
-                continue
-            shares = _safe_float(_pick(record, ("change_amount", "shares", "volume", "chg_num"))) or 0.0
-            trade_type = _pick(record, ("change_type", "direction", "type", "change_reason")) or "trade"
-            rows.append(
-                {
-                    "symbol": symbol,
-                    "date": row_date,
-                    "type": str(trade_type),
-                    "shares": shares,
-                    "link": str(_pick(record, ("url", "link")) or ""),
-                    "source": "Snowball F10",
-                }
-            )
+    symbols = _event_symbols()
+    workers = max(1, min(EVENTS_SYMBOL_WORKERS, len(symbols)))
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="event_insider") as executor:
+        future_map = {executor.submit(_fetch_symbol_insider_rows, symbol, as_of): symbol for symbol in symbols}
+        for future in as_completed(future_map):
+            symbol = future_map[future]
+            try:
+                rows.extend(future.result())
+            except Exception as exc:
+                LOGGER.warning("symbol insider task failed [%s]: %s", symbol, exc)
     return ensure_required(rows, ["symbol", "date", "type", "shares"], "events.insider")

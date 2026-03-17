@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.core.cache import get_json, set_json
@@ -11,6 +12,23 @@ from app.schemas.news import NewsCreate, NewsUpdate
 from app.utils.query_params import SortOrder
 
 NEWS_CACHE_TTL = 600
+
+
+def _csv_field_filters(column, values: list[str]):
+    conditions = []
+    for value in values:
+        text = str(value or "").strip()
+        if not text:
+            continue
+        conditions.extend(
+            [
+                column == text,
+                column.ilike(f"{text},%"),
+                column.ilike(f"%,{text},%"),
+                column.ilike(f"%,{text}"),
+            ]
+        )
+    return or_(*conditions) if conditions else None
 
 
 def list_news(
@@ -25,6 +43,8 @@ def list_news(
     source_categories: list[str] | None = None,
     topic_categories: list[str] | None = None,
     time_buckets: list[str] | None = None,
+    related_symbols: list[str] | None = None,
+    related_sectors: list[str] | None = None,
     keyword: str | None = None,
     sort_by: list[str] | None = None,
     sort: SortOrder = "desc",
@@ -42,6 +62,8 @@ def list_news(
         source_categories=source_categories,
         topic_categories=topic_categories,
         time_buckets=time_buckets,
+        related_symbols=related_symbols,
+        related_sectors=related_sectors,
         keyword=keyword,
         sort_by=sort_by,
         sort=sort,
@@ -61,6 +83,14 @@ def list_news(
         query = query.filter(News.topic_category.in_(topic_categories))
     if time_buckets:
         query = query.filter(News.time_bucket.in_(time_buckets))
+    if related_symbols:
+        condition = _csv_field_filters(News.related_symbols, related_symbols)
+        if condition is not None:
+            query = query.filter(condition)
+    if related_sectors:
+        condition = _csv_field_filters(News.related_sectors, related_sectors)
+        if condition is not None:
+            query = query.filter(condition)
     if keyword:
         keyword_like = f"%{keyword}%"
         query = query.filter(News.title.ilike(keyword_like))
@@ -77,6 +107,8 @@ def list_news(
         "source_category": News.source_category,
         "topic_category": News.topic_category,
         "time_bucket": News.time_bucket,
+        "related_symbols": News.related_symbols,
+        "related_sectors": News.related_sectors,
     }
     sort_keys = [key for key in (sort_by or ["published_at"]) if key in sort_fields]
     if not sort_keys:

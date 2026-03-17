@@ -14,6 +14,7 @@ _FUTURES_COLUMNS_READY = False
 _FUTURES_WEEKLY_COLUMNS_READY = False
 _SECTOR_EXPOSURE_TABLES_READY = False
 _NEWS_COLUMNS_READY = False
+_STOCK_DETAIL_TABLES_READY = False
 
 
 def _validate_rows(rows: Iterable[dict], required: Iterable[str], context: str) -> list[dict]:
@@ -170,11 +171,13 @@ def upsert_news(rows: Iterable[dict]) -> int:
     sql = """
     INSERT INTO news (
         symbol, title, sentiment, published_at, link, source,
-        source_site, source_category, topic_category, time_bucket
+        source_site, source_category, topic_category, time_bucket,
+        related_symbols, related_sectors
     )
     VALUES (
         :symbol, :title, :sentiment, :published_at, :link, :source,
-        :source_site, :source_category, :topic_category, :time_bucket
+        :source_site, :source_category, :topic_category, :time_bucket,
+        :related_symbols, :related_sectors
     )
     """
     payload = _validate_rows(rows, ["symbol", "title", "published_at"], "news")
@@ -274,6 +277,114 @@ def upsert_stock_valuation_snapshots(rows: Iterable[dict]) -> int:
     """
     payload = _validate_rows(rows, ["symbol", "date"], "stock_valuation_snapshots")
     return _get_loader().execute_many(sql, payload)
+
+
+def upsert_stock_live_snapshots(rows: Iterable[dict]) -> int:
+    _ensure_stock_detail_tables()
+    sql = """
+    INSERT INTO stock_live_snapshots (
+        symbol, as_of, current, change, percent, open, high, low, last_close,
+        volume, amount, turnover_rate, amplitude, quote_timestamp,
+        pe_ttm, pb, ps_ttm, pcf, market_cap, float_market_cap, dividend_yield,
+        volume_ratio, lot_size, pankou_diff, pankou_ratio, pankou_timestamp,
+        pankou_bids_json, pankou_asks_json, source
+    )
+    VALUES (
+        :symbol, :as_of, :current, :change, :percent, :open, :high, :low, :last_close,
+        :volume, :amount, :turnover_rate, :amplitude, :quote_timestamp,
+        :pe_ttm, :pb, :ps_ttm, :pcf, :market_cap, :float_market_cap, :dividend_yield,
+        :volume_ratio, :lot_size, :pankou_diff, :pankou_ratio, :pankou_timestamp,
+        :pankou_bids_json, :pankou_asks_json, :source
+    )
+    ON CONFLICT (symbol)
+    DO UPDATE SET
+        as_of = EXCLUDED.as_of,
+        current = EXCLUDED.current,
+        change = EXCLUDED.change,
+        percent = EXCLUDED.percent,
+        open = EXCLUDED.open,
+        high = EXCLUDED.high,
+        low = EXCLUDED.low,
+        last_close = EXCLUDED.last_close,
+        volume = EXCLUDED.volume,
+        amount = EXCLUDED.amount,
+        turnover_rate = EXCLUDED.turnover_rate,
+        amplitude = EXCLUDED.amplitude,
+        quote_timestamp = EXCLUDED.quote_timestamp,
+        pe_ttm = EXCLUDED.pe_ttm,
+        pb = EXCLUDED.pb,
+        ps_ttm = EXCLUDED.ps_ttm,
+        pcf = EXCLUDED.pcf,
+        market_cap = EXCLUDED.market_cap,
+        float_market_cap = EXCLUDED.float_market_cap,
+        dividend_yield = EXCLUDED.dividend_yield,
+        volume_ratio = EXCLUDED.volume_ratio,
+        lot_size = EXCLUDED.lot_size,
+        pankou_diff = EXCLUDED.pankou_diff,
+        pankou_ratio = EXCLUDED.pankou_ratio,
+        pankou_timestamp = EXCLUDED.pankou_timestamp,
+        pankou_bids_json = EXCLUDED.pankou_bids_json,
+        pankou_asks_json = EXCLUDED.pankou_asks_json,
+        source = EXCLUDED.source
+    """
+    payload = _validate_rows(rows, ["symbol"], "stock_live_snapshots")
+    return _get_loader().execute_many(sql, payload)
+
+
+def upsert_stock_research_items(rows: Iterable[dict]) -> int:
+    _ensure_stock_detail_tables()
+    sql = """
+    INSERT INTO stock_research_items (
+        symbol, item_type, title, published_at, link, summary, institution, rating, source
+    )
+    VALUES (
+        :symbol, :item_type, :title, :published_at, :link, :summary, :institution, :rating, :source
+    )
+    ON CONFLICT (symbol, item_type, title, published_at, link)
+    DO UPDATE SET
+        summary = EXCLUDED.summary,
+        institution = EXCLUDED.institution,
+        rating = EXCLUDED.rating,
+        source = EXCLUDED.source
+    """
+    payload = _validate_rows(rows, ["symbol", "item_type", "title"], "stock_research_items")
+    return _get_loader().execute_many(sql, payload)
+
+
+def upsert_stock_intraday_kline(rows: Iterable[dict]) -> int:
+    _ensure_stock_detail_tables()
+    sql = """
+    INSERT INTO stock_intraday_kline (symbol, period, timestamp, open, high, low, close, volume)
+    VALUES (:symbol, :period, :timestamp, :open, :high, :low, :close, :volume)
+    ON CONFLICT (symbol, period, timestamp)
+    DO UPDATE SET
+        open = EXCLUDED.open,
+        high = EXCLUDED.high,
+        low = EXCLUDED.low,
+        close = EXCLUDED.close,
+        volume = EXCLUDED.volume
+    """
+    payload = _validate_rows(rows, ["symbol", "period", "timestamp"], "stock_intraday_kline")
+    return _get_loader().execute_many(sql, payload)
+
+
+def list_stock_live_snapshot_meta() -> list[dict]:
+    _ensure_stock_detail_tables()
+    sql = """
+    SELECT symbol, as_of
+    FROM stock_live_snapshots
+    """
+    return _get_loader().query_all(sql)
+
+
+def list_stock_intraday_meta() -> list[dict]:
+    _ensure_stock_detail_tables()
+    sql = """
+    SELECT symbol, MAX(timestamp) AS latest_timestamp, COUNT(DISTINCT period) AS period_count
+    FROM stock_intraday_kline
+    GROUP BY symbol
+    """
+    return _get_loader().query_all(sql)
 
 
 def upsert_macro(rows: Iterable[dict]) -> int:
@@ -451,17 +562,140 @@ def _ensure_news_columns() -> None:
             source_site VARCHAR(128),
             source_category VARCHAR(64),
             topic_category VARCHAR(64),
-            time_bucket VARCHAR(32)
+            time_bucket VARCHAR(32),
+            related_symbols TEXT,
+            related_sectors TEXT
         )
         """,
         "ALTER TABLE news ADD COLUMN IF NOT EXISTS source_site VARCHAR(128)",
         "ALTER TABLE news ADD COLUMN IF NOT EXISTS source_category VARCHAR(64)",
         "ALTER TABLE news ADD COLUMN IF NOT EXISTS topic_category VARCHAR(64)",
         "ALTER TABLE news ADD COLUMN IF NOT EXISTS time_bucket VARCHAR(32)",
+        "ALTER TABLE news ADD COLUMN IF NOT EXISTS related_symbols TEXT",
+        "ALTER TABLE news ADD COLUMN IF NOT EXISTS related_sectors TEXT",
     ]
     for statement in statements:
         loader.execute(statement)
     _NEWS_COLUMNS_READY = True
+
+
+def _ensure_stock_detail_tables() -> None:
+    global _STOCK_DETAIL_TABLES_READY
+    if _STOCK_DETAIL_TABLES_READY:
+        return
+    loader = _get_loader()
+    statements = [
+        """
+        CREATE TABLE IF NOT EXISTS stock_live_snapshots (
+            symbol VARCHAR(32) PRIMARY KEY,
+            as_of TIMESTAMP,
+            current DOUBLE PRECISION,
+            change DOUBLE PRECISION,
+            percent DOUBLE PRECISION,
+            open DOUBLE PRECISION,
+            high DOUBLE PRECISION,
+            low DOUBLE PRECISION,
+            last_close DOUBLE PRECISION,
+            volume DOUBLE PRECISION,
+            amount DOUBLE PRECISION,
+            turnover_rate DOUBLE PRECISION,
+            amplitude DOUBLE PRECISION,
+            quote_timestamp TIMESTAMP,
+            pe_ttm DOUBLE PRECISION,
+            pb DOUBLE PRECISION,
+            ps_ttm DOUBLE PRECISION,
+            pcf DOUBLE PRECISION,
+            market_cap DOUBLE PRECISION,
+            float_market_cap DOUBLE PRECISION,
+            dividend_yield DOUBLE PRECISION,
+            volume_ratio DOUBLE PRECISION,
+            lot_size DOUBLE PRECISION,
+            pankou_diff DOUBLE PRECISION,
+            pankou_ratio DOUBLE PRECISION,
+            pankou_timestamp TIMESTAMP,
+            pankou_bids_json TEXT,
+            pankou_asks_json TEXT,
+            source VARCHAR(64)
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS stock_research_items (
+            id SERIAL PRIMARY KEY,
+            symbol VARCHAR(32),
+            item_type VARCHAR(32),
+            title TEXT,
+            published_at TIMESTAMP,
+            link TEXT,
+            summary TEXT,
+            institution VARCHAR(128),
+            rating VARCHAR(128),
+            source VARCHAR(128)
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS stock_intraday_kline (
+            symbol VARCHAR(32) NOT NULL,
+            period VARCHAR(16) NOT NULL,
+            timestamp TIMESTAMP NOT NULL,
+            open DOUBLE PRECISION,
+            high DOUBLE PRECISION,
+            low DOUBLE PRECISION,
+            close DOUBLE PRECISION,
+            volume DOUBLE PRECISION,
+            PRIMARY KEY (symbol, period, timestamp)
+        )
+        """,
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_stock_research_items_identity ON stock_research_items(symbol, item_type, title, published_at, link)",
+    ]
+    for statement in statements:
+        loader.execute(statement)
+    _STOCK_DETAIL_TABLES_READY = True
+
+
+def list_news_rows(
+    *,
+    start: date | None = None,
+    end: date | None = None,
+    limit: int | None = None,
+    offset: int = 0,
+) -> list[dict]:
+    _ensure_news_columns()
+    sql = """
+    SELECT id, symbol, title, sentiment, published_at, link, source,
+           source_site, source_category, topic_category, time_bucket,
+           related_symbols, related_sectors
+    FROM news
+    WHERE 1 = 1
+    """
+    params: dict[str, object] = {}
+    if start is not None:
+        sql += " AND published_at >= :start"
+        params["start"] = start
+    if end is not None:
+        sql += " AND published_at <= :end"
+        params["end"] = end
+    sql += " ORDER BY published_at DESC, id DESC"
+    if limit is not None and limit > 0:
+        sql += " LIMIT :limit OFFSET :offset"
+        params["limit"] = limit
+        params["offset"] = max(0, offset)
+    return _get_loader().query_all(sql, params)
+
+
+def update_news_metadata(rows: Iterable[dict]) -> int:
+    _ensure_news_columns()
+    sql = """
+    UPDATE news
+    SET source_site = :source_site,
+        source_category = :source_category,
+        topic_category = :topic_category,
+        time_bucket = :time_bucket,
+        related_symbols = :related_symbols,
+        related_sectors = :related_sectors
+    WHERE id = :id
+    """
+    payload = _validate_rows(rows, ["id"], "news.metadata")
+    return _get_loader().execute_many(sql, payload)
 
 
 def list_daily_price_rows(as_of: date) -> list[dict]:
@@ -474,32 +708,34 @@ def list_daily_price_rows(as_of: date) -> list[dict]:
     return _get_loader().query_all(sql, {"as_of": as_of})
 
 
-def list_latest_macro_rows() -> list[dict]:
+def list_latest_macro_rows(key_like: str | None = None) -> list[dict]:
     sql = """
     SELECT m.key, m.date, m.value, m.score
     FROM macro AS m
     INNER JOIN (
         SELECT key, MAX(date) AS date
         FROM macro
+        WHERE (:key_like IS NULL OR key LIKE :key_like)
         GROUP BY key
     ) AS latest
         ON latest.key = m.key
        AND latest.date = m.date
     ORDER BY m.key ASC
     """
-    return _get_loader().query_all(sql)
+    return _get_loader().query_all(sql, {"key_like": key_like})
 
 
-def count_latest_macro_rows() -> int:
+def count_latest_macro_rows(key_like: str | None = None) -> int:
     sql = """
     SELECT COUNT(*) AS total
     FROM (
         SELECT key, MAX(date) AS date
         FROM macro
+        WHERE (:key_like IS NULL OR key LIKE :key_like)
         GROUP BY key
     ) AS latest
     """
-    rows = _get_loader().query_all(sql)
+    rows = _get_loader().query_all(sql, {"key_like": key_like})
     if not rows:
         return 0
     return int(rows[0].get("total") or 0)

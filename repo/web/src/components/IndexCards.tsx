@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { INDEX_NAME_MAP, INDEX_OPTIONS } from "../constants/indices";
 import { getIndices } from "../services/api";
 import { formatNumber, formatSigned } from "../utils/format";
+import { readPersistentCache, writePersistentCache } from "../utils/persistentCache";
 
 type IndexMarket = "A" | "HK";
 
@@ -21,6 +22,12 @@ type IndexPage = {
   limit: number;
   offset: number;
 };
+
+const INDEX_CARDS_CACHE_TTL_MS = 5 * 60 * 1000;
+
+function buildIndexCardsCacheKey(asOf?: string) {
+  return `index-cards:asOf=${asOf || "latest"}`;
+}
 
 const MARKET_OPTIONS: Array<{ key: IndexMarket; label: string; hint: string }> = [
   { key: "A", label: "A 股", hint: "上证、深证、科创与北交所宽基" },
@@ -44,7 +51,14 @@ export function IndexCards({ asOf, activeMarket, selectedSymbol, onMarketChange,
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
+    const cacheKey = buildIndexCardsCacheKey(asOf);
+    const cachedPage = readPersistentCache<IndexPage>(cacheKey, INDEX_CARDS_CACHE_TTL_MS);
+    if (cachedPage) {
+      setData(cachedPage.items ?? []);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     getIndices({ as_of: asOf })
       .then((res) => {
         if (!active) {
@@ -52,6 +66,7 @@ export function IndexCards({ asOf, activeMarket, selectedSymbol, onMarketChange,
         }
         const page = res as IndexPage;
         setData(page.items ?? []);
+        writePersistentCache(cacheKey, page);
         setError(null);
       })
       .catch((err: Error) => {

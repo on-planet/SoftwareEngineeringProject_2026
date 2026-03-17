@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { INDEX_CONSTITUENT_OPTIONS } from "../constants/indices";
 import { getIndexConstituents } from "../services/api";
 import { formatNumber, formatSigned } from "../utils/format";
+import { readPersistentCache, writePersistentCache } from "../utils/persistentCache";
 
 const TEXT = {
   loadError: "\u6307\u6570\u6210\u5206\u80a1\u52a0\u8f7d\u5931\u8d25",
@@ -48,6 +49,12 @@ type ConstituentPage = {
   offset: number;
 };
 
+const INDEX_CONSTITUENTS_CACHE_TTL_MS = 10 * 60 * 1000;
+
+function buildIndexConstituentsCacheKey(indexSymbol: string, limit: number, offset: number) {
+  return `index-constituents:${indexSymbol}:limit=${limit}:offset=${offset}`;
+}
+
 export function IndexConstituentList() {
   const [indexSymbol, setIndexSymbol] = useState(DEFAULT_INDEX);
   const [limit, setLimit] = useState(20);
@@ -66,7 +73,15 @@ export function IndexConstituentList() {
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
+    const cacheKey = buildIndexConstituentsCacheKey(indexSymbol, limit, offset);
+    const cachedPage = readPersistentCache<ConstituentPage>(cacheKey, INDEX_CONSTITUENTS_CACHE_TTL_MS);
+    if (cachedPage) {
+      setItems(cachedPage.items ?? []);
+      setTotal(cachedPage.total ?? 0);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     getIndexConstituents(indexSymbol, { limit, offset })
       .then((res) => {
         if (!active) {
@@ -75,6 +90,7 @@ export function IndexConstituentList() {
         const pageData = res as ConstituentPage;
         setItems(pageData.items ?? []);
         setTotal(pageData.total ?? 0);
+        writePersistentCache(cacheKey, pageData);
         setError(null);
       })
       .catch((err: Error) => {

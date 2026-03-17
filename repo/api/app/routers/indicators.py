@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Query
 from app.schemas.error import ErrorResponse
 from app.schemas.examples import ERROR_EXAMPLE, INDICATOR_SERIES_EXAMPLE
 from app.schemas.indicators import IndicatorSeriesOut
-from app.services.indicator_service import get_indicator_series
+from app.services.indicator_service import AVAILABLE_INDICATORS, get_indicator_series
 
 router = APIRouter(tags=["indicators"])
 
@@ -23,21 +23,22 @@ router = APIRouter(tags=["indicators"])
 )
 def get_indicators_route(
     symbol: str,
-    indicator: str = Query("ma", pattern="^(ma|rsi)$"),
+    indicator: str = Query("ma"),
     window: int = Query(14, ge=1, le=200),
     limit: int = Query(200, ge=10, le=500),
     end: date | None = Query(None),
     start: date | None = Query(None),
 ):
-    """获取技术指标序列（MA/RSI）。"""
     indicator = indicator.lower()
-    if indicator not in {"ma", "rsi"}:
-        raise HTTPException(status_code=400, detail="Unsupported indicator")
-    items, cache_hit = get_indicator_series(symbol, indicator, window, limit, end, start)
+    if indicator not in AVAILABLE_INDICATORS:
+        raise HTTPException(status_code=400, detail=f"Unsupported indicator. Available: {', '.join(AVAILABLE_INDICATORS)}")
+    items, lines, params, cache_hit = get_indicator_series(symbol, indicator, window, limit, end, start)
     return {
         "symbol": symbol,
         "indicator": indicator,
         "window": window,
+        "lines": lines,
+        "params": params,
         "items": items,
         "cache_hit": cache_hit,
     }

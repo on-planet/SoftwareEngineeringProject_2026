@@ -14,6 +14,17 @@ from etl.utils.normalize import ensure_required
 LOGGER = get_logger(__name__)
 
 
+def _fetch_event_day(as_of: date) -> tuple[list[dict], list[dict], list[dict]]:
+    with ThreadPoolExecutor(max_workers=3, thread_name_prefix="events_day") as executor:
+        event_future = executor.submit(get_events, as_of)
+        buyback_future = executor.submit(get_buyback, as_of)
+        insider_future = executor.submit(get_insider_trade, as_of)
+        events_rows = ensure_required(event_future.result(), ["symbol", "type", "title", "date"], "events.events")
+        buyback_rows = ensure_required(buyback_future.result(), ["symbol", "date", "amount"], "events.buyback")
+        insider_rows = ensure_required(insider_future.result(), ["symbol", "date", "type", "shares"], "events.insider")
+        return events_rows, buyback_rows, insider_rows
+
+
 def run_events_job(start: date, end: date) -> int:
     """Run events job: fetch events and store into DB (incremental)."""
     total = 0
@@ -22,16 +33,7 @@ def run_events_job(start: date, end: date) -> int:
 
     fetch_results: dict[date, tuple[list[dict], list[dict], list[dict]]] = {}
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_map = {
-            executor.submit(
-                lambda d=as_of: (
-                    ensure_required(get_events(d), ["symbol", "type", "title", "date"], "events.events"),
-                    ensure_required(get_buyback(d), ["symbol", "date", "amount"], "events.buyback"),
-                    ensure_required(get_insider_trade(d), ["symbol", "date", "type", "shares"], "events.insider"),
-                )
-            ): as_of
-            for as_of in dates
-        }
+        future_map = {executor.submit(_fetch_event_day, as_of): as_of for as_of in dates}
         for future in as_completed(future_map):
             as_of = future_map[future]
             try:

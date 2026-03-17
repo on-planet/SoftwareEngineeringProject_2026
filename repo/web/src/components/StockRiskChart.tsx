@@ -1,9 +1,10 @@
-﻿import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 
 import ReactECharts from "echarts-for-react";
 
 import { getRisk, getRiskSeries } from "../services/api";
 import { formatPercent } from "../utils/format";
+import { readPersistentCache, writePersistentCache } from "../utils/persistentCache";
 
 type RiskSnapshot = {
   symbol: string;
@@ -29,6 +30,24 @@ type Props = {
   symbol: string;
 };
 
+type StockRiskCachePayload = {
+  snapshot: RiskSnapshot;
+  seriesPayload: RiskSeriesResponse;
+};
+
+const STOCK_RISK_CACHE_TTL_MS = 10 * 60 * 1000;
+
+function buildStockRiskCacheKey(symbol: string, windowSize: number, limit: number, start: string, end: string) {
+  return [
+    "stock-risk",
+    symbol,
+    `window=${windowSize}`,
+    `limit=${limit}`,
+    `start=${start || "none"}`,
+    `end=${end || "none"}`,
+  ].join(":");
+}
+
 export function StockRiskChart({ symbol }: Props) {
   const [snapshot, setSnapshot] = useState<RiskSnapshot | null>(null);
   const [series, setSeries] = useState<RiskPoint[]>([]);
@@ -42,7 +61,16 @@ export function StockRiskChart({ symbol }: Props) {
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
+    const cacheKey = buildStockRiskCacheKey(symbol, windowSize, limit, start, end);
+    const cachedPayload = readPersistentCache<StockRiskCachePayload>(cacheKey, STOCK_RISK_CACHE_TTL_MS);
+    if (cachedPayload?.seriesPayload?.items?.length) {
+      setSnapshot(cachedPayload.snapshot);
+      setSeries(cachedPayload.seriesPayload.items ?? []);
+      setSeriesCacheHit(cachedPayload.seriesPayload.cache_hit);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     Promise.all([
       getRisk(symbol),
       getRiskSeries(symbol, {
@@ -61,6 +89,10 @@ export function StockRiskChart({ symbol }: Props) {
         setSnapshot(snapshotPayload);
         setSeries(seriesPayload.items ?? []);
         setSeriesCacheHit(seriesPayload.cache_hit);
+        writePersistentCache(cacheKey, {
+          snapshot: snapshotPayload,
+          seriesPayload,
+        });
         setError(null);
       })
       .catch((err: Error) => {

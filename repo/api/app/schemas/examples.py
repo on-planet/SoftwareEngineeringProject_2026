@@ -128,12 +128,14 @@ PORTFOLIO_PAGE_EXAMPLE = {
 
 INDICATOR_SERIES_EXAMPLE = {
     "symbol": "000001.SH",
-    "indicator": "ma",
-    "window": 5,
+    "indicator": "macd",
+    "window": 14,
+    "lines": ["macd", "signal", "hist"],
+    "params": {"fast": 12, "slow": 26, "signal": 9},
     "items": [
-        {"date": "2026-03-06", "value": 10.1},
-        {"date": "2026-03-07", "value": 10.3},
-        {"date": "2026-03-10", "value": 10.4},
+        {"date": "2026-03-06", "value": 0.21, "values": {"macd": 0.21, "signal": 0.18, "hist": 0.03}},
+        {"date": "2026-03-07", "value": 0.24, "values": {"macd": 0.24, "signal": 0.2, "hist": 0.04}},
+        {"date": "2026-03-10", "value": 0.28, "values": {"macd": 0.28, "signal": 0.23, "hist": 0.05}},
     ],
 }
 

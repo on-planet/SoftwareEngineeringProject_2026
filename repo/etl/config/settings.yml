@@ -9,6 +9,7 @@ market:
   t1_offset_days: 1
 etl:
   incremental_lookback_days: 7
+  parallel_workers: 4
   schedules:
     index_job: "00:30"
     financial_job: "01:00"

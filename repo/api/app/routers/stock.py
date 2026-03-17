@@ -80,9 +80,9 @@ def list_stocks_route(
         500: {"model": ErrorResponse, "content": {"application/json": {"example": ERROR_EXAMPLE}}},
     },
 )
-def get_stock(symbol: str):
+def get_stock(symbol: str, prefer_live: bool = Query(False)):
     """获取股票基本信息。"""
-    stock = ensure_found(get_stock_profile(symbol), "Stock not found")
+    stock = ensure_found(get_stock_profile(symbol, prefer_live=prefer_live), "Stock not found")
     risk_payload = get_risk_snapshot(symbol)
     if isinstance(stock, dict):
         result = StockWithRiskOut(**stock)
@@ -107,8 +107,8 @@ def get_stock(symbol: str):
         500: {"model": ErrorResponse, "content": {"application/json": {"example": ERROR_EXAMPLE}}},
     },
 )
-def get_stock_overview(symbol: str):
-    stock = ensure_found(get_stock_overview_profile(symbol), "Stock not found")
+def get_stock_overview(symbol: str, prefer_live: bool = Query(False)):
+    stock = ensure_found(get_stock_overview_profile(symbol, prefer_live=prefer_live), "Stock not found")
     risk_payload = get_risk_snapshot(symbol)
     fundamental = get_fundamental_score(symbol)
     payload = dict(stock) if isinstance(stock, dict) else StockOverviewOut.from_orm(stock).model_dump()
@@ -129,8 +129,8 @@ def get_stock_overview(symbol: str):
     response_model=StockExtrasOut,
     responses={500: {"model": ErrorResponse, "content": {"application/json": {"example": ERROR_EXAMPLE}}}},
 )
-def get_stock_extras(symbol: str):
-    return get_stock_profile_extras(symbol)
+def get_stock_extras(symbol: str, prefer_live: bool = Query(False)):
+    return get_stock_profile_extras(symbol, prefer_live=prefer_live)
 
 
 @router.post(

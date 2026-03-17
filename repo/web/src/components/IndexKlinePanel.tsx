@@ -4,6 +4,7 @@ import ReactECharts from "echarts-for-react";
 
 import { INDEX_NAME_MAP, INDEX_OPTIONS } from "../constants/indices";
 import { getIndexKline } from "../services/api";
+import { readPersistentCache, writePersistentCache } from "../utils/persistentCache";
 
 type IndexMarket = "A" | "HK";
 type KlinePeriod = "1m" | "30m" | "60m" | "day" | "week" | "month" | "quarter" | "year";
@@ -40,6 +41,24 @@ const MARKET_OPTIONS: Array<{ key: IndexMarket; label: string }> = [
   { key: "HK", label: "港股" },
 ];
 
+function getIndexKlineCacheMaxAge(period: KlinePeriod) {
+  switch (period) {
+    case "1m":
+    case "30m":
+    case "60m":
+      return 2 * 60 * 1000;
+    case "day":
+    case "week":
+      return 10 * 60 * 1000;
+    default:
+      return 60 * 60 * 1000;
+  }
+}
+
+function buildIndexKlineCacheKey(symbol: string, period: KlinePeriod, limit: number) {
+  return `index-kline:${symbol}:period=${period}:limit=${limit}`;
+}
+
 type Props = {
   symbol: string;
   activeMarket: IndexMarket;
@@ -75,14 +94,23 @@ export function IndexKlinePanel({ symbol, activeMarket, onMarketChange, onSymbol
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
-    getIndexKline(symbol, { period, limit: period === "1m" ? 180 : 240 })
+    const limit = period === "1m" ? 180 : 240;
+    const cacheKey = buildIndexKlineCacheKey(symbol, period, limit);
+    const cachedSeries = readPersistentCache<KlineSeries>(cacheKey, getIndexKlineCacheMaxAge(period));
+    if (cachedSeries?.items?.length) {
+      setItems(cachedSeries.items);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
+    getIndexKline(symbol, { period, limit })
       .then((res) => {
         if (!active) {
           return;
         }
         const payload = res as KlineSeries;
         setItems(payload.items ?? []);
+        writePersistentCache(cacheKey, payload);
         setError(null);
       })
       .catch((err: Error) => {

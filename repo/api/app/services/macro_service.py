@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+import os
 
 from sqlalchemy.orm import Session
 
@@ -10,10 +11,12 @@ from app.schemas.macro import MacroCreate, MacroUpdate
 from app.schemas.macro_series import MacroPoint
 from app.services.cache_utils import build_cache_key, item_to_dict, items_to_dicts
 from app.utils.query_params import SortOrder
+from etl.fetchers.akshare_macro_client import fetch_akshare_series_rows, is_akshare_macro_key
 from etl.fetchers.worldbank_client import get_indicator_series
 from etl.transformers.macro import normalize_macro_rows
 
 MACRO_QUERY_CACHE_TTL = 900
+WORLD_BANK_SYNC_FETCH_ENABLED = os.getenv("MACRO_ENABLE_WORLD_BANK_SYNC_FETCH", "0").lower() in {"1", "true", "yes"}
 
 WORLD_BANK_INDICATORS: dict[str, str] = {
     "GDP": "NY.GDP.MKTP.CD",
@@ -142,6 +145,14 @@ def _fetch_world_bank_series_rows(key: str, start: date | None = None, end: date
     return normalize_macro_rows(rows)
 
 
+def _fetch_remote_macro_series_rows(key: str, start: date | None = None, end: date | None = None) -> list[dict]:
+    if is_akshare_macro_key(key):
+        return fetch_akshare_series_rows(key, start=start, end=end)
+    if WORLD_BANK_SYNC_FETCH_ENABLED:
+        return _fetch_world_bank_series_rows(key, start=start, end=end)
+    return []
+
+
 def _upsert_macro_rows(db: Session, rows: list[dict]) -> None:
     if not rows:
         return
@@ -213,7 +224,7 @@ def get_macro_series(db: Session, key: str, start: date | None = None, end: date
     cached = get_json(cache_key)
     if isinstance(cached, list):
         items = _cached_rows_to_points(cached)
-        if items or _parse_world_bank_series_key(key) is None:
+        if items or (_parse_world_bank_series_key(key) is None and not is_akshare_macro_key(key)):
             return items
 
     query = db.query(Macro).filter(Macro.key == key)
@@ -225,7 +236,7 @@ def get_macro_series(db: Session, key: str, start: date | None = None, end: date
     items = _orm_rows_to_points(rows)
 
     if not items:
-        fetched_rows = _fetch_world_bank_series_rows(key, start=start, end=end)
+        fetched_rows = _fetch_remote_macro_series_rows(key, start=start, end=end)
         if fetched_rows:
             _upsert_macro_rows(db, fetched_rows)
             items = _dict_rows_to_points(fetched_rows, start=start, end=end)

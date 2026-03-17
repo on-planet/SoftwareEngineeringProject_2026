@@ -4,6 +4,7 @@ import ReactECharts from "echarts-for-react";
 import { getFutures, getFuturesSeries } from "../services/api";
 import { formatNullableNumber, formatNumber, formatPercent, formatSigned } from "../utils/format";
 import { formatContractMonth, FUTURES_LABELS, sortPreferredFutures } from "../utils/futures";
+import { readPersistentCache, writePersistentCache } from "../utils/persistentCache";
 
 type FuturesFrequency = "day" | "week";
 
@@ -35,6 +36,9 @@ type FuturesSeries = {
   items: FuturesItem[];
 };
 
+const FUTURES_LIST_CACHE_TTL_MS = 10 * 60 * 1000;
+const FUTURES_SERIES_CACHE_TTL_MS = 10 * 60 * 1000;
+
 function toLatestBySymbol(items: FuturesItem[]) {
   const map = new Map<string, FuturesItem>();
   for (const item of items) {
@@ -47,6 +51,14 @@ function toLatestBySymbol(items: FuturesItem[]) {
     }
   }
   return sortPreferredFutures(Array.from(map.values()));
+}
+
+function buildFuturesListCacheKey(frequency: FuturesFrequency, start: string, end: string) {
+  return `futures:list:frequency=${frequency}:start=${start || "none"}:end=${end || "none"}`;
+}
+
+function buildFuturesSeriesCacheKey(symbol: string, frequency: FuturesFrequency, start: string, end: string) {
+  return `futures:series:${symbol}:frequency=${frequency}:start=${start || "none"}:end=${end || "none"}`;
 }
 
 export default function FuturesPage() {
@@ -62,7 +74,20 @@ export default function FuturesPage() {
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
+    const cacheKey = buildFuturesListCacheKey(frequency, start, end);
+    const cachedItems = readPersistentCache<FuturesItem[]>(cacheKey, FUTURES_LIST_CACHE_TTL_MS);
+    if (cachedItems?.length) {
+      setItems(cachedItems);
+      setSelectedSymbol((prev) => {
+        if (!cachedItems.length) {
+          return "";
+        }
+        return cachedItems.some((item) => item.symbol === prev) ? prev : cachedItems[0].symbol;
+      });
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     getFutures({
       sort: "desc",
       limit: 500,
@@ -78,6 +103,7 @@ export default function FuturesPage() {
         const page = res as FuturesPage;
         const latest = toLatestBySymbol(page.items ?? []);
         setItems(latest);
+        writePersistentCache(cacheKey, latest);
         setSelectedSymbol((prev) => {
           if (!latest.length) {
             return "";
@@ -108,7 +134,14 @@ export default function FuturesPage() {
       return;
     }
     let active = true;
-    setSeriesLoading(true);
+    const cacheKey = buildFuturesSeriesCacheKey(selectedSymbol, frequency, start, end);
+    const cachedSeries = readPersistentCache<FuturesItem[]>(cacheKey, FUTURES_SERIES_CACHE_TTL_MS);
+    if (cachedSeries?.length) {
+      setSeries(cachedSeries);
+      setSeriesLoading(false);
+    } else {
+      setSeriesLoading(true);
+    }
     getFuturesSeries(selectedSymbol, {
       start: start || undefined,
       end: end || undefined,
@@ -120,6 +153,7 @@ export default function FuturesPage() {
         }
         const payload = res as FuturesSeries;
         setSeries(payload.items ?? []);
+        writePersistentCache(cacheKey, payload.items ?? []);
         setError(null);
       })
       .catch((err: Error) => {

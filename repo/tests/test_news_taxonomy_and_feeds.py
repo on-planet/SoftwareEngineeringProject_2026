@@ -12,6 +12,7 @@ if str(ROOT / "api") not in sys.path:
     sys.path.insert(0, str(ROOT / "api"))
 
 from etl.fetchers import news_client
+from etl.utils.news_relevance import infer_news_relevance
 from etl.utils.news_taxonomy import classify_news_metadata, classify_time_bucket
 
 
@@ -37,6 +38,11 @@ class NewsTaxonomyTests(unittest.TestCase):
     def test_classify_time_bucket_marks_weekend(self) -> None:
         bucket = classify_time_bucket(datetime(2026, 3, 15, 4, 0, tzinfo=timezone.utc))
         self.assertEqual(bucket, "weekend")
+
+    def test_infer_news_relevance_maps_symbol_and_sector(self) -> None:
+        payload = infer_news_relevance("英伟达与人工智能服务器需求继续走强", symbol="ALL")
+        self.assertIn("NVDA.US", payload["related_symbols"] or "")
+        self.assertIn("科技", payload["related_sectors"] or "")
 
 
 if __name__ == "__main__":

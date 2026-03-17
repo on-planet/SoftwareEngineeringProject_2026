@@ -6,7 +6,7 @@ set "REPO_DIR=%PROJECT_DIR%repo"
 set "ENV_FILE=%PROJECT_DIR%.env.local"
 set "VENV_PYTHON=%PROJECT_DIR%.venv\Scripts\python.exe"
 set "SYSTEM_PYTHON=C:\Users\123\AppData\Local\Programs\Python\Python312\python.exe"
-set "CHECK_CMD=import importlib.util,sys;mods='fastapi,uvicorn,sqlalchemy,psycopg2,pydantic,redis,yaml,pysnowball,baostock'.split(',');missing=[m for m in mods if importlib.util.find_spec(m) is None];print('Missing Python modules: ' + ', '.join(missing)) if missing else None;sys.exit(1 if missing else 0)"
+set "CHECK_CMD=import importlib.util,sys;mods='fastapi,uvicorn,sqlalchemy,psycopg2,pydantic,redis,yaml,pysnowball,baostock,akshare'.split(',');missing=[m for m in mods if importlib.util.find_spec(m) is None];print('Missing Python modules: ' + ', '.join(missing)) if missing else None;sys.exit(1 if missing else 0)"
 
 if exist "%ENV_FILE%" (
   for /f "usebackq delims=" %%A in ("%ENV_FILE%") do (

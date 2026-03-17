@@ -42,6 +42,10 @@ def list_news(
     topic_categories: list[str] | None = Query(None),
     time_bucket: str | None = Query(None),
     time_buckets: list[str] | None = Query(None),
+    related_symbol: str | None = Query(None),
+    related_symbols: list[str] | None = Query(None),
+    related_sector: str | None = Query(None),
+    related_sectors: list[str] | None = Query(None),
     keyword: str | None = Query(None),
     sort_by: list[str] | None = Query(None),
     paging: dict = Depends(pagination_params),
@@ -54,6 +58,8 @@ def list_news(
     source_categories_filter = source_categories or ([source_category] if source_category else None)
     topic_categories_filter = topic_categories or ([topic_category] if topic_category else None)
     time_buckets_filter = time_buckets or ([time_bucket] if time_bucket else None)
+    related_symbols_filter = related_symbols or ([related_symbol] if related_symbol else None)
+    related_sectors_filter = related_sectors or ([related_sector] if related_sector else None)
     items, total = list_news_service(
         db,
         symbol,
@@ -66,6 +72,8 @@ def list_news(
         source_categories=source_categories_filter,
         topic_categories=topic_categories_filter,
         time_buckets=time_buckets_filter,
+        related_symbols=related_symbols_filter,
+        related_sectors=related_sectors_filter,
         keyword=keyword,
         sort_by=sort_by,
         sort=sorting["sort"],

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 
 import { getSectorExposure } from "../services/api";
 import { formatNumber, formatPercent } from "../utils/format";
+import { readPersistentCache, writePersistentCache } from "../utils/persistentCache";
 
 type SectorItem = {
   sector: string;
@@ -22,6 +23,12 @@ type SectorResponse = {
 
 type SortOrder = "asc" | "desc";
 
+const SECTOR_EXPOSURE_CACHE_TTL_MS = 10 * 60 * 1000;
+
+function buildSectorExposureCacheKey(market: string, sort: SortOrder, limit: number) {
+  return `sector-exposure:market=${market || "all"}:sort=${sort}:limit=${limit}:basis=market_value`;
+}
+
 export function SectorExposurePanel() {
   const [market, setMarket] = useState("");
   const [sort, setSort] = useState<SortOrder>("desc");
@@ -32,7 +39,14 @@ export function SectorExposurePanel() {
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
+    const cacheKey = buildSectorExposureCacheKey(market, sort, limit);
+    const cachedResponse = readPersistentCache<SectorResponse>(cacheKey, SECTOR_EXPOSURE_CACHE_TTL_MS);
+    if (cachedResponse) {
+      setResponse(cachedResponse);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     getSectorExposure({
       market: market || undefined,
       basis: "market_value",
@@ -41,7 +55,9 @@ export function SectorExposurePanel() {
     })
       .then((res) => {
         if (!active) return;
-        setResponse(res as SectorResponse);
+        const payload = res as SectorResponse;
+        setResponse(payload);
+        writePersistentCache(cacheKey, payload);
         setError(null);
       })
       .catch((err: Error) => {

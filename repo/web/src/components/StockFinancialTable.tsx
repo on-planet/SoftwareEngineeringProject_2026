@@ -1,7 +1,8 @@
-﻿import React, { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 
 import { getStockFinancials } from "../services/api";
 import { formatLoosePercent, formatNullableNumber } from "../utils/format";
+import { readPersistentCache, writePersistentCache } from "../utils/persistentCache";
 
 type FinancialItem = {
   symbol: string;
@@ -24,6 +25,12 @@ type Props = {
   symbol: string;
 };
 
+const STOCK_FINANCIALS_CACHE_TTL_MS = 30 * 60 * 1000;
+
+function buildStockFinancialsCacheKey(symbol: string) {
+  return `stock-financials:${symbol}:limit=12:sort=desc`;
+}
+
 export function StockFinancialTable({ symbol }: Props) {
   const [items, setItems] = useState<FinancialItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -31,7 +38,14 @@ export function StockFinancialTable({ symbol }: Props) {
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
+    const cacheKey = buildStockFinancialsCacheKey(symbol);
+    const cachedPage = readPersistentCache<FinancialPage>(cacheKey, STOCK_FINANCIALS_CACHE_TTL_MS);
+    if (cachedPage) {
+      setItems(cachedPage.items ?? []);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     getStockFinancials(symbol, { limit: 12, sort: "desc" })
       .then((res) => {
         if (!active) {
@@ -39,6 +53,7 @@ export function StockFinancialTable({ symbol }: Props) {
         }
         const payload = res as FinancialPage;
         setItems(payload.items ?? []);
+        writePersistentCache(cacheKey, payload);
         setError(null);
       })
       .catch((err: Error) => {

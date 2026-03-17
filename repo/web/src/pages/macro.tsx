@@ -2,7 +2,8 @@ import React, { useEffect, useMemo, useState } from "react";
 import ReactECharts from "echarts-for-react";
 
 import { getMacro, getMacroSeries } from "../services/api";
-import { formatNumber } from "../utils/format";
+import { formatLoosePercent, formatNumber } from "../utils/format";
+import { readPersistentCache, writePersistentCache } from "../utils/persistentCache";
 
 type MacroItem = {
   key: string;
@@ -23,14 +24,29 @@ type MacroSeries = {
   items: { date: string; value: number; score?: number }[];
 };
 
+type MacroSource = "world_bank" | "akshare";
 type SortOrder = "asc" | "desc";
 
-const INDICATOR_LABELS: Record<string, string> = {
-  GDP: "GDP(美元)",
-  CPI: "CPI(年增)",
-  PPI: "PPI(年增)",
+type SnapshotCard = MacroItem & {
+  source: MacroSource;
+  country: string;
+  family: string;
+  label: string;
+  countryLabel: string;
+  sourceLabel: string;
+};
+
+const SNAPSHOT_PAGE_LIMIT = 200;
+const SNAPSHOT_PAGE_MAX = 10;
+const SOURCE_CARD_LIMIT = 12;
+const MACRO_SNAPSHOT_CACHE_TTL_MS = 10 * 60 * 1000;
+const MACRO_SERIES_CACHE_TTL_MS = 10 * 60 * 1000;
+
+const WORLD_BANK_LABELS: Record<string, string> = {
+  GDP: "国内生产总值",
+  CPI: "居民消费价格指数",
   UNEMP: "失业率",
-  TRADE: "贸易占比",
+  TRADE: "贸易开放度",
 };
 
 const COUNTRY_LABELS: Record<string, string> = {
@@ -50,33 +66,175 @@ const COUNTRY_LABELS: Record<string, string> = {
   MEX: "墨西哥",
   IDN: "印度尼西亚",
   TUR: "土耳其",
-  SAU: "沙特",
+  SAU: "沙特阿拉伯",
   ZAF: "南非",
   ARG: "阿根廷",
   EUU: "欧盟",
+  EUR: "欧元区",
 };
 
-const DEFAULT_KEY = "";
-const SNAPSHOT_PAGE_LIMIT = 200;
-const SNAPSHOT_PAGE_MAX = 10;
+const AK_TOKEN_LABELS: Record<string, string> = {
+  GDP: "国内生产总值",
+  CPI: "居民消费价格指数",
+  PPI: "工业生产者出厂价格指数",
+  M2: "M2",
+  YOY: "同比",
+  MOM: "环比",
+  PMI: "PMI",
+  IP: "工业增加值",
+  FX: "外汇",
+  RESERVES: "储备",
+  EXPORTS: "出口",
+  IMPORTS: "进口",
+  TRADE: "贸易",
+  BALANCE: "顺差",
+  CAIXIN: "财新",
+  SERVICES: "服务业",
+  NON: "非",
+  MAN: "制造业",
+  RETAIL: "零售",
+  SALES: "销售",
+  UNEMP: "失业率",
+  NON_FARM: "非农就业",
+  CORE: "核心",
+  PCE: "PCE",
+  CNBS: "宏观杠杆率",
+  HOUSEHOLD: "住户部门",
+  NON_FIN_CORP: "非金融企业部门",
+  GENERAL_GOV: "政府部门",
+  CENTRAL_GOV: "中央政府",
+  LOCAL_GOV: "地方政府",
+  REAL_ECONOMY: "实体经济部门",
+  FIN_ASSET: "金融部门资产方",
+  FIN_LIABILITY: "金融部门负债方",
+  ACTUAL: "今值",
+  FORECAST: "预测值",
+  PREVIOUS: "前值",
+};
 
 function parseMacroKey(key: string) {
   const [indicator, country] = key.split(":");
   return {
-    key,
     indicator: indicator || "",
     country: country || "",
   };
 }
 
-function formatSeriesLabel(key: string): string {
-  const { indicator, country } = parseMacroKey(key);
-  const indicatorLabel = INDICATOR_LABELS[indicator] || indicator;
-  const countryLabel = COUNTRY_LABELS[country] || country;
-  return country ? `${indicatorLabel} - ${countryLabel}` : indicatorLabel;
+function isAkshareKey(key: string) {
+  return key.startsWith("AK_");
 }
 
-async function loadMacroSnapshotItems(): Promise<MacroItem[]> {
+function mergeAkTokens(tokens: string[]) {
+  const merged: string[] = [];
+  for (let index = 0; index < tokens.length; index += 1) {
+    const current = tokens[index];
+    const next = tokens[index + 1];
+    const nextNext = tokens[index + 2];
+    if (current === "NON" && next === "FARM") {
+      merged.push("NON_FARM");
+      index += 1;
+      continue;
+    }
+    if (current === "NON" && next === "FIN" && nextNext === "CORP") {
+      merged.push("NON_FIN_CORP");
+      index += 2;
+      continue;
+    }
+    if ((current === "GENERAL" || current === "CENTRAL" || current === "LOCAL") && next === "GOV") {
+      merged.push(`${current}_GOV`);
+      index += 1;
+      continue;
+    }
+    if (current === "REAL" && next === "ECONOMY") {
+      merged.push("REAL_ECONOMY");
+      index += 1;
+      continue;
+    }
+    if (current === "FIN" && (next === "ASSET" || next === "LIABILITY")) {
+      merged.push(`FIN_${next}`);
+      index += 1;
+      continue;
+    }
+    merged.push(current);
+  }
+  return merged;
+}
+
+function formatIndicatorLabel(indicator: string) {
+  if (!indicator) {
+    return "";
+  }
+  if (!isAkshareKey(indicator)) {
+    return WORLD_BANK_LABELS[indicator] || indicator;
+  }
+  const tokens = mergeAkTokens(indicator.slice(3).split("_").filter(Boolean));
+  return tokens.map((token) => AK_TOKEN_LABELS[token] || token).join(" / ");
+}
+
+function formatCompactNumberZh(value: number) {
+  const abs = Math.abs(value);
+  if (abs >= 1e12) {
+    return `${(value / 1e12).toFixed(abs >= 1e13 ? 1 : 2)}万亿`;
+  }
+  if (abs >= 1e8) {
+    return `${(value / 1e8).toFixed(abs >= 1e9 ? 1 : 2)}亿`;
+  }
+  if (abs >= 1e4) {
+    return `${(value / 1e4).toFixed(abs >= 1e5 ? 1 : 2)}万`;
+  }
+  return formatNumber(value);
+}
+
+function normalizeFamily(indicator: string) {
+  if (!indicator) {
+    return "";
+  }
+  if (!isAkshareKey(indicator)) {
+    return indicator.toUpperCase();
+  }
+  const tokens = mergeAkTokens(indicator.slice(3).split("_").filter(Boolean));
+  if (tokens.includes("GDP")) return "GDP";
+  if (tokens.includes("CPI")) return "CPI";
+  if (tokens.includes("UNEMP")) return "UNEMP";
+  return tokens.join("_");
+}
+
+function formatValue(item: SnapshotCard | { value: number; family: string }) {
+  const family = item.family.toUpperCase();
+  if (
+    family.includes("YOY") ||
+    family.includes("MOM") ||
+    family === "CPI" ||
+    family === "PPI" ||
+    family === "UNEMP"
+  ) {
+    return formatLoosePercent(item.value);
+  }
+  return formatCompactNumberZh(item.value);
+}
+
+function formatFullValue(item: SnapshotCard | { value: number; family: string }) {
+  const family = item.family.toUpperCase();
+  if (
+    family.includes("YOY") ||
+    family.includes("MOM") ||
+    family === "CPI" ||
+    family === "PPI" ||
+    family === "UNEMP"
+  ) {
+    return formatLoosePercent(item.value);
+  }
+  return formatNumber(item.value);
+}
+
+function formatScore(score?: number) {
+  if (score === null || score === undefined || Number.isNaN(score)) {
+    return "--";
+  }
+  return score.toFixed(2);
+}
+
+async function loadLatestMacroSnapshotItems(): Promise<MacroItem[]> {
   const merged: MacroItem[] = [];
   let offset = 0;
   let total = Number.POSITIVE_INFINITY;
@@ -96,33 +254,84 @@ async function loadMacroSnapshotItems(): Promise<MacroItem[]> {
     offset += SNAPSHOT_PAGE_LIMIT;
   }
 
-  return merged;
+  const latestByKey = new Map<string, MacroItem>();
+  for (const item of merged) {
+    const current = latestByKey.get(item.key);
+    if (!current || current.date < item.date) {
+      latestByKey.set(item.key, item);
+    }
+  }
+  return Array.from(latestByKey.values()).sort((left, right) => left.key.localeCompare(right.key));
+}
+
+function buildMacroSnapshotCacheKey() {
+  return "macro:snapshots:latest";
+}
+
+function buildMacroSeriesCacheKey(key: string, start: string, end: string) {
+  return `macro:series:${key}:start=${start || "none"}:end=${end || "none"}`;
+}
+
+function buildSnapshotCard(item: MacroItem): SnapshotCard {
+  const { indicator, country } = parseMacroKey(item.key);
+  const source: MacroSource = isAkshareKey(item.key) ? "akshare" : "world_bank";
+  return {
+    ...item,
+    source,
+    country,
+    family: normalizeFamily(indicator),
+    label: formatIndicatorLabel(indicator),
+    countryLabel: COUNTRY_LABELS[country] || country,
+    sourceLabel: source === "world_bank" ? "世界银行" : "AkShare",
+  };
+}
+
+function paginate<T>(items: T[], page: number, pageSize: number) {
+  const maxPage = Math.max(1, Math.ceil(items.length / pageSize));
+  const safePage = Math.min(Math.max(1, page), maxPage);
+  const offset = (safePage - 1) * pageSize;
+  return {
+    page: safePage,
+    maxPage,
+    items: items.slice(offset, offset + pageSize),
+  };
 }
 
 export default function MacroPage() {
   const [snapshotItems, setSnapshotItems] = useState<MacroItem[]>([]);
-  const [selectedKey, setSelectedKey] = useState(DEFAULT_KEY);
+  const [selectedKey, setSelectedKey] = useState("");
   const [series, setSeries] = useState<MacroSeries | null>(null);
   const [loading, setLoading] = useState(true);
   const [seriesLoading, setSeriesLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
-  const [sort, setSort] = useState<SortOrder>("desc");
-  const [limit, setLimit] = useState(40);
-  const [page, setPage] = useState(1);
-  const [indicator, setIndicator] = useState("");
+  const [search, setSearch] = useState("");
   const [country, setCountry] = useState("");
+  const [family, setFamily] = useState("");
+  const [worldBankPage, setWorldBankPage] = useState(1);
+  const [aksharePage, setAksharePage] = useState(1);
+  const [sort, setSort] = useState<SortOrder>("desc");
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
-    loadMacroSnapshotItems()
-      .then((res) => {
+    const cachedItems = readPersistentCache<MacroItem[]>(
+      buildMacroSnapshotCacheKey(),
+      MACRO_SNAPSHOT_CACHE_TTL_MS,
+    );
+    if (cachedItems?.length) {
+      setSnapshotItems(cachedItems);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
+    loadLatestMacroSnapshotItems()
+      .then((items) => {
         if (!active) {
           return;
         }
-        setSnapshotItems(res);
+        setSnapshotItems(items);
+        writePersistentCache(buildMacroSnapshotCacheKey(), items);
         setError(null);
       })
       .catch((err: Error) => {
@@ -130,7 +339,7 @@ export default function MacroPage() {
           return;
         }
         setSnapshotItems([]);
-        setError(err.message || "加载宏观指标失败");
+        setError(err.message || "宏观快照加载失败");
       })
       .finally(() => {
         if (active) {
@@ -142,49 +351,65 @@ export default function MacroPage() {
     };
   }, []);
 
-  const parsedKeys = useMemo(() => {
-    const byKey = new Map<string, ReturnType<typeof parseMacroKey>>();
-    snapshotItems.forEach((item) => {
-      const parsed = parseMacroKey(item.key);
-      if (parsed.indicator && parsed.country) {
-        byKey.set(item.key, parsed);
+  const cards = useMemo(() => snapshotItems.map(buildSnapshotCard), [snapshotItems]);
+
+  const visibleCards = useMemo(() => {
+    const worldBankCards = cards.filter((item) => item.source === "world_bank");
+    const coreCoverage = new Set(worldBankCards.map((item) => `${item.country}:${item.family}`));
+    const filteredAkshare = cards.filter((item) => {
+      if (item.source !== "akshare") {
+        return false;
       }
+      return !coreCoverage.has(`${item.country}:${item.family}`);
     });
-    return Array.from(byKey.values()).sort((left, right) => left.key.localeCompare(right.key));
-  }, [snapshotItems]);
 
-  const indicatorOptions = useMemo(
-    () => Array.from(new Set(parsedKeys.map((item) => item.indicator))).sort((left, right) => left.localeCompare(right)),
-    [parsedKeys],
+    const keyword = search.trim().toLowerCase();
+    const applyFilters = (items: SnapshotCard[]) =>
+      items
+        .filter((item) => (country ? item.country === country : true))
+        .filter((item) => (family ? item.family === family : true))
+        .filter((item) => {
+          if (!keyword) {
+            return true;
+          }
+          return [item.key, item.label, item.countryLabel, item.family].join(" ").toLowerCase().includes(keyword);
+        })
+        .sort((left, right) => {
+          const dateCompare = left.date.localeCompare(right.date);
+          if (dateCompare !== 0) {
+            return sort === "asc" ? dateCompare : -dateCompare;
+          }
+          return left.label.localeCompare(right.label);
+        });
+
+    return {
+      worldBank: applyFilters(worldBankCards),
+      akshare: applyFilters(filteredAkshare),
+      hiddenAkshareDuplicates: cards.filter((item) => item.source === "akshare").length - filteredAkshare.length,
+    };
+  }, [cards, country, family, search, sort]);
+
+  const allVisibleCards = useMemo(
+    () => [...visibleCards.worldBank, ...visibleCards.akshare],
+    [visibleCards.akshare, visibleCards.worldBank],
   );
-
-  const countryOptions = useMemo(
-    () => Array.from(new Set(parsedKeys.map((item) => item.country))).sort((left, right) => left.localeCompare(right)),
-    [parsedKeys],
-  );
-
-  const filteredKeys = useMemo(() => {
-    return parsedKeys
-      .filter((item) => (indicator ? item.indicator === indicator : true))
-      .filter((item) => (country ? item.country === country : true))
-      .map((item) => item.key);
-  }, [country, indicator, parsedKeys]);
 
   useEffect(() => {
-    if (filteredKeys.length === 0) {
+    if (!allVisibleCards.length) {
       if (selectedKey) {
-        setSelectedKey(DEFAULT_KEY);
+        setSelectedKey("");
       }
       return;
     }
-    if (!filteredKeys.includes(selectedKey)) {
-      setSelectedKey(filteredKeys[0]);
+    if (!allVisibleCards.some((item) => item.key === selectedKey)) {
+      setSelectedKey(allVisibleCards[0].key);
     }
-  }, [filteredKeys, selectedKey]);
+  }, [allVisibleCards, selectedKey]);
 
   useEffect(() => {
-    setPage(1);
-  }, [country, indicator, limit, sort]);
+    setWorldBankPage(1);
+    setAksharePage(1);
+  }, [country, family, search, sort]);
 
   useEffect(() => {
     if (!selectedKey) {
@@ -193,16 +418,24 @@ export default function MacroPage() {
       return;
     }
     let active = true;
-    setSeriesLoading(true);
+    const cacheKey = buildMacroSeriesCacheKey(selectedKey, start, end);
+    const cachedSeries = readPersistentCache<MacroSeries>(cacheKey, MACRO_SERIES_CACHE_TTL_MS);
+    if (cachedSeries?.items?.length) {
+      setSeries(cachedSeries);
+      setSeriesLoading(false);
+    } else {
+      setSeriesLoading(true);
+    }
     getMacroSeries(selectedKey, {
       start: start || undefined,
       end: end || undefined,
     })
-      .then((res) => {
+      .then((payload) => {
         if (!active) {
           return;
         }
-        setSeries(res as MacroSeries);
+        setSeries(payload as MacroSeries);
+        writePersistentCache(cacheKey, payload as MacroSeries);
         setError(null);
       })
       .catch((err: Error) => {
@@ -210,7 +443,7 @@ export default function MacroPage() {
           return;
         }
         setSeries(null);
-        setError(err.message || "加载宏观序列失败");
+        setError(err.message || "宏观序列加载失败");
       })
       .finally(() => {
         if (active) {
@@ -222,169 +455,152 @@ export default function MacroPage() {
     };
   }, [end, selectedKey, start]);
 
-  const filteredSnapshotItems = useMemo(() => {
-    return snapshotItems.filter((item) => {
-      const parsed = parseMacroKey(item.key);
-      if (indicator && parsed.indicator !== indicator) {
-        return false;
-      }
-      if (country && parsed.country !== country) {
-        return false;
-      }
-      return true;
-    });
-  }, [country, indicator, snapshotItems]);
-
-  const sortedSnapshotItems = useMemo(() => {
-    const next = [...filteredSnapshotItems];
-    next.sort((left, right) => {
-      const dateCompare = left.date.localeCompare(right.date);
-      if (dateCompare !== 0) {
-        return sort === "asc" ? dateCompare : -dateCompare;
-      }
-      return sort === "asc" ? left.key.localeCompare(right.key) : right.key.localeCompare(left.key);
-    });
-    return next;
-  }, [filteredSnapshotItems, sort]);
-
-  const total = sortedSnapshotItems.length;
-  const maxPage = useMemo(() => Math.max(1, Math.ceil(total / limit)), [limit, total]);
-
-  useEffect(() => {
-    if (page > maxPage) {
-      setPage(maxPage);
-    }
-  }, [maxPage, page]);
-
-  const offset = useMemo(() => (page - 1) * limit, [page, limit]);
-
-  const pagedSnapshotItems = useMemo(
-    () => sortedSnapshotItems.slice(offset, offset + limit),
-    [limit, offset, sortedSnapshotItems],
+  const countryOptions = useMemo(
+    () => Array.from(new Set(cards.map((item) => item.country))).sort((left, right) => left.localeCompare(right)),
+    [cards],
   );
 
-  const chartTitle = useMemo(() => (selectedKey ? formatSeriesLabel(selectedKey) : ""), [selectedKey]);
+  const familyOptions = useMemo(
+    () => Array.from(new Set(cards.map((item) => item.family))).sort((left, right) => left.localeCompare(right)),
+    [cards],
+  );
 
-  const seriesOption = useMemo(() => {
-    if (!series || !series.items.length) {
+  const pagedWorldBank = useMemo(
+    () => paginate(visibleCards.worldBank, worldBankPage, SOURCE_CARD_LIMIT),
+    [visibleCards.worldBank, worldBankPage],
+  );
+
+  const pagedAkshare = useMemo(
+    () => paginate(visibleCards.akshare, aksharePage, SOURCE_CARD_LIMIT),
+    [visibleCards.akshare, aksharePage],
+  );
+
+  useEffect(() => {
+    if (pagedWorldBank.page !== worldBankPage) {
+      setWorldBankPage(pagedWorldBank.page);
+    }
+  }, [pagedWorldBank.page, worldBankPage]);
+
+  useEffect(() => {
+    if (pagedAkshare.page !== aksharePage) {
+      setAksharePage(pagedAkshare.page);
+    }
+  }, [aksharePage, pagedAkshare.page]);
+
+  const selectedCard = useMemo(
+    () => allVisibleCards.find((item) => item.key === selectedKey) ?? null,
+    [allVisibleCards, selectedKey],
+  );
+
+  const chartOption = useMemo(() => {
+    if (!series || !series.items.length || !selectedCard) {
       return null;
     }
-    const labels = series.items.map((item) => item.date);
-    const values = series.items.map((item) => item.value);
-    const scores = series.items.map((item) => item.score ?? 0);
     return {
       animation: false,
-      title: chartTitle ? { text: chartTitle, left: "center", textStyle: { fontSize: 14, fontWeight: 600 } } : undefined,
-      tooltip: { trigger: "axis" },
-      legend: { data: ["数值", "评分"], top: 28 },
-      grid: { left: 48, right: 48, top: 64, bottom: 40 },
+      color: selectedCard.source === "world_bank" ? ["#0f766e", "#64748b"] : ["#b45309", "#64748b"],
+      tooltip: {
+        trigger: "axis",
+        formatter: (params: Array<{ axisValue?: string; seriesName?: string; value?: number }>) => {
+          if (!params.length) {
+            return "";
+          }
+          const lines = [params[0]?.axisValue || ""];
+          for (const item of params) {
+            if (!item) {
+              continue;
+            }
+            const valueText = item.seriesName === "评分" ? formatScore(item.value) : formatValue({ value: Number(item.value || 0), family: selectedCard.family });
+            lines.push(`${item.seriesName}: ${valueText}`);
+          }
+          return lines.join("<br/>");
+        },
+      },
+      legend: { data: ["数值", "评分"], top: 0 },
+      grid: { left: 48, right: 56, top: 46, bottom: 40 },
       xAxis: {
         type: "category",
-        data: labels,
         boundaryGap: false,
+        data: series.items.map((item) => item.date),
       },
       yAxis: [
-        { type: "value", scale: true },
-        { type: "value", min: 0, max: 1 },
+        {
+          type: "value",
+          scale: true,
+          axisLabel: {
+            formatter: (value: number) => formatValue({ value, family: selectedCard.family }),
+          },
+        },
+        { type: "value", min: 0, max: 1, axisLabel: { formatter: (value: number) => value.toFixed(1) } },
       ],
       series: [
-        { name: "数值", type: "line", data: values, smooth: true, showSymbol: false },
-        { name: "评分", type: "line", yAxisIndex: 1, data: scores, smooth: true, showSymbol: false },
+        {
+          name: "数值",
+          type: "line",
+          data: series.items.map((item) => item.value),
+          smooth: true,
+          showSymbol: false,
+          areaStyle: { opacity: 0.08 },
+        },
+        {
+          name: "评分",
+          type: "line",
+          yAxisIndex: 1,
+          data: series.items.map((item) => item.score ?? 0),
+          smooth: true,
+          showSymbol: false,
+          lineStyle: { type: "dashed" },
+        },
       ],
     };
-  }, [chartTitle, series]);
+  }, [selectedCard, series]);
+
+  const latestPoint = series?.items?.[series.items.length - 1] ?? null;
 
   if (loading) {
-    return <div className="page">宏观指标加载中...</div>;
+    return <div className="page">宏观数据加载中...</div>;
   }
 
-  if (error) {
-    return <div className="page">宏观指标加载失败：{error}</div>;
+  if (error && !cards.length) {
+    return <div className="page">{`宏观数据加载失败：${error}`}</div>;
   }
 
   return (
     <div className="page">
-      <section className="card" style={{ marginBottom: 16 }}>
-        <div className="card-title" style={{ marginBottom: 12 }}>
-          筛选条件
-        </div>
-        <div className="toolbar" style={{ flexWrap: "wrap", gap: 12 }}>
-          <label style={{ display: "flex", flexDirection: "column", fontSize: 12, gap: 6 }}>
-            开始日期
-            <input className="input" type="date" value={start} onChange={(event) => setStart(event.target.value)} />
-          </label>
-          <label style={{ display: "flex", flexDirection: "column", fontSize: 12, gap: 6 }}>
-            结束日期
-            <input className="input" type="date" value={end} onChange={(event) => setEnd(event.target.value)} />
-          </label>
-          <label style={{ display: "flex", flexDirection: "column", fontSize: 12, gap: 6 }}>
-            排序
-            <select className="select" value={sort} onChange={(event) => setSort(event.target.value as SortOrder)}>
-              <option value="desc">倒序</option>
-              <option value="asc">正序</option>
-            </select>
-          </label>
-          <label style={{ display: "flex", flexDirection: "column", fontSize: 12, gap: 6 }}>
-            每页
-            <select className="select" value={limit} onChange={(event) => setLimit(Number(event.target.value) || 40)}>
-              <option value={20}>20</option>
-              <option value={40}>40</option>
-              <option value={80}>80</option>
-              <option value={120}>120</option>
-            </select>
-          </label>
-          <div className="helper" style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 18 }}>
-            <button type="button" onClick={() => setPage((prev) => Math.max(1, prev - 1))} disabled={page <= 1} className="input">
-              上一页
-            </button>
-            <span>
-              第 {page} / {maxPage} 页 · 共 {total} 条
-            </span>
-            <button
-              type="button"
-              onClick={() => setPage((prev) => Math.min(maxPage, prev + 1))}
-              disabled={page >= maxPage}
-              className="input"
-            >
-              下一页
-            </button>
+      <section className="card hero-card">
+        <div className="page-header">
+          <div>
+            <h1 className="page-title">宏观数据看板</h1>
+            <p className="helper" style={{ marginTop: 8, maxWidth: 780 }}>
+              页面同时展示世界银行基础宏观序列与 AkShare 扩展指标。若 AkShare 指标与世界银行核心口径重复，则默认隐藏重复卡片，优先保留更稳定的基础口径。
+            </p>
           </div>
         </div>
-        <div className="helper" style={{ marginTop: 12 }}>
-          日期范围只影响上方图表序列，国家和指标目录固定来自最新宏观快照。
+        <div className="hero-grid">
+          <div className="hero-metric">
+            <div className="helper">当前可见序列</div>
+            <div className="hero-metric-value">{allVisibleCards.length}</div>
+            <div className="helper">已合并数据源并过滤重复项</div>
+          </div>
+          <div className="hero-metric">
+            <div className="helper">世界银行核心口径</div>
+            <div className="hero-metric-value">{visibleCards.worldBank.length}</div>
+            <div className="helper">跨国家可比的基础宏观快照</div>
+          </div>
+          <div className="hero-metric">
+            <div className="helper">AkShare 扩展指标</div>
+            <div className="hero-metric-value">{visibleCards.akshare.length}</div>
+            <div className="helper">{`已隐藏 ${visibleCards.hiddenAkshareDuplicates} 个与世界银行重复的指标`}</div>
+          </div>
         </div>
-      </section>
-
-      <section>
-        <h2 className="section-title">宏观指标</h2>
-        <div className="toolbar" style={{ marginBottom: 16, flexWrap: "wrap", gap: 12 }}>
-          <span className="helper">选择指标</span>
-          <label style={{ display: "flex", flexDirection: "column", fontSize: 12, gap: 6 }}>
-            指标
-            <select
-              className="select"
-              value={indicator}
-              onChange={(event) => {
-                setIndicator(event.target.value);
-              }}
-            >
-              <option value="">全部</option>
-              {indicatorOptions.map((item) => (
-                <option key={item} value={item}>
-                  {INDICATOR_LABELS[item] || item}
-                </option>
-              ))}
-            </select>
+        <div className="toolbar" style={{ marginTop: 8 }}>
+          <label style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 12 }}>
+            搜索
+            <input className="input" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="GDP / CPI / 非农 / 中国" />
           </label>
-          <label style={{ display: "flex", flexDirection: "column", fontSize: 12, gap: 6 }}>
-            国家/地区
-            <select
-              className="select"
-              value={country}
-              onChange={(event) => {
-                setCountry(event.target.value);
-              }}
-            >
+          <label style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 12 }}>
+            国家或地区
+            <select className="select" value={country} onChange={(event) => setCountry(event.target.value)}>
               <option value="">全部</option>
               {countryOptions.map((item) => (
                 <option key={item} value={item}>
@@ -393,60 +609,224 @@ export default function MacroPage() {
               ))}
             </select>
           </label>
-          <label style={{ display: "flex", flexDirection: "column", fontSize: 12, gap: 6 }}>
-            序列
-            <select className="select" value={selectedKey} onChange={(event) => setSelectedKey(event.target.value)}>
-              {filteredKeys.length === 0 ? <option value="">暂无指标</option> : null}
-              {filteredKeys.map((key) => (
-                <option key={key} value={key}>
-                  {formatSeriesLabel(key)}
+          <label style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 12 }}>
+            指标类别
+            <select className="select" value={family} onChange={(event) => setFamily(event.target.value)}>
+              <option value="">全部</option>
+              {familyOptions.map((item) => (
+                <option key={item} value={item}>
+                  {formatIndicatorLabel(item)}
                 </option>
               ))}
             </select>
           </label>
+          <label style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 12 }}>
+            排序
+            <select className="select" value={sort} onChange={(event) => setSort(event.target.value as SortOrder)}>
+              <option value="desc">最新优先</option>
+              <option value="asc">最早优先</option>
+            </select>
+          </label>
+          <label style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 12 }}>
+            序列开始日期
+            <input className="input" type="date" value={start} onChange={(event) => setStart(event.target.value)} />
+          </label>
+          <label style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 12 }}>
+            序列结束日期
+            <input className="input" type="date" value={end} onChange={(event) => setEnd(event.target.value)} />
+          </label>
         </div>
+      </section>
+
+      <section className="split-grid">
         <div className="card">
-          {seriesLoading ? (
-            <div>宏观序列加载中...</div>
-          ) : !selectedKey ? (
-            <div>请先选择指标序列</div>
-          ) : seriesOption ? (
-            <ReactECharts option={seriesOption} style={{ height: 320 }} />
+          <div className="section-headline">
+            <div>
+              <h2 className="section-title" style={{ marginBottom: 4 }}>
+                当前选中序列
+              </h2>
+              <div className="helper">{selectedCard ? selectedCard.key : "请从下方卡片中选择一项"}</div>
+            </div>
+            {selectedCard ? (
+              <div
+                style={{
+                  borderRadius: 999,
+                  padding: "8px 12px",
+                  background: selectedCard.source === "world_bank" ? "rgba(15, 118, 110, 0.12)" : "rgba(180, 83, 9, 0.12)",
+                  color: selectedCard.source === "world_bank" ? "#0f766e" : "#b45309",
+                  fontSize: 12,
+                  fontWeight: 700,
+                }}
+              >
+                {selectedCard.sourceLabel}
+              </div>
+            ) : null}
+          </div>
+          {seriesLoading ? <div className="helper">序列加载中...</div> : null}
+          {!seriesLoading && chartOption ? <ReactECharts option={chartOption} style={{ height: 320 }} /> : null}
+          {!seriesLoading && !chartOption ? <div className="helper">暂无可展示序列。</div> : null}
+        </div>
+
+        <div className="card">
+          <div className="section-headline">
+            <div>
+              <h2 className="section-title" style={{ marginBottom: 4 }}>
+                关键摘要
+              </h2>
+              <div className="helper">当前所选宏观序列的最新快照</div>
+            </div>
+          </div>
+          {!selectedCard ? (
+            <div className="helper">选择一个序列卡片后可查看详情。</div>
           ) : (
-            <div>当前序列暂无历史数据，接口会在首次访问时自动回填。</div>
+            <div className="summary-grid" style={{ marginTop: 0 }}>
+              <div className="summary-card">
+                <div className="helper">指标名称</div>
+                <div className="stock-card-title" style={{ marginTop: 8 }}>
+                  {selectedCard.label}
+                </div>
+                <div className="helper" style={{ marginTop: 8 }}>
+                  {selectedCard.countryLabel}
+                </div>
+              </div>
+              <div className="summary-card">
+                <div className="helper">最新数值</div>
+                <div className="stock-score-value">{formatValue(selectedCard)}</div>
+                <div className="helper" style={{ marginTop: 8 }}>
+                  {selectedCard.date}
+                </div>
+                <div className="helper" style={{ marginTop: 4 }}>
+                  {`完整值 ${formatFullValue(selectedCard)}`}
+                </div>
+              </div>
+              <div className="summary-card">
+                <div className="helper">最新评分</div>
+                <div className="stock-score-value">{formatScore(latestPoint?.score ?? selectedCard.score)}</div>
+                <div className="helper" style={{ marginTop: 8 }}>
+                  {series ? `已加载 ${series.items.length} 个历史点` : "尚未加载历史序列"}
+                </div>
+              </div>
+            </div>
           )}
         </div>
       </section>
 
       <section>
-        <h2 className="section-title">最新指标快照</h2>
-        {pagedSnapshotItems.length === 0 ? (
-          <div className="helper">暂无宏观指标数据</div>
-        ) : (
-          <div className="grid grid-3">
-            {pagedSnapshotItems.map((item) => {
-              const { indicator: indicatorPart, country: countryPart } = parseMacroKey(item.key);
-              const isActive = item.key === selectedKey;
-              return (
-                <button
-                  key={`${item.key}-${item.date}`}
-                  type="button"
-                  className="card index-card index-card-button"
-                  data-active={isActive}
-                  onClick={() => setSelectedKey(item.key)}
-                >
-                  <div className="card-title">{INDICATOR_LABELS[indicatorPart] || indicatorPart}</div>
-                  <div className="helper">
-                    {COUNTRY_LABELS[countryPart] || countryPart} · {item.date}
-                  </div>
-                  <div style={{ marginTop: 6 }}>数值 {formatNumber(item.value)}</div>
-                  <div className="helper" style={{ marginTop: 4 }}>
-                    评分 {formatNumber(item.score ?? 0)}
-                  </div>
-                </button>
-              );
-            })}
+        <div className="section-headline">
+          <div>
+            <h2 className="section-title">世界银行核心口径</h2>
+            <div className="helper">跨国家可比的基础宏观指标，优先展示长期稳定、覆盖面更广的口径。</div>
           </div>
+          <div className="helper">{`${visibleCards.worldBank.length} 个序列`}</div>
+        </div>
+        {pagedWorldBank.items.length ? (
+          <>
+            <div className="grid grid-3">
+              {pagedWorldBank.items.map((item) => {
+                const active = item.key === selectedKey;
+                return (
+                  <button
+                    key={item.key}
+                    type="button"
+                    className="card index-card index-card-button"
+                    data-active={active}
+                    onClick={() => setSelectedKey(item.key)}
+                    style={{
+                      textAlign: "left",
+                      borderColor: active ? "rgba(15, 118, 110, 0.4)" : undefined,
+                      background: active ? "linear-gradient(180deg, #ecfeff 0%, #ffffff 100%)" : undefined,
+                    }}
+                    title={`完整值：${formatFullValue(item)}`}
+                  >
+                    <div className="card-title">{item.label}</div>
+                    <div className="helper">{`${item.countryLabel} | ${item.sourceLabel}`}</div>
+                    <div style={{ marginTop: 10, fontSize: 24, fontWeight: 800, lineHeight: 1.15, wordBreak: "break-word" }}>{formatValue(item)}</div>
+                    <div className="helper" style={{ marginTop: 6 }}>{`完整值 ${formatFullValue(item)}`}</div>
+                    <div className="helper" style={{ marginTop: 8 }}>{`更新于 ${item.date}`}</div>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="toolbar" style={{ marginTop: 16, justifyContent: "space-between" }}>
+              <div className="helper">{`第 ${pagedWorldBank.page} / ${pagedWorldBank.maxPage} 页`}</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button className="input" type="button" disabled={pagedWorldBank.page <= 1} onClick={() => setWorldBankPage((value) => value - 1)}>
+                  上一页
+                </button>
+                <button
+                  className="input"
+                  type="button"
+                  disabled={pagedWorldBank.page >= pagedWorldBank.maxPage}
+                  onClick={() => setWorldBankPage((value) => value + 1)}
+                >
+                  下一页
+                </button>
+              </div>
+            </div>
+          </>
+        ) : (
+          <div className="helper">当前筛选条件下没有世界银行序列。</div>
+        )}
+      </section>
+
+      <section>
+        <div className="section-headline">
+          <div>
+            <h2 className="section-title">AkShare 扩展指标</h2>
+            <div className="helper">
+              展示发布型指标以及中国、美国、欧元区的更细颗粒度数据。与世界银行核心口径重复的 AkShare 指标会在这里自动隐藏。
+            </div>
+          </div>
+          <div className="helper">{`${visibleCards.akshare.length} 个序列 | 已隐藏 ${visibleCards.hiddenAkshareDuplicates} 个重复项`}</div>
+        </div>
+        {pagedAkshare.items.length ? (
+          <>
+            <div className="grid grid-3">
+              {pagedAkshare.items.map((item) => {
+                const active = item.key === selectedKey;
+                return (
+                  <button
+                    key={item.key}
+                    type="button"
+                    className="card index-card index-card-button"
+                    data-active={active}
+                    onClick={() => setSelectedKey(item.key)}
+                    style={{
+                      textAlign: "left",
+                      borderColor: active ? "rgba(180, 83, 9, 0.38)" : undefined,
+                      background: active ? "linear-gradient(180deg, #fff7ed 0%, #ffffff 100%)" : undefined,
+                    }}
+                    title={`完整值：${formatFullValue(item)}`}
+                  >
+                    <div className="card-title">{item.label}</div>
+                    <div className="helper">{`${item.countryLabel} | ${item.sourceLabel}`}</div>
+                    <div style={{ marginTop: 10, fontSize: 24, fontWeight: 800, lineHeight: 1.15, wordBreak: "break-word" }}>{formatValue(item)}</div>
+                    <div className="helper" style={{ marginTop: 6 }}>{`完整值 ${formatFullValue(item)}`}</div>
+                    <div className="helper" style={{ marginTop: 8 }}>{`更新于 ${item.date}`}</div>
+                    <div className="helper" style={{ marginTop: 4 }}>{`评分 ${formatScore(item.score)}`}</div>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="toolbar" style={{ marginTop: 16, justifyContent: "space-between" }}>
+              <div className="helper">{`第 ${pagedAkshare.page} / ${pagedAkshare.maxPage} 页`}</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button className="input" type="button" disabled={pagedAkshare.page <= 1} onClick={() => setAksharePage((value) => value - 1)}>
+                  上一页
+                </button>
+                <button
+                  className="input"
+                  type="button"
+                  disabled={pagedAkshare.page >= pagedAkshare.maxPage}
+                  onClick={() => setAksharePage((value) => value + 1)}
+                >
+                  下一页
+                </button>
+              </div>
+            </div>
+          </>
+        ) : (
+          <div className="helper">当前筛选条件下没有 AkShare 序列。</div>
         )}
       </section>
     </div>
