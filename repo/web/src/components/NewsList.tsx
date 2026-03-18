@@ -28,6 +28,26 @@ function buildNewsListCacheKey(symbol: string, limit: number) {
   return `news-list:${symbol}:limit=${limit}`;
 }
 
+function formatSentiment(value: string) {
+  if (value === "positive") {
+    return "正面";
+  }
+  if (value === "negative") {
+    return "负面";
+  }
+  return "中性";
+}
+
+function sentimentColor(value: string) {
+  if (value === "positive") {
+    return "#ef4444";
+  }
+  if (value === "negative") {
+    return "#10b981";
+  }
+  return "#f59e0b";
+}
+
 export function NewsList({ symbol }: Props) {
   const [items, setItems] = useState<NewsItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -100,8 +120,8 @@ export function NewsList({ symbol }: Props) {
           </div>
           <div style={{ marginTop: 6, fontSize: 12 }}>
             情绪：
-            <span style={{ color: item.sentiment === "positive" ? "#f87171" : "#34d399", fontWeight: 600 }}>
-              {item.sentiment}
+            <span style={{ color: sentimentColor(item.sentiment), fontWeight: 600, marginLeft: 4 }}>
+              {formatSentiment(item.sentiment)}
             </span>
           </div>
         </div>

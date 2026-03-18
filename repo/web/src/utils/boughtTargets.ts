@@ -96,6 +96,25 @@ function writeBoughtTargets(list: BoughtTarget[], explicitUserId?: number | null
   }
 }
 
+export function replaceBoughtTargets(items: BoughtTarget[]): BoughtTarget[] {
+  const unique = new Set<string>();
+  const normalizedItems: BoughtTarget[] = [];
+  for (const item of items || []) {
+    const normalized = normalizeRecord(item);
+    if (!normalized || unique.has(normalized.symbol)) {
+      continue;
+    }
+    unique.add(normalized.symbol);
+    normalizedItems.push(normalized);
+    if (normalizedItems.length >= MAX_BOUGHT_TARGETS) {
+      break;
+    }
+  }
+  normalizedItems.sort((a, b) => b.updatedAt - a.updatedAt);
+  writeBoughtTargets(normalizedItems);
+  return normalizedItems;
+}
+
 function parseBoughtTargetList(raw: string | null): BoughtTarget[] {
   if (!raw) {
     return [];

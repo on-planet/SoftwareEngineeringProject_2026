@@ -15,6 +15,7 @@ import xml.etree.ElementTree as ET
 
 from etl.utils.logging import get_logger
 from etl.utils.news_relevance import infer_news_relevance
+from etl.utils.news_sentiment import infer_news_sentiment
 from etl.utils.news_taxonomy import classify_news_metadata
 from etl.utils.normalize import ensure_required
 
@@ -245,6 +246,7 @@ def _fetch_rss_batch(urls: Iterable[str], max_workers: int | None = None) -> dic
 
 def _append_rows(rows: List[dict], symbol: str, items: list[dict], as_of: date, source: str) -> None:
     for item in items:
+        title = item.get("title") or ""
         published_at = item.get("published_at")
         if not published_at:
             continue
@@ -255,12 +257,17 @@ def _append_rows(rows: List[dict], symbol: str, items: list[dict], as_of: date, 
             link=item.get("link") or "",
             published_at=published_at,
         )
-        relevance = infer_news_relevance(item.get("title") or "", symbol=symbol)
+        relevance = infer_news_relevance(title, symbol=symbol)
+        sentiment = infer_news_sentiment(
+            title,
+            source=source,
+            topic_category=metadata.get("topic_category"),
+        )
         rows.append(
             {
                 "symbol": symbol,
-                "title": item.get("title") or "",
-                "sentiment": "neutral",
+                "title": title,
+                "sentiment": sentiment,
                 "published_at": published_at,
                 "link": item.get("link") or "",
                 "source": source,

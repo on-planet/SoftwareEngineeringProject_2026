@@ -29,6 +29,8 @@ from app.models.stock_intraday_kline import StockIntradayKline  # noqa: F401
 from app.models.stock_research_item import StockResearchItem  # noqa: F401
 from app.models.stocks import Stock  # noqa: F401
 from app.models.user_portfolio import UserPortfolio  # noqa: F401
+from app.models.user_watch_target import UserWatchTarget  # noqa: F401
+from app.models.user_bought_target import UserBoughtTarget  # noqa: F401
 
 
 def init_schema() -> None:

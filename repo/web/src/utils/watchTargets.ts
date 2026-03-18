@@ -109,6 +109,24 @@ function writeWatchTargets(list: string[], explicitUserId?: number | null) {
   }
 }
 
+export function replaceWatchTargets(items: string[]): string[] {
+  const unique = new Set<string>();
+  const next: string[] = [];
+  for (const item of items || []) {
+    const symbol = normalizeSymbol(String(item || ""));
+    if (!symbol || unique.has(symbol)) {
+      continue;
+    }
+    unique.add(symbol);
+    next.push(symbol);
+    if (next.length >= MAX_WATCH_TARGETS) {
+      break;
+    }
+  }
+  writeWatchTargets(next);
+  return next;
+}
+
 export function addWatchTarget(symbol: string): string[] {
   const normalized = normalizeSymbol(symbol);
   if (!normalized) {

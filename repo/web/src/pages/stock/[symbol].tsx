@@ -1,9 +1,11 @@
-﻿import dynamic from "next/dynamic";
+import dynamic from "next/dynamic";
 import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/router";
 
 import { StockFundamental } from "../../components/StockFundamental";
-import { addWatchTarget, hasWatchTarget } from "../../utils/watchTargets";
+import { getMyWatchTargets, upsertMyWatchTarget } from "../../services/api";
+import { AUTH_CHANGED_EVENT, getAuthToken } from "../../utils/auth";
+import { addWatchTarget, hasWatchTarget, readWatchTargets, replaceWatchTargets } from "../../utils/watchTargets";
 
 const StockKlinePanel = dynamic(
   () => import("../../components/StockKlinePanel").then((mod) => mod.StockKlinePanel),
@@ -37,6 +39,24 @@ type DeferredSectionProps = {
   minHeight?: number;
   rootMargin?: string;
 };
+
+function normalizeSymbol(value: string) {
+  return (value || "").trim().toUpperCase();
+}
+
+function dedupeSymbols(values: string[]) {
+  const unique = new Set<string>();
+  const result: string[] = [];
+  for (const value of values || []) {
+    const symbol = normalizeSymbol(value);
+    if (!symbol || unique.has(symbol)) {
+      continue;
+    }
+    unique.add(symbol);
+    result.push(symbol);
+  }
+  return result;
+}
 
 function DeferredSection({
   children,
@@ -86,25 +106,58 @@ function DeferredSection({
 export default function StockPage({ symbol = "000001.SZ" }: Props) {
   const router = useRouter();
   const routeSymbol = typeof router.query.symbol === "string" ? router.query.symbol : symbol;
-  const normalizedRouteSymbol = useMemo(() => routeSymbol.trim().toUpperCase(), [routeSymbol]);
+  const normalizedRouteSymbol = useMemo(() => normalizeSymbol(routeSymbol), [routeSymbol]);
   const [currentSymbol, setCurrentSymbol] = useState(normalizedRouteSymbol);
   const [watchMessage, setWatchMessage] = useState<string | null>(null);
   const [isWatched, setIsWatched] = useState(false);
+  const [authToken, setAuthToken] = useState<string | null>(null);
 
   useEffect(() => {
     setCurrentSymbol(normalizedRouteSymbol);
     setWatchMessage(null);
   }, [normalizedRouteSymbol]);
 
-  const appliedSymbol = currentSymbol.trim().toUpperCase() || normalizedRouteSymbol;
+  const appliedSymbol = normalizeSymbol(currentSymbol) || normalizedRouteSymbol;
 
   useEffect(() => {
     setIsWatched(hasWatchTarget(appliedSymbol));
   }, [appliedSymbol]);
 
+  useEffect(() => {
+    const syncToken = () => {
+      setAuthToken(getAuthToken());
+    };
+    syncToken();
+    window.addEventListener(AUTH_CHANGED_EVENT, syncToken);
+    return () => {
+      window.removeEventListener(AUTH_CHANGED_EVENT, syncToken);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!authToken) {
+      return;
+    }
+    let active = true;
+    void getMyWatchTargets(authToken)
+      .then((items: any[]) => {
+        if (!active) {
+          return;
+        }
+        const remoteSymbols = dedupeSymbols((items || []).map((item) => String(item?.symbol || "")));
+        const merged = dedupeSymbols([...remoteSymbols, ...readWatchTargets()]);
+        const next = replaceWatchTargets(merged);
+        setIsWatched(next.includes(normalizeSymbol(appliedSymbol)));
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [appliedSymbol, authToken]);
+
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const nextSymbol = currentSymbol.trim().toUpperCase();
+    const nextSymbol = normalizeSymbol(currentSymbol);
     if (!nextSymbol) {
       return;
     }
@@ -112,13 +165,18 @@ export default function StockPage({ symbol = "000001.SZ" }: Props) {
   };
 
   const handleAddWatchTarget = () => {
-    const targetSymbol = appliedSymbol.trim().toUpperCase();
+    const targetSymbol = normalizeSymbol(appliedSymbol);
     if (!targetSymbol) {
       return;
     }
     addWatchTarget(targetSymbol);
     setIsWatched(true);
     setWatchMessage(`已加入观察：${targetSymbol}`);
+    if (authToken) {
+      void upsertMyWatchTarget(authToken, targetSymbol).catch(() => {
+        setWatchMessage(`已加入本地，云端同步失败：${targetSymbol}`);
+      });
+    }
   };
 
   return (

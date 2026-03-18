@@ -62,6 +62,24 @@ async function requestAuthed<T = any>(url: string, token: string): Promise<T> {
   });
 }
 
+async function requestAuthedJson<T = any>(
+  url: string,
+  payload: Record<string, unknown>,
+  token: string,
+  options?: { method?: "POST" | "PUT" | "PATCH" },
+): Promise<T> {
+  return requestJson<T>(url, payload, { token, method: options?.method });
+}
+
+async function requestAuthedDelete<T = any>(url: string, token: string): Promise<T> {
+  return requestWithInit<T>(url, {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+}
+
 export async function getIndices(params?: { as_of?: string; sort?: "asc" | "desc"; limit?: number; offset?: number }) {
   const query = new URLSearchParams();
   if (params?.as_of) query.set("as_of", params.as_of);
@@ -508,6 +526,23 @@ export async function getPortfolioAnalysis(userId: number, params?: { top_n?: nu
   return request(`/api/user/${userId}/portfolio/analysis${suffix ? `?${suffix}` : ""}`);
 }
 
+export type WatchTargetItem = {
+  symbol: string;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type BoughtTargetItem = {
+  symbol: string;
+  buy_price: number;
+  lots: number;
+  buy_date: string;
+  fee: number;
+  note: string;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
 export async function registerUser(account: string, password: string) {
   return requestJson("/api/auth/register", { account, password });
 }
@@ -518,5 +553,71 @@ export async function loginUser(account: string, password: string) {
 
 export async function getCurrentUser(token: string) {
   return requestAuthed("/api/auth/me", token);
+}
+
+export async function getMyWatchTargets(token: string) {
+  return requestAuthed<WatchTargetItem[]>("/api/user/me/watch-targets", token);
+}
+
+export async function upsertMyWatchTarget(token: string, symbol: string) {
+  return requestAuthedJson<WatchTargetItem>("/api/user/me/watch-targets", { symbol }, token);
+}
+
+export async function upsertMyWatchTargetsBatch(token: string, symbols: string[]) {
+  return requestAuthedJson<WatchTargetItem[]>(
+    "/api/user/me/watch-targets/batch",
+    { symbols },
+    token,
+  );
+}
+
+export async function deleteMyWatchTarget(token: string, symbol: string) {
+  return requestAuthedDelete(`/api/user/me/watch-targets/${encodeURIComponent(symbol)}`, token);
+}
+
+export async function getMyBoughtTargets(token: string) {
+  return requestAuthed<BoughtTargetItem[]>("/api/user/me/bought-targets", token);
+}
+
+export async function upsertMyBoughtTarget(
+  token: string,
+  payload: { symbol: string; buy_price: number; lots: number; buy_date: string; fee?: number; note?: string },
+) {
+  return requestAuthedJson<BoughtTargetItem>(
+    "/api/user/me/bought-targets",
+    {
+      symbol: payload.symbol,
+      buy_price: payload.buy_price,
+      lots: payload.lots,
+      buy_date: payload.buy_date,
+      fee: payload.fee ?? 0,
+      note: payload.note ?? "",
+    },
+    token,
+  );
+}
+
+export async function upsertMyBoughtTargetsBatch(
+  token: string,
+  items: Array<{ symbol: string; buy_price: number; lots: number; buy_date: string; fee?: number; note?: string }>,
+) {
+  return requestAuthedJson<BoughtTargetItem[]>(
+    "/api/user/me/bought-targets/batch",
+    {
+      items: items.map((item) => ({
+        symbol: item.symbol,
+        buy_price: item.buy_price,
+        lots: item.lots,
+        buy_date: item.buy_date,
+        fee: item.fee ?? 0,
+        note: item.note ?? "",
+      })),
+    },
+    token,
+  );
+}
+
+export async function deleteMyBoughtTarget(token: string, symbol: string) {
+  return requestAuthedDelete(`/api/user/me/bought-targets/${encodeURIComponent(symbol)}`, token);
 }
 

@@ -729,6 +729,17 @@ def update_news_metadata(rows: Iterable[dict]) -> int:
     return _get_loader().execute_many(sql, payload)
 
 
+def update_news_sentiment(rows: Iterable[dict]) -> int:
+    _ensure_news_columns()
+    sql = """
+    UPDATE news
+    SET sentiment = :sentiment
+    WHERE id = :id
+    """
+    payload = _validate_rows(rows, ["id", "sentiment"], "news.sentiment")
+    return _get_loader().execute_many(sql, payload)
+
+
 def list_daily_price_rows(as_of: date) -> list[dict]:
     sql = """
     SELECT symbol, date, open, high, low, close, volume

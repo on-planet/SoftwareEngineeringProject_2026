@@ -13,14 +13,24 @@ type WatchOverviewItem = {
   sector: string;
   current: number | null;
   percent: number | null;
+  failed: boolean;
 };
 
 type WatchAnalysisCachePayload = {
   items: WatchOverviewItem[];
 };
 
+type PortfolioAnalysisPanelProps = {
+  symbols: string[];
+  title?: string;
+  emptyText?: string;
+  pageSize?: number;
+};
+
 const WATCH_ANALYSIS_CACHE_TTL_MS = 5 * 60 * 1000;
-const MAX_ANALYSIS_SYMBOLS = 30;
+const MAX_ANALYSIS_SYMBOLS = 60;
+const DEFAULT_PAGE_SIZE = 10;
+const UNKNOWN_SECTOR = "未分类";
 
 function normalizeSymbol(symbol: string) {
   return (symbol || "").trim().toUpperCase();
@@ -30,11 +40,16 @@ function buildWatchAnalysisCacheKey(symbols: string[]) {
   return ["watch-analysis", ...symbols].join(":");
 }
 
-export function PortfolioAnalysisPanel({ watchSymbols }: { watchSymbols: string[] }) {
+export function PortfolioAnalysisPanel({
+  symbols,
+  title = "组合分析",
+  emptyText = "暂无标的，请先添加后再查看分析。",
+  pageSize = DEFAULT_PAGE_SIZE,
+}: PortfolioAnalysisPanelProps) {
   const normalizedSymbols = useMemo(() => {
     const unique = new Set<string>();
     const result: string[] = [];
-    for (const item of watchSymbols) {
+    for (const item of symbols) {
       const symbol = normalizeSymbol(item);
       if (!symbol || unique.has(symbol)) {
         continue;
@@ -46,12 +61,17 @@ export function PortfolioAnalysisPanel({ watchSymbols }: { watchSymbols: string[
       }
     }
     return result;
-  }, [watchSymbols]);
+  }, [symbols]);
 
   const [topN, setTopN] = useState(10);
   const [items, setItems] = useState<WatchOverviewItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+
+  useEffect(() => {
+    setPage(1);
+  }, [normalizedSymbols, pageSize]);
 
   useEffect(() => {
     if (normalizedSymbols.length === 0) {
@@ -80,35 +100,50 @@ export function PortfolioAnalysisPanel({ watchSymbols }: { watchSymbols: string[
         if (!active) {
           return;
         }
-        const nextItems: WatchOverviewItem[] = [];
-        results.forEach((result, index) => {
-          if (result.status !== "fulfilled") {
-            return;
+
+        let failedCount = 0;
+        const nextItems = normalizedSymbols.map((symbol, index): WatchOverviewItem => {
+          const result = results[index];
+          if (!result || result.status !== "fulfilled") {
+            failedCount += 1;
+            return {
+              symbol,
+              name: symbol,
+              market: "",
+              sector: UNKNOWN_SECTOR,
+              current: null,
+              percent: null,
+              failed: true,
+            };
           }
           const payload = result.value as any;
           const quote = payload?.quote || {};
-          const symbol = normalizeSymbol(payload?.symbol || normalizedSymbols[index] || "");
-          if (!symbol) {
-            return;
-          }
-          nextItems.push({
-            symbol,
+          return {
+            symbol: normalizeSymbol(payload?.symbol || symbol),
             name: String(payload?.name || symbol),
             market: String(payload?.market || ""),
-            sector: String(payload?.sector || "未分类"),
+            sector: String(payload?.sector || UNKNOWN_SECTOR),
             current: typeof quote.current === "number" ? quote.current : null,
             percent: typeof quote.percent === "number" ? quote.percent : null,
-          });
+            failed: false,
+          };
         });
+
         setItems(nextItems);
         writePersistentCache(cacheKey, { items: nextItems });
-        setError(nextItems.length > 0 ? null : "自选标的数据加载失败");
+        if (failedCount >= normalizedSymbols.length) {
+          setError("行情接口暂时不可用，已展示本地占位数据。");
+        } else if (failedCount > 0) {
+          setError(`部分标的加载失败（${failedCount}/${normalizedSymbols.length}）。`);
+        } else {
+          setError(null);
+        }
       })
       .catch((err: Error) => {
         if (!active) {
           return;
         }
-        setError(err.message || "自选分析加载失败");
+        setError(err.message || "组合分析加载失败");
       })
       .finally(() => {
         if (active) {
@@ -123,7 +158,7 @@ export function PortfolioAnalysisPanel({ watchSymbols }: { watchSymbols: string[
 
   const summary = useMemo(() => {
     const total = items.length;
-    const sectorSet = new Set(items.map((item) => item.sector || "未分类"));
+    const sectorSet = new Set(items.map((item) => item.sector || UNKNOWN_SECTOR));
     let rising = 0;
     let falling = 0;
     let flat = 0;
@@ -151,7 +186,7 @@ export function PortfolioAnalysisPanel({ watchSymbols }: { watchSymbols: string[
   const sectorExposure = useMemo(() => {
     const bucket = new Map<string, number>();
     items.forEach((item) => {
-      const sector = item.sector || "未分类";
+      const sector = item.sector || UNKNOWN_SECTOR;
       bucket.set(sector, (bucket.get(sector) || 0) + 1);
     });
     const total = items.length || 1;
@@ -166,6 +201,7 @@ export function PortfolioAnalysisPanel({ watchSymbols }: { watchSymbols: string[
 
   const topMovers = useMemo(() => {
     return [...items]
+      .filter((item) => typeof item.percent === "number")
       .sort((a, b) => Math.abs(b.percent || 0) - Math.abs(a.percent || 0))
       .slice(0, Math.max(1, topN));
   }, [items, topN]);
@@ -181,7 +217,7 @@ export function PortfolioAnalysisPanel({ watchSymbols }: { watchSymbols: string[
         {
           name: "行业分布",
           type: "pie",
-          radius: ["35%", "65%"],
+          radius: ["35%", "68%"],
           data: sectorExposure.map((item) => ({
             name: item.sector,
             value: item.count,
@@ -198,35 +234,51 @@ export function PortfolioAnalysisPanel({ watchSymbols }: { watchSymbols: string[
     return {
       tooltip: { trigger: "axis" },
       xAxis: { type: "category", data: topMovers.map((item) => item.symbol) },
-      yAxis: { type: "value" },
+      yAxis: {
+        type: "value",
+        axisLabel: {
+          formatter: "{value}%",
+        },
+      },
       series: [
         {
           type: "bar",
           data: topMovers.map((item) => Number(item.percent || 0)),
           barMaxWidth: 36,
+          itemStyle: {
+            borderRadius: [8, 8, 0, 0],
+          },
         },
       ],
       grid: { left: 40, right: 20, top: 30, bottom: 40 },
     };
   }, [topMovers]);
 
+  const safePageSize = Math.max(1, pageSize);
+  const totalPages = Math.max(1, Math.ceil(items.length / safePageSize));
+  const currentPage = Math.min(page, totalPages);
+  const pagedItems = useMemo(() => {
+    const startIndex = (currentPage - 1) * safePageSize;
+    return items.slice(startIndex, startIndex + safePageSize);
+  }, [items, currentPage, safePageSize]);
+
   if (normalizedSymbols.length === 0) {
-    return <div className="helper">暂无自选标的，请先在个股详情点击“加入观察”。</div>;
+    return <div className="helper">{emptyText}</div>;
   }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <section className="card">
         <div className="card-title" style={{ marginBottom: 12 }}>
-          自选分析设置
+          {title}
         </div>
         <div className="toolbar">
           <label style={{ display: "flex", flexDirection: "column", fontSize: 12, gap: 6 }}>
-            自选数量
+            标的数量
             <input className="input" type="number" value={normalizedSymbols.length} readOnly />
           </label>
           <label style={{ display: "flex", flexDirection: "column", fontSize: 12, gap: 6 }}>
-            波动TopN
+            波动 TopN
             <input
               className="input"
               type="number"
@@ -240,14 +292,17 @@ export function PortfolioAnalysisPanel({ watchSymbols }: { watchSymbols: string[
       </section>
 
       {loading ? (
-        <div className="helper">自选分析加载中...</div>
-      ) : error ? (
-        <div className="helper">{`自选分析加载失败：${error}`}</div>
+        <div className="helper">组合分析加载中...</div>
       ) : (
         <>
+          {error ? (
+            <div className="helper" style={{ color: "#b45309" }}>
+              {error}
+            </div>
+          ) : null}
           <section className="grid grid-3">
             <div className="card">
-              <div className="helper">自选标的数</div>
+              <div className="helper">组合标的数</div>
               <div style={{ fontWeight: 700, marginTop: 4 }}>{summary.total}</div>
             </div>
             <div className="card">
@@ -264,7 +319,7 @@ export function PortfolioAnalysisPanel({ watchSymbols }: { watchSymbols: string[
 
           <section className="grid grid-3">
             <div className="card">
-              <div className="card-title">自选行业暴露（按数量）</div>
+              <div className="card-title">行业暴露（按数量）</div>
               {sectorPieOption ? (
                 <ReactECharts option={sectorPieOption} style={{ height: 240 }} />
               ) : (
@@ -272,11 +327,11 @@ export function PortfolioAnalysisPanel({ watchSymbols }: { watchSymbols: string[
               )}
             </div>
             <div className="card">
-              <div className="card-title">自选波动TopN（涨跌幅）</div>
+              <div className="card-title">涨跌幅波动 TopN</div>
               {moversBarOption ? (
                 <ReactECharts option={moversBarOption} style={{ height: 240 }} />
               ) : (
-                <div className="helper">暂无涨跌数据</div>
+                <div className="helper">暂无涨跌幅数据</div>
               )}
             </div>
             <div className="card">
@@ -299,12 +354,14 @@ export function PortfolioAnalysisPanel({ watchSymbols }: { watchSymbols: string[
           </section>
 
           <section className="card">
-            <div className="card-title">自选标的明细</div>
+            <div className="card-title">组合标的明细</div>
             <div style={{ display: "grid", gap: 8 }}>
-              {items.map((item) => (
+              {pagedItems.map((item) => (
                 <div key={item.symbol} style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
                   <span>
-                    {item.symbol} {item.name ? `· ${item.name}` : ""} {item.sector ? `· ${item.sector}` : ""}
+                    {item.symbol}
+                    {item.name ? ` · ${item.name}` : ""}
+                    {item.sector ? ` · ${item.sector}` : ""}
                   </span>
                   <span style={{ fontWeight: 600 }}>
                     {item.current === null ? "--" : formatNumber(item.current)} ·{" "}
@@ -312,6 +369,27 @@ export function PortfolioAnalysisPanel({ watchSymbols }: { watchSymbols: string[
                   </span>
                 </div>
               ))}
+            </div>
+            <div className="stock-pagination">
+              <div className="helper">{`第 ${currentPage} / ${totalPages} 页`}</div>
+              <div className="stock-pagination-actions">
+                <button
+                  type="button"
+                  className="stock-page-button"
+                  disabled={currentPage <= 1}
+                  onClick={() => setPage((prev) => Math.max(1, prev - 1))}
+                >
+                  上一页
+                </button>
+                <button
+                  type="button"
+                  className="stock-page-button"
+                  disabled={currentPage >= totalPages}
+                  onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}
+                >
+                  下一页
+                </button>
+              </div>
             </div>
           </section>
         </>

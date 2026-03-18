@@ -28,6 +28,7 @@ from app.routers import (
     sector,
     fund_holdings,
     futures,
+    user_targets,
 )
 
 app = FastAPI(title="KiloQuant API", version="0.1.0")
@@ -66,3 +67,4 @@ app.include_router(index_constituents.router, prefix="/api")
 app.include_router(sector.router, prefix="/api")
 app.include_router(fund_holdings.router, prefix="/api")
 app.include_router(futures.router, prefix="/api")
+app.include_router(user_targets.router, prefix="/api")

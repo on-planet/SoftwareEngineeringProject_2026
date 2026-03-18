@@ -4,16 +4,28 @@ import { useRouter } from "next/router";
 import { PerformanceComparisonPanel } from "../components/PerformanceComparisonPanel";
 import { PortfolioAnalysisPanel } from "../components/PortfolioAnalysisPanel";
 import { StatsDashboard } from "../components/StatsDashboard";
-import { getCurrentUser } from "../services/api";
-import { clearAuthToken, getAuthToken } from "../utils/auth";
+import {
+  BoughtTargetItem,
+  deleteMyBoughtTarget,
+  deleteMyWatchTarget,
+  getCurrentUser,
+  getMyBoughtTargets,
+  getMyWatchTargets,
+  upsertMyBoughtTarget,
+  upsertMyBoughtTargetsBatch,
+  upsertMyWatchTarget,
+  upsertMyWatchTargetsBatch,
+} from "../services/api";
+import { AUTH_CHANGED_EVENT, clearAuthToken, getAuthToken } from "../utils/auth";
 import {
   BoughtTarget,
   getBoughtTarget,
   readBoughtTargets,
   removeBoughtTarget,
+  replaceBoughtTargets,
   upsertBoughtTarget,
 } from "../utils/boughtTargets";
-import { addWatchTarget, readWatchTargets, removeWatchTarget } from "../utils/watchTargets";
+import { addWatchTarget, readWatchTargets, removeWatchTarget, replaceWatchTargets } from "../utils/watchTargets";
 
 type BuyFormState = {
   symbol: string;
@@ -23,6 +35,10 @@ type BuyFormState = {
   fee: string;
   note: string;
 };
+
+type StatsViewTab = "portfolio" | "performance" | "events" | "news";
+type PortfolioViewTab = "watch" | "bought";
+type StatsTargetTab = "watch" | "bought";
 
 function todayText() {
   const now = new Date();
@@ -50,6 +66,57 @@ function dedupeSymbols(values: string[]) {
   return result;
 }
 
+function parseTimestamp(value: string | null | undefined, fallback: number) {
+  if (!value) {
+    return fallback;
+  }
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return parsed;
+}
+
+function normalizeRemoteBoughtItem(raw: BoughtTargetItem): BoughtTarget | null {
+  const symbol = normalizeSymbol(String(raw?.symbol || ""));
+  const buyPrice = Number(raw?.buy_price);
+  const lots = Number(raw?.lots);
+  const fee = Number(raw?.fee || 0);
+  const buyDate = String(raw?.buy_date || "");
+  if (!symbol || !Number.isFinite(buyPrice) || buyPrice <= 0 || !Number.isFinite(lots) || lots <= 0) {
+    return null;
+  }
+  if (!Number.isFinite(fee) || fee < 0 || !buyDate) {
+    return null;
+  }
+  const updatedAt = parseTimestamp(raw?.updated_at || null, Date.now());
+  const createdAt = parseTimestamp(raw?.created_at || null, updatedAt);
+  return {
+    symbol,
+    buyPrice,
+    lots,
+    buyDate,
+    fee,
+    note: String(raw?.note || ""),
+    createdAt,
+    updatedAt,
+  };
+}
+
+function mergeBoughtTargets(remoteItems: BoughtTarget[], localItems: BoughtTarget[]) {
+  const merged = new Map<string, BoughtTarget>();
+  remoteItems.forEach((item) => {
+    merged.set(item.symbol, item);
+  });
+  localItems.forEach((item) => {
+    const current = merged.get(item.symbol);
+    if (!current || item.updatedAt > current.updatedAt) {
+      merged.set(item.symbol, item);
+    }
+  });
+  return Array.from(merged.values()).sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
 export default function StatsPage() {
   const router = useRouter();
   const [symbol, setSymbol] = useState("");
@@ -73,6 +140,10 @@ export default function StatsPage() {
   });
   const [authChecked, setAuthChecked] = useState(false);
   const [authed, setAuthed] = useState(false);
+  const [authToken, setAuthToken] = useState<string | null>(null);
+  const [statsViewTab, setStatsViewTab] = useState<StatsViewTab>("portfolio");
+  const [portfolioViewTab, setPortfolioViewTab] = useState<PortfolioViewTab>("watch");
+  const [statsTargetTab, setStatsTargetTab] = useState<StatsTargetTab>("watch");
 
   const querySymbol = useMemo(() => {
     const value = router.query.symbol;
@@ -82,46 +153,132 @@ export default function StatsPage() {
     return normalizeSymbol(value);
   }, [router.query.symbol]);
 
-  const analysisSymbols = useMemo(() => {
-    if (boughtTargets.length > 0) {
-      return boughtTargets.map((item) => item.symbol);
+  const boughtSymbols = useMemo(
+    () => dedupeSymbols(boughtTargets.map((item) => normalizeSymbol(item.symbol))),
+    [boughtTargets],
+  );
+
+  const groupedStatsSymbols = useMemo(
+    () => (statsTargetTab === "watch" ? dedupeSymbols(watchTargets) : boughtSymbols),
+    [statsTargetTab, watchTargets, boughtSymbols],
+  );
+
+  const filteredStatsSymbols = useMemo(() => {
+    const exact = normalizeSymbol(symbol);
+    if (!exact) {
+      return groupedStatsSymbols;
     }
-    return watchTargets;
-  }, [boughtTargets, watchTargets]);
+    return groupedStatsSymbols.filter((item) => item === exact);
+  }, [groupedStatsSymbols, symbol]);
 
   useEffect(() => {
-    const token = getAuthToken();
-    if (!token) {
-      setAuthed(false);
-      setAuthChecked(true);
-      return;
-    }
-    void getCurrentUser(token)
-      .then(() => {
-        setAuthed(true);
-      })
-      .catch(() => {
+    let disposed = false;
+    const syncAuth = async () => {
+      const token = getAuthToken();
+      if (!token) {
+        if (!disposed) {
+          setAuthed(false);
+          setAuthToken(null);
+          setAuthChecked(true);
+        }
+        return;
+      }
+      try {
+        await getCurrentUser(token);
+        if (!disposed) {
+          setAuthed(true);
+          setAuthToken(token);
+        }
+      } catch {
         clearAuthToken();
-        setAuthed(false);
-      })
-      .finally(() => {
-        setAuthChecked(true);
-      });
+        if (!disposed) {
+          setAuthed(false);
+          setAuthToken(null);
+        }
+      } finally {
+        if (!disposed) {
+          setAuthChecked(true);
+        }
+      }
+    };
+
+    const handleAuthChanged = () => {
+      void syncAuth();
+    };
+
+    void syncAuth();
+    window.addEventListener(AUTH_CHANGED_EVENT, handleAuthChanged);
+    return () => {
+      disposed = true;
+      window.removeEventListener(AUTH_CHANGED_EVENT, handleAuthChanged);
+    };
   }, []);
 
   useEffect(() => {
     setWatchTargets(readWatchTargets());
     setBoughtTargets(readBoughtTargets());
-  }, [router.asPath]);
+  }, [router.asPath, authToken]);
 
   useEffect(() => {
-    const onFocus = () => {
-      setWatchTargets(readWatchTargets());
-      setBoughtTargets(readBoughtTargets());
+    if (!authed || !authToken) {
+      return;
+    }
+    let active = true;
+    const syncFromRemote = async () => {
+      try {
+        const localWatch = readWatchTargets();
+        const localBought = readBoughtTargets();
+        const [remoteWatchRaw, remoteBoughtRaw] = await Promise.all([
+          getMyWatchTargets(authToken),
+          getMyBoughtTargets(authToken),
+        ]);
+        if (!active) {
+          return;
+        }
+
+        const remoteWatch = dedupeSymbols((remoteWatchRaw || []).map((item: any) => String(item?.symbol || "")));
+        const mergedWatch = dedupeSymbols([...remoteWatch, ...localWatch]);
+        const nextWatch = replaceWatchTargets(mergedWatch);
+        const hasWatchGap = mergedWatch.some((item) => !remoteWatch.includes(item));
+        if (hasWatchGap && mergedWatch.length > 0) {
+          void upsertMyWatchTargetsBatch(authToken, mergedWatch).catch(() => undefined);
+        }
+
+        const remoteBought = (remoteBoughtRaw || [])
+          .map((item) => normalizeRemoteBoughtItem(item))
+          .filter((item): item is BoughtTarget => !!item);
+        const mergedBought = mergeBoughtTargets(remoteBought, localBought);
+        const nextBought = replaceBoughtTargets(mergedBought);
+        const remoteBoughtBySymbol = new Map(remoteBought.map((item) => [item.symbol, item]));
+        const hasBoughtGap = mergedBought.some((item) => {
+          const remote = remoteBoughtBySymbol.get(item.symbol);
+          return !remote || item.updatedAt > remote.updatedAt;
+        });
+        if (hasBoughtGap && mergedBought.length > 0) {
+          void upsertMyBoughtTargetsBatch(
+            authToken,
+            mergedBought.map((item) => ({
+              symbol: item.symbol,
+              buy_price: item.buyPrice,
+              lots: item.lots,
+              buy_date: item.buyDate,
+              fee: item.fee,
+              note: item.note,
+            })),
+          ).catch(() => undefined);
+        }
+
+        setWatchTargets(nextWatch);
+        setBoughtTargets(nextBought);
+      } catch {
+        // Keep local data when remote sync fails.
+      }
     };
-    window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
-  }, []);
+    void syncFromRemote();
+    return () => {
+      active = false;
+    };
+  }, [authed, authToken]);
 
   useEffect(() => {
     setSelectedWatchSymbols((prev) => prev.filter((item) => watchTargets.includes(item)));
@@ -176,6 +333,11 @@ export default function StatsPage() {
     setWatchTargets(next);
     setWatchInput("");
     setWatchError(null);
+    if (authToken) {
+      void upsertMyWatchTarget(authToken, target).catch(() => {
+        setWatchError("已添加到本地，云端同步失败");
+      });
+    }
   };
 
   const handleRemoveWatchTarget = (target: string) => {
@@ -183,6 +345,11 @@ export default function StatsPage() {
     setWatchTargets(next);
     if (symbol === target) {
       setSymbol("");
+    }
+    if (authToken) {
+      void deleteMyWatchTarget(authToken, target).catch(() => {
+        setWatchError("本地已删除，云端同步失败");
+      });
     }
   };
 
@@ -198,7 +365,11 @@ export default function StatsPage() {
     if (selectedWatchSymbols.includes(symbol)) {
       setSymbol("");
     }
+    const removed = [...selectedWatchSymbols];
     setSelectedWatchSymbols([]);
+    if (authToken && removed.length > 0) {
+      void Promise.allSettled(removed.map((item) => deleteMyWatchTarget(authToken, item))).then(() => undefined);
+    }
   };
 
   const openBuyModal = (targetSymbol: string, queue: string[] = []) => {
@@ -272,6 +443,18 @@ export default function StatsPage() {
     });
     setBoughtTargets(next);
     setSymbol(symbolValue);
+    if (authToken) {
+      void upsertMyBoughtTarget(authToken, {
+        symbol: symbolValue,
+        buy_price: buyPrice,
+        lots,
+        buy_date: buyForm.buyDate,
+        fee,
+        note: buyForm.note.trim(),
+      }).catch(() => {
+        setBuyModalError("本地已保存，云端同步失败");
+      });
+    }
 
     if (pendingBuySymbols.length > 0) {
       const [nextSymbol, ...rest] = pendingBuySymbols;
@@ -296,13 +479,15 @@ export default function StatsPage() {
     if (target instanceof HTMLTextAreaElement) {
       return;
     }
-    // Prevent accidental implicit submit when entering numbers in modal inputs.
     event.preventDefault();
   };
 
   const handleRemoveBoughtTarget = (targetSymbol: string) => {
     const next = removeBoughtTarget(targetSymbol);
     setBoughtTargets(next);
+    if (authToken) {
+      void deleteMyBoughtTarget(authToken, targetSymbol).catch(() => undefined);
+    }
   };
 
   if (!authChecked) {
@@ -356,7 +541,7 @@ export default function StatsPage() {
                 onClick={handleBatchRemoveSelectedWatch}
                 disabled={selectedWatchSymbols.length === 0}
               >
-                删除选中（{selectedWatchSymbols.length}）
+                {`删除选中（${selectedWatchSymbols.length}）`}
               </button>
               <button
                 type="button"
@@ -364,7 +549,7 @@ export default function StatsPage() {
                 onClick={handleAddSelectedToBought}
                 disabled={selectedWatchSymbols.length === 0}
               >
-                加入已买（选中{selectedWatchSymbols.length}）
+                {`加入已买（选中${selectedWatchSymbols.length}）`}
               </button>
             </div>
             {watchError ? (
@@ -421,7 +606,7 @@ export default function StatsPage() {
           <div className="card stats-buy-dropzone">
             <div className="card-title">已买标的</div>
             {boughtTargets.length === 0 ? (
-              <div className="helper">将左侧观察标的拖拽到这里，录入买入信息。</div>
+              <div className="helper">暂无已买标的，可在左侧观察标的中点击“加入已买”。</div>
             ) : (
               <div className="stats-bought-list">
                 {boughtTargets.map((item) => (
@@ -457,29 +642,122 @@ export default function StatsPage() {
         </div>
 
         <div className="toolbar" style={{ marginBottom: 12 }}>
-          <input
-            className="input"
-            type="text"
-            value={symbol}
-            onChange={(event) => setSymbol(event.target.value.trim().toUpperCase())}
-            placeholder="筛选标的（可选）"
-          />
-          <input className="input" type="date" value={start} onChange={(event) => setStart(event.target.value)} />
-          <input className="input" type="date" value={end} onChange={(event) => setEnd(event.target.value)} />
+          <button
+            type="button"
+            className="stock-page-button"
+            data-active={statsViewTab === "portfolio"}
+            onClick={() => setStatsViewTab("portfolio")}
+          >
+            行业暴露与组合分析
+          </button>
+          <button
+            type="button"
+            className="stock-page-button"
+            data-active={statsViewTab === "performance"}
+            onClick={() => setStatsViewTab("performance")}
+          >
+            收益图与大盘对比
+          </button>
+          <button
+            type="button"
+            className="stock-page-button"
+            data-active={statsViewTab === "events"}
+            onClick={() => setStatsViewTab("events")}
+          >
+            事件统计
+          </button>
+          <button
+            type="button"
+            className="stock-page-button"
+            data-active={statsViewTab === "news"}
+            onClick={() => setStatsViewTab("news")}
+          >
+            新闻统计
+          </button>
         </div>
-        <StatsDashboard symbol={symbol || undefined} start={start || undefined} end={end || undefined} />
-      </section>
 
-      <section>
-        <h2 className="section-title">收益图与大盘对比</h2>
-        <PerformanceComparisonPanel watchSymbols={watchTargets} boughtTargets={boughtTargets} />
-      </section>
-
-      <section>
-        <h2 className="section-title">行业暴露与组合分析</h2>
-        <div className="card">
-          <PortfolioAnalysisPanel watchSymbols={analysisSymbols} />
-        </div>
+        {statsViewTab === "portfolio" ? (
+          <div className="grid" style={{ gap: 12 }}>
+            <div className="toolbar">
+              <button
+                type="button"
+                className="stock-page-button"
+                data-active={portfolioViewTab === "watch"}
+                onClick={() => setPortfolioViewTab("watch")}
+              >
+                观察标的
+              </button>
+              <button
+                type="button"
+                className="stock-page-button"
+                data-active={portfolioViewTab === "bought"}
+                onClick={() => setPortfolioViewTab("bought")}
+              >
+                已购买标的
+              </button>
+            </div>
+            <PortfolioAnalysisPanel
+              symbols={portfolioViewTab === "watch" ? watchTargets : boughtTargets.map((item) => item.symbol)}
+              title={portfolioViewTab === "watch" ? "观察标的行业暴露与组合分析" : "已购买标的行业暴露与组合分析"}
+              emptyText={
+                portfolioViewTab === "watch"
+                  ? "暂无观察标的，请先在个股详情添加观察。"
+                  : "暂无已购买标的，请先将观察标的加入已购买。"
+              }
+              pageSize={10}
+            />
+          </div>
+        ) : (
+          statsViewTab === "performance" ? (
+            <PerformanceComparisonPanel watchSymbols={watchTargets} boughtTargets={boughtTargets} />
+          ) : (
+            <div className="grid" style={{ gap: 12 }}>
+              <div className="toolbar">
+                <button
+                  type="button"
+                  className="stock-page-button"
+                  data-active={statsTargetTab === "watch"}
+                  onClick={() => setStatsTargetTab("watch")}
+                >
+                  观察标的
+                </button>
+                <button
+                  type="button"
+                  className="stock-page-button"
+                  data-active={statsTargetTab === "bought"}
+                  onClick={() => setStatsTargetTab("bought")}
+                >
+                  已购买标的
+                </button>
+              </div>
+              <div className="toolbar" style={{ marginBottom: 12 }}>
+                <input
+                  className="input"
+                  type="text"
+                  value={symbol}
+                  onChange={(event) => setSymbol(event.target.value.trim().toUpperCase())}
+                  placeholder="筛选标的（可选）"
+                />
+                <input className="input" type="date" value={start} onChange={(event) => setStart(event.target.value)} />
+                <input className="input" type="date" value={end} onChange={(event) => setEnd(event.target.value)} />
+              </div>
+              {filteredStatsSymbols.length === 0 ? (
+                <div className="helper">
+                  {statsTargetTab === "watch"
+                    ? "暂无观察标的，请先在上方添加后再查看统计。"
+                    : "暂无已购买标的，请先在上方加入后再查看统计。"}
+                </div>
+              ) : (
+                <StatsDashboard
+                  symbols={filteredStatsSymbols}
+                  start={start || undefined}
+                  end={end || undefined}
+                  view={statsViewTab === "events" ? "events" : "news"}
+                />
+              )}
+            </div>
+          )
+        )}
       </section>
 
       {buyModalOpen ? (
