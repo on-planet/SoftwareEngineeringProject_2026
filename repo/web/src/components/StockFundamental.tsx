@@ -1,4 +1,4 @@
-﻿import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getStockExtras, getStockOverview } from "../services/api";
 import {
   formatLoosePercent,
@@ -163,6 +163,11 @@ export function StockFundamental({ symbol }: Props) {
   const [extrasLoading, setExtrasLoading] = useState(false);
   const [liveRefreshing, setLiveRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const latestSymbolRef = useRef(symbol);
+
+  useEffect(() => {
+    latestSymbolRef.current = symbol;
+  }, [symbol]);
 
   const fetchOverview = useCallback(
     async ({
@@ -176,6 +181,7 @@ export function StockFundamental({ symbol }: Props) {
       refreshKey?: number;
       onMissingLiveError?: boolean;
     }) => {
+      const requestSymbol = symbol;
       if (!skipLoadingState) {
         setLoading(true);
       }
@@ -184,17 +190,23 @@ export function StockFundamental({ symbol }: Props) {
           prefer_live: preferLive,
           refresh_key: refreshKey,
         });
+        if (latestSymbolRef.current !== requestSymbol) {
+          return;
+        }
         const nextProfile = profileRes as StockProfile;
         writePersistentCache(buildOverviewCacheKey(symbol), nextProfile);
         setProfile((current) => mergeProfile(current, nextProfile));
         setError(null);
       } catch (err) {
+        if (latestSymbolRef.current !== requestSymbol) {
+          return;
+        }
         if (onMissingLiveError) {
           const nextError = err instanceof Error ? err.message : "实时行情获取失败";
           setError(nextError || "实时行情获取失败");
         }
       } finally {
-        if (!skipLoadingState) {
+        if (!skipLoadingState && latestSymbolRef.current === requestSymbol) {
           setLoading(false);
         }
       }
@@ -212,6 +224,7 @@ export function StockFundamental({ symbol }: Props) {
       skipLoadingState?: boolean;
       refreshKey?: number;
     }) => {
+      const requestSymbol = symbol;
       if (!skipLoadingState) {
         setExtrasLoading(true);
       }
@@ -220,13 +233,16 @@ export function StockFundamental({ symbol }: Props) {
           prefer_live: preferLive,
           refresh_key: refreshKey,
         });
+        if (latestSymbolRef.current !== requestSymbol) {
+          return;
+        }
         const extras = extrasRes as Pick<StockProfile, "quote_detail" | "pankou">;
         writePersistentCache(buildExtrasCacheKey(symbol), extras);
         setProfile((current) => (current ? { ...current, ...extras } : current));
       } catch {
         // Keep stale extras on failure.
       } finally {
-        if (!skipLoadingState) {
+        if (!skipLoadingState && latestSymbolRef.current === requestSymbol) {
           setExtrasLoading(false);
         }
       }
@@ -235,6 +251,13 @@ export function StockFundamental({ symbol }: Props) {
   );
 
   useEffect(() => {
+    if (!symbol.trim()) {
+      setProfile(null);
+      setError(null);
+      setLoading(false);
+      setExtrasLoading(false);
+      return;
+    }
     const overviewCacheKey = buildOverviewCacheKey(symbol);
     const extrasCacheKey = buildExtrasCacheKey(symbol);
     const cachedOverview = readPersistentCache<StockProfile>(overviewCacheKey, OVERVIEW_CACHE_MAX_AGE_MS);
@@ -407,6 +430,5 @@ export function StockFundamental({ symbol }: Props) {
     </div>
   );
 }
-
 
 

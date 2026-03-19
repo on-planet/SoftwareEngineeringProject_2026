@@ -85,17 +85,25 @@ export function StockKlinePanel({ symbol }: Props) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const normalizedSymbol = symbol.trim().toUpperCase();
 
   useEffect(() => {
+    if (!normalizedSymbol) {
+      setItems([]);
+      setLoading(false);
+      setRefreshing(false);
+      setError(null);
+      return;
+    }
     let active = true;
     const limit = getDefaultLimit(period);
-    const cacheKey = buildKlineCacheKey(symbol, period, limit);
+    const cacheKey = buildKlineCacheKey(normalizedSymbol, period, limit);
     const cached = readPersistentCache<KlineSeries>(cacheKey, getCacheMaxAge(period));
     setItems(cached?.items ?? []);
     setLoading(!cached?.items?.length);
     setRefreshing(!!cached?.items?.length);
     setError(null);
-    getStockKline(symbol, { period, limit })
+    getStockKline(normalizedSymbol, { period, limit })
       .then((res) => {
         if (!active) {
           return;
@@ -123,7 +131,7 @@ export function StockKlinePanel({ symbol }: Props) {
     return () => {
       active = false;
     };
-  }, [period, symbol]);
+  }, [normalizedSymbol, period]);
 
   const option = useMemo(() => {
     if (!items.length) {
@@ -162,7 +170,7 @@ export function StockKlinePanel({ symbol }: Props) {
       <div className="panel-header">
         <div>
           <div className="card-title">K 线走势</div>
-          <div className="helper">{symbol.toUpperCase()}</div>
+          <div className="helper">{normalizedSymbol || "--"}</div>
         </div>
         <div className="chip-group">
           {PERIOD_OPTIONS.map((item) => (

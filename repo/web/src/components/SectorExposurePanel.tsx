@@ -84,7 +84,6 @@ export function SectorExposurePanel() {
               <option value="">全部</option>
               <option value="A">A股</option>
               <option value="HK">港股</option>
-              <option value="US">美股</option>
             </select>
           </label>
           <label style={{ display: "flex", flexDirection: "column", fontSize: 12, gap: 6 }}>

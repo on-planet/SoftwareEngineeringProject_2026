@@ -58,6 +58,20 @@ function dedupeSymbols(values: string[]) {
   return result;
 }
 
+function parseSymbolFromAsPath(asPath: string) {
+  const rawPath = String(asPath || "").split("?")[0].split("#")[0];
+  const segments = rawPath.split("/").filter(Boolean);
+  const raw = segments[segments.length - 1] || "";
+  if (!raw || raw.toLowerCase() === "stock" || raw.includes("[")) {
+    return "";
+  }
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
+
 function DeferredSection({
   children,
   placeholder,
@@ -103,9 +117,18 @@ function DeferredSection({
   );
 }
 
-export default function StockPage({ symbol = "000001.SZ" }: Props) {
+export default function StockPage({ symbol }: Props) {
   const router = useRouter();
-  const routeSymbol = typeof router.query.symbol === "string" ? router.query.symbol : symbol;
+  const routeSymbol = useMemo(() => {
+    if (typeof router.query.symbol === "string" && router.query.symbol.trim()) {
+      return router.query.symbol;
+    }
+    const fromPath = parseSymbolFromAsPath(router.asPath || "");
+    if (fromPath) {
+      return fromPath;
+    }
+    return symbol || "";
+  }, [router.asPath, router.query.symbol, symbol]);
   const normalizedRouteSymbol = useMemo(() => normalizeSymbol(routeSymbol), [routeSymbol]);
   const [currentSymbol, setCurrentSymbol] = useState(normalizedRouteSymbol);
   const [watchMessage, setWatchMessage] = useState<string | null>(null);
@@ -113,15 +136,23 @@ export default function StockPage({ symbol = "000001.SZ" }: Props) {
   const [authToken, setAuthToken] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!normalizedRouteSymbol) {
+      return;
+    }
     setCurrentSymbol(normalizedRouteSymbol);
     setWatchMessage(null);
   }, [normalizedRouteSymbol]);
 
   const appliedSymbol = normalizeSymbol(currentSymbol) || normalizedRouteSymbol;
+  const activeSymbol = normalizeSymbol(appliedSymbol);
 
   useEffect(() => {
-    setIsWatched(hasWatchTarget(appliedSymbol));
-  }, [appliedSymbol]);
+    if (!activeSymbol) {
+      setIsWatched(false);
+      return;
+    }
+    setIsWatched(hasWatchTarget(activeSymbol));
+  }, [activeSymbol]);
 
   useEffect(() => {
     const syncToken = () => {
@@ -147,13 +178,13 @@ export default function StockPage({ symbol = "000001.SZ" }: Props) {
         const remoteSymbols = dedupeSymbols((items || []).map((item) => String(item?.symbol || "")));
         const merged = dedupeSymbols([...remoteSymbols, ...readWatchTargets()]);
         const next = replaceWatchTargets(merged);
-        setIsWatched(next.includes(normalizeSymbol(appliedSymbol)));
+        setIsWatched(next.includes(activeSymbol));
       })
       .catch(() => undefined);
     return () => {
       active = false;
     };
-  }, [appliedSymbol, authToken]);
+  }, [activeSymbol, authToken]);
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -165,7 +196,7 @@ export default function StockPage({ symbol = "000001.SZ" }: Props) {
   };
 
   const handleAddWatchTarget = () => {
-    const targetSymbol = normalizeSymbol(appliedSymbol);
+    const targetSymbol = normalizeSymbol(activeSymbol);
     if (!targetSymbol) {
       return;
     }
@@ -206,66 +237,74 @@ export default function StockPage({ symbol = "000001.SZ" }: Props) {
         </div>
       </section>
 
-      <section>
-        <StockFundamental symbol={appliedSymbol} />
-      </section>
+      {activeSymbol ? (
+        <>
+          <section>
+            <StockFundamental symbol={activeSymbol} />
+          </section>
 
-      <section>
-        <StockKlinePanel symbol={appliedSymbol} />
-      </section>
+          <section>
+            <StockKlinePanel symbol={activeSymbol} />
+          </section>
 
-      <section className="split-grid">
-        <div>
-          <h2 className="section-title">技术指标</h2>
-          <DeferredSection
-            resetKey={appliedSymbol}
-            minHeight={320}
-            placeholder={<div className="card helper">技术指标准备中...</div>}
-          >
-            <div className="card">
-              <StockIndicatorsChart symbol={appliedSymbol} />
+          <section className="split-grid">
+            <div>
+              <h2 className="section-title">技术指标</h2>
+              <DeferredSection
+                resetKey={activeSymbol}
+                minHeight={320}
+                placeholder={<div className="card helper">技术指标准备中...</div>}
+              >
+                <div className="card">
+                  <StockIndicatorsChart symbol={activeSymbol} />
+                </div>
+              </DeferredSection>
             </div>
-          </DeferredSection>
-        </div>
-        <div>
-          <h2 className="section-title">风险分析</h2>
-          <DeferredSection
-            resetKey={appliedSymbol}
-            minHeight={320}
-            placeholder={<div className="card helper">风险分析准备中...</div>}
-          >
-            <div className="card">
-              <StockRiskChart symbol={appliedSymbol} />
+            <div>
+              <h2 className="section-title">风险分析</h2>
+              <DeferredSection
+                resetKey={activeSymbol}
+                minHeight={320}
+                placeholder={<div className="card helper">风险分析准备中...</div>}
+              >
+                <div className="card">
+                  <StockRiskChart symbol={activeSymbol} />
+                </div>
+              </DeferredSection>
             </div>
-          </DeferredSection>
-        </div>
-      </section>
+          </section>
 
-      <section>
-        <h2 className="section-title">财务报表</h2>
-        <DeferredSection
-          resetKey={appliedSymbol}
-          minHeight={320}
-          placeholder={<div className="card helper">财务报表准备中...</div>}
-        >
-          <div className="card">
-            <StockFinancialTable symbol={appliedSymbol} />
-          </div>
-        </DeferredSection>
-      </section>
+          <section>
+            <h2 className="section-title">财务报表</h2>
+            <DeferredSection
+              resetKey={activeSymbol}
+              minHeight={320}
+              placeholder={<div className="card helper">财务报表准备中...</div>}
+            >
+              <div className="card">
+                <StockFinancialTable symbol={activeSymbol} />
+              </div>
+            </DeferredSection>
+          </section>
 
-      <section>
-        <h2 className="section-title">研报与业绩预告</h2>
-        <DeferredSection
-          resetKey={appliedSymbol}
-          minHeight={320}
-          placeholder={<div className="card helper">研报与业绩预告准备中...</div>}
-        >
-          <div className="card">
-            <StockResearchPanel symbol={appliedSymbol} />
-          </div>
-        </DeferredSection>
-      </section>
+          <section>
+            <h2 className="section-title">研报与业绩预告</h2>
+            <DeferredSection
+              resetKey={activeSymbol}
+              minHeight={320}
+              placeholder={<div className="card helper">研报与业绩预告准备中...</div>}
+            >
+              <div className="card">
+                <StockResearchPanel symbol={activeSymbol} />
+              </div>
+            </DeferredSection>
+          </section>
+        </>
+      ) : (
+        <section>
+          <div className="card helper">正在读取股票代码...</div>
+        </section>
+      )}
     </div>
   );
 }

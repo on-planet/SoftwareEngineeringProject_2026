@@ -112,7 +112,7 @@ class LiveMarketFallbackTests(unittest.TestCase):
         self.assertNotIn("name", payload["quote"])
         self.assertNotIn("sector", payload["quote"])
 
-    def test_get_live_kline_prefers_local_daily_rows_for_day_series(self) -> None:
+    def test_get_live_kline_prefers_local_daily_rows_for_day_series_when_limit_is_small(self) -> None:
         db_rows = [
             {
                 "symbol": "000001.SZ",
@@ -139,10 +139,69 @@ class LiveMarketFallbackTests(unittest.TestCase):
         ), patch("app.services.live_market_service.get_kline_history") as remote_kline, patch(
             "app.services.live_market_service.set_json"
         ):
-            items = get_live_kline("000001.SZ", period="day", limit=60)
+            items = get_live_kline("000001.SZ", period="day", limit=2)
 
         remote_kline.assert_not_called()
         self.assertEqual(len(items), 2)
+        self.assertEqual(items[-1].close, 10.6)
+
+    def test_get_live_kline_uses_remote_when_cached_day_series_too_short_for_requested_limit(self) -> None:
+        cached_rows = [
+            {
+                "date": date(2026, 3, 13),
+                "open": 10.0,
+                "high": 10.5,
+                "low": 9.9,
+                "close": 10.2,
+            },
+            {
+                "date": date(2026, 3, 14),
+                "open": 10.2,
+                "high": 10.7,
+                "low": 10.1,
+                "close": 10.6,
+            },
+        ]
+        remote_rows = [
+            {
+                "symbol": "000001.SZ",
+                "date": date(2026, 3, 12),
+                "open": 9.8,
+                "high": 10.1,
+                "low": 9.7,
+                "close": 9.95,
+                "volume": 980.0,
+            },
+            {
+                "symbol": "000001.SZ",
+                "date": date(2026, 3, 13),
+                "open": 10.0,
+                "high": 10.5,
+                "low": 9.9,
+                "close": 10.2,
+                "volume": 1000.0,
+            },
+            {
+                "symbol": "000001.SZ",
+                "date": date(2026, 3, 14),
+                "open": 10.2,
+                "high": 10.7,
+                "low": 10.1,
+                "close": 10.6,
+                "volume": 1200.0,
+            },
+        ]
+        with patch("app.services.live_market_service.get_json", return_value=cached_rows), patch(
+            "app.services.live_market_service._load_db_daily_rows",
+            return_value=[],
+        ), patch(
+            "app.services.live_market_service.get_kline_history",
+            return_value=remote_rows,
+        ) as remote_kline, patch("app.services.live_market_service.set_json"):
+            items = get_live_kline("000001.SZ", period="day", limit=60)
+
+        remote_kline.assert_called_once()
+        self.assertEqual(len(items), 3)
         self.assertEqual(items[-1].close, 10.6)
 
     def test_get_live_kline_uses_remote_when_local_day_series_only_has_one_point(self) -> None:

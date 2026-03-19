@@ -827,12 +827,32 @@ def _filter_points(points: list[KlinePoint], start: date | None, end: date | Non
     return filtered[-limit:]
 
 
-def _has_sufficient_kline_points(points: list[KlinePoint], period: LiveKlinePeriod) -> bool:
+def _minimum_kline_points(period: LiveKlinePeriod, limit: int) -> int:
+    bounded_limit = max(1, int(limit))
+    if period in {"day", "week", "month"}:
+        return min(bounded_limit, 12)
+    if period == "quarter":
+        return min(bounded_limit, 8)
+    if period == "year":
+        return min(bounded_limit, 4)
+    return 1
+
+
+def _has_sufficient_kline_points(
+    points: list[KlinePoint],
+    period: LiveKlinePeriod,
+    *,
+    limit: int,
+    start: date | None = None,
+    end: date | None = None,
+) -> bool:
     if not points:
         return False
     if period in {"1m", "30m", "60m"}:
         return True
-    return len(points) > 1
+    if start is not None or end is not None:
+        return len(points) > 1
+    return len(points) >= _minimum_kline_points(period, limit)
 
 
 def _load_local_kline_points(
@@ -1137,11 +1157,11 @@ def get_live_kline(
     cached_items: list[KlinePoint] = []
     if isinstance(cached, list):
         cached_items = [KlinePoint(**item) for item in cached if isinstance(item, dict)]
-        if _has_sufficient_kline_points(cached_items, period):
+        if _has_sufficient_kline_points(cached_items, period, limit=limit, start=start, end=end):
             return cached_items
 
     local_items = _load_local_kline_points(normalized, period=period, limit=limit, start=start, end=end, is_index=is_index)
-    if _has_sufficient_kline_points(local_items, period):
+    if _has_sufficient_kline_points(local_items, period, limit=limit, start=start, end=end):
         set_json(cache_key, [item.dict() for item in local_items], ttl=LIVE_CACHE_TTL)
         return local_items
 

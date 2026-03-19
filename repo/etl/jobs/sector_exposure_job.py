@@ -89,6 +89,31 @@ def _valuation_value(snapshot: dict | None) -> float | None:
     return None
 
 
+def _fallback_exposure_value(meta: dict | None, daily_row: dict | None) -> float | None:
+    meta = meta or {}
+    daily_row = daily_row or {}
+    market = str(meta.get("market") or "").strip().upper()
+    if market != "HK":
+        return None
+    for key in ("float_market_cap", "market_cap", "total_market_cap", "market_value"):
+        value = meta.get(key)
+        try:
+            numeric = float(value) if value is not None else 0.0
+        except (TypeError, ValueError):
+            numeric = 0.0
+        if numeric > 0:
+            return numeric
+    close = daily_row.get("close")
+    try:
+        numeric_close = float(close) if close is not None else 0.0
+    except (TypeError, ValueError):
+        numeric_close = 0.0
+    if numeric_close > 0:
+        # Fallback proxy for HK when market cap snapshots are unavailable.
+        return numeric_close
+    return None
+
+
 def _fetch_missing_valuation_snapshots(symbols: list[str], as_of: date) -> list[dict]:
     if not symbols or not _should_fetch_live_valuations(as_of):
         return []
@@ -229,7 +254,7 @@ def run_sector_exposure_job(start: date, end: date) -> int:
                     {
                         "sector": normalized_sector,
                         "market": info.get("market") or "ALL",
-                        "value": _valuation_value(valuation),
+                        "value": _valuation_value(valuation) or _fallback_exposure_value(info, row),
                     }
                 )
 
