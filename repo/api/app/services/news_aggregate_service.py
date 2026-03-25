@@ -7,27 +7,15 @@ from sqlalchemy.orm import Session
 
 from app.core.cache import get_json, set_json
 from app.models.news import News
-from app.services.cache_utils import build_cache_key, item_to_dict
-from app.schemas.news import NewsOut
+from app.services.cache_utils import build_cache_key
+from app.services.news_relation_utils import (
+    filter_news_by_related_sectors,
+    filter_news_by_related_symbols,
+    serialize_news_items,
+    with_news_relations,
+)
 
 NEWS_AGG_CACHE_TTL = 600
-
-
-def _csv_field_filters(column, values: list[str]):
-    conditions = []
-    for value in values:
-        text = str(value or "").strip()
-        if not text:
-            continue
-        conditions.extend(
-            [
-                column == text,
-                column.ilike(f"{text},%"),
-                column.ilike(f"%,{text},%"),
-                column.ilike(f"%,{text}"),
-            ]
-        )
-    return or_(*conditions) if conditions else None
 
 
 def list_news_aggregate(
@@ -68,10 +56,9 @@ def list_news_aggregate(
     )
     cached = get_json(cache_key)
     if isinstance(cached, dict) and isinstance(cached.get("items"), list) and isinstance(cached.get("total"), int):
-        items = [NewsOut(**item) for item in cached.get("items") if isinstance(item, dict)]
-        return items, cached.get("total")
+        return cached.get("items"), cached.get("total")
 
-    base_query = db.query(News)
+    base_query = with_news_relations(db.query(News))
     if symbols:
         base_query = base_query.filter(News.symbol.in_(symbols))
     if sentiments:
@@ -85,13 +72,9 @@ def list_news_aggregate(
     if time_buckets:
         base_query = base_query.filter(News.time_bucket.in_(time_buckets))
     if related_symbols:
-        condition = _csv_field_filters(News.related_symbols, related_symbols)
-        if condition is not None:
-            base_query = base_query.filter(condition)
+        base_query = filter_news_by_related_symbols(base_query, related_symbols)
     if related_sectors:
-        condition = _csv_field_filters(News.related_sectors, related_sectors)
-        if condition is not None:
-            base_query = base_query.filter(condition)
+        base_query = filter_news_by_related_sectors(base_query, related_sectors)
     if keyword:
         keyword_like = f"%{keyword}%"
         base_query = base_query.filter(
@@ -115,6 +98,7 @@ def list_news_aggregate(
         .subquery()
     )
     query = db.query(News).join(deduped, News.id == deduped.c.id)
+    query = with_news_relations(query)
     total = db.query(func.count()).select_from(deduped).scalar() or 0
     sort_fields = {
         "published_at": News.published_at,
@@ -125,8 +109,8 @@ def list_news_aggregate(
         "source_category": News.source_category,
         "topic_category": News.topic_category,
         "time_bucket": News.time_bucket,
-        "related_symbols": News.related_symbols,
-        "related_sectors": News.related_sectors,
+        "related_symbols": News.related_symbols_csv,
+        "related_sectors": News.related_sectors_csv,
     }
     sort_keys = [key for key in (sort_by or ["published_at"]) if key in sort_fields]
     if not sort_keys:
@@ -141,10 +125,10 @@ def list_news_aggregate(
         .limit(limit)
         .all()
     )
-    items = [NewsOut.from_orm(row) for row in rows]
+    items = serialize_news_items(rows)
     set_json(
         cache_key,
-        {"items": [item_to_dict(item) for item in items], "total": total},
+        {"items": items, "total": total},
         ttl=NEWS_AGG_CACHE_TTL,
     )
     return items, total

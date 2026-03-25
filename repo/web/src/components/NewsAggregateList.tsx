@@ -54,8 +54,8 @@ type NewsItem = {
   source_category?: string;
   topic_category?: string;
   time_bucket?: string;
-  related_symbols?: string;
-  related_sectors?: string;
+  related_symbols?: string[] | string;
+  related_sectors?: string[] | string;
 };
 
 type NewsPage = {
@@ -104,6 +104,13 @@ function sentimentColor(value: string) {
   return "#f59e0b";
 }
 
+function formatRelationValues(values?: string[] | string) {
+  if (Array.isArray(values)) {
+    return values.join(", ");
+  }
+  return String(values || "").trim();
+}
+
 export function NewsAggregateList() {
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(12);
@@ -139,6 +146,7 @@ export function NewsAggregateList() {
     } else {
       setLoading(true);
     }
+
     getNewsAggregate({
       limit,
       offset,
@@ -168,6 +176,7 @@ export function NewsAggregateList() {
           setLoading(false);
         }
       });
+
     return () => {
       active = false;
     };
@@ -197,7 +206,7 @@ export function NewsAggregateList() {
   }
 
   if (error) {
-    return <div className="helper">新闻加载失败：{error}</div>;
+    return <div className="helper">{`新闻加载失败：${error}`}</div>;
   }
 
   return (
@@ -245,55 +254,60 @@ export function NewsAggregateList() {
 
       {dedupedItems.length === 0 ? <div className="helper">暂无新闻</div> : null}
 
-      {dedupedItems.map((item) => (
-        <div
-          key={item.id}
-          className="card"
-          style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: 12 }}
-        >
-          <img
-            src={PLACEHOLDER_IMAGE}
-            alt="news"
-            style={{ width: "120px", height: "80px", borderRadius: 12, objectFit: "cover" }}
-          />
-          <div>
-            <div className="card-title">{item.title}</div>
-            <div className="helper" style={{ marginTop: 6 }}>
-              {item.symbol} · {new Date(item.published_at).toLocaleString("zh-CN")}
-            </div>
-            <div className="helper" style={{ marginTop: 6 }}>
-              来源站点：{item.source_site || item.source || "未知"}
-              {item.link ? (
-                <a
-                  href={item.link}
-                  target="_blank"
-                  rel="noreferrer"
-                  style={{ marginLeft: 8, color: "var(--accent)" }}
-                >
-                  查看来源
-                </a>
-              ) : null}
-            </div>
-            <div className="helper" style={{ marginTop: 6, display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <span>站点分类：{SOURCE_CATEGORY_LABELS[item.source_category || ""] || item.source_category || "未知"}</span>
-              <span>主题：{TOPIC_CATEGORY_LABELS[item.topic_category || ""] || item.topic_category || "未知"}</span>
-              <span>时间分类：{TIME_BUCKET_LABELS[item.time_bucket || ""] || item.time_bucket || "未知"}</span>
-            </div>
-            {item.related_symbols || item.related_sectors ? (
-              <div className="helper" style={{ marginTop: 6, display: "flex", gap: 8, flexWrap: "wrap" }}>
-                {item.related_symbols ? <span>关联个股：{item.related_symbols}</span> : null}
-                {item.related_sectors ? <span>关联板块：{item.related_sectors}</span> : null}
+      {dedupedItems.map((item) => {
+        const relatedSymbols = formatRelationValues(item.related_symbols);
+        const relatedSectors = formatRelationValues(item.related_sectors);
+
+        return (
+          <div
+            key={item.id}
+            className="card"
+            style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: 12 }}
+          >
+            <img
+              src={PLACEHOLDER_IMAGE}
+              alt="news"
+              style={{ width: "120px", height: "80px", borderRadius: 12, objectFit: "cover" }}
+            />
+            <div>
+              <div className="card-title">{item.title}</div>
+              <div className="helper" style={{ marginTop: 6 }}>
+                {item.symbol} · {new Date(item.published_at).toLocaleString("zh-CN")}
               </div>
-            ) : null}
-            <div style={{ marginTop: 6, fontSize: 12 }}>
-              情绪：
-              <span style={{ color: sentimentColor(item.sentiment), fontWeight: 600, marginLeft: 4 }}>
-                {formatSentiment(item.sentiment)}
-              </span>
+              <div className="helper" style={{ marginTop: 6 }}>
+                来源站点：{item.source_site || item.source || "未知"}
+                {item.link ? (
+                  <a
+                    href={item.link}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ marginLeft: 8, color: "var(--accent)" }}
+                  >
+                    查看来源
+                  </a>
+                ) : null}
+              </div>
+              <div className="helper" style={{ marginTop: 6, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <span>站点分类：{SOURCE_CATEGORY_LABELS[item.source_category || ""] || item.source_category || "未知"}</span>
+                <span>主题：{TOPIC_CATEGORY_LABELS[item.topic_category || ""] || item.topic_category || "未知"}</span>
+                <span>时间分类：{TIME_BUCKET_LABELS[item.time_bucket || ""] || item.time_bucket || "未知"}</span>
+              </div>
+              {relatedSymbols || relatedSectors ? (
+                <div className="helper" style={{ marginTop: 6, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {relatedSymbols ? <span>关联个股：{relatedSymbols}</span> : null}
+                  {relatedSectors ? <span>关联板块：{relatedSectors}</span> : null}
+                </div>
+              ) : null}
+              <div style={{ marginTop: 6, fontSize: 12 }}>
+                情绪：
+                <span style={{ color: sentimentColor(item.sentiment), fontWeight: 600, marginLeft: 4 }}>
+                  {formatSentiment(item.sentiment)}
+                </span>
+              </div>
             </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
 
       <div
         className="helper"

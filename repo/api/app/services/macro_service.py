@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date
 import os
 
+from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
 
 from app.core.cache import get_json, set_json
@@ -16,6 +17,7 @@ from etl.fetchers.worldbank_client import get_indicator_series
 from etl.transformers.macro import normalize_macro_rows
 
 MACRO_QUERY_CACHE_TTL = 900
+MACRO_SNAPSHOT_CACHE_TTL = 3600
 WORLD_BANK_SYNC_FETCH_ENABLED = os.getenv("MACRO_ENABLE_WORLD_BANK_SYNC_FETCH", "0").lower() in {"1", "true", "yes"}
 
 WORLD_BANK_INDICATORS: dict[str, str] = {
@@ -112,6 +114,62 @@ def get_cached_macro(
         normalized.sort(key=lambda item: item.get("date") or "", reverse=(sort == "desc"))
         return normalized or None
     return None
+
+
+def _cache_macro_snapshot(items: list[dict], as_of: date | None = None) -> None:
+    if not items:
+        return
+    payload = {"items": items}
+    snapshot_date = as_of
+    if snapshot_date is None:
+        for item in items:
+            date_value = item.get("date")
+            if not isinstance(date_value, str):
+                continue
+            try:
+                parsed = date.fromisoformat(date_value)
+            except ValueError:
+                continue
+            if snapshot_date is None or parsed > snapshot_date:
+                snapshot_date = parsed
+    if as_of is not None:
+        set_json(f"macro:{as_of.isoformat()}", payload, ttl=MACRO_SNAPSHOT_CACHE_TTL)
+    elif snapshot_date is not None:
+        set_json(f"macro:{snapshot_date.isoformat()}", payload, ttl=MACRO_SNAPSHOT_CACHE_TTL)
+    if as_of is None:
+        set_json("macro:latest", payload, ttl=MACRO_SNAPSHOT_CACHE_TTL)
+    elif snapshot_date == as_of:
+        set_json("macro:latest", payload, ttl=MACRO_SNAPSHOT_CACHE_TTL)
+
+
+def list_macro_snapshot(db: Session, as_of: date | None = None, sort: SortOrder = "desc"):
+    cached = get_cached_macro(as_of=as_of, sort=sort)
+    if cached is not None:
+        return cached
+
+    latest_dates = db.query(
+        Macro.key.label("key"),
+        func.max(Macro.date).label("latest_date"),
+    )
+    if as_of is not None:
+        latest_dates = latest_dates.filter(Macro.date <= as_of)
+    latest_dates = latest_dates.group_by(Macro.key).subquery()
+
+    query = db.query(Macro).join(
+        latest_dates,
+        and_(
+            Macro.key == latest_dates.c.key,
+            Macro.date == latest_dates.c.latest_date,
+        ),
+    )
+    if sort == "asc":
+        rows = query.order_by(Macro.date.asc(), Macro.key.asc()).all()
+    else:
+        rows = query.order_by(Macro.date.desc(), Macro.key.asc()).all()
+
+    items = items_to_dicts(rows)
+    _cache_macro_snapshot(items, as_of=as_of)
+    return items
 
 
 def _parse_world_bank_series_key(key: str) -> tuple[str, str] | None:

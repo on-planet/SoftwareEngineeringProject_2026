@@ -2,9 +2,7 @@ import React, { useEffect, useState } from "react";
 
 import { getEventTimeline } from "../services/api";
 import { readPersistentCache, writePersistentCache } from "../utils/persistentCache";
-
-const PLACEHOLDER_IMAGE =
-  "https://images.unsplash.com/flagged/photo-1559116315-702b0b4774ce?auto=format&fit=crop&w=800&q=60";
+import styles from "./EventTimelineList.module.css";
 
 const TEXT = {
   loadError: "\u52a0\u8f7d\u4e8b\u4ef6\u5931\u8d25",
@@ -37,6 +35,10 @@ const EVENT_TIMELINE_CACHE_TTL_MS = 5 * 60 * 1000;
 
 function buildEventTimelineCacheKey() {
   return "event-timeline:list:limit=20:offset=0:sort=desc";
+}
+
+function formatEventType(value?: string) {
+  return String(value || "event").replace(/_/g, " ");
 }
 
 export function EventTimelineList() {
@@ -96,35 +98,35 @@ export function EventTimelineList() {
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <div className="helper">{`${TEXT.totalPrefix} ${total} ${TEXT.totalSuffix}`}</div>
+    <div className={styles.timelineList}>
+      <div className={`helper ${styles.timelineTotal}`}>{`${TEXT.totalPrefix} ${total} ${TEXT.totalSuffix}`}</div>
       {items.map((item, index) => (
-        <div
+        <article
           key={`${item.symbol}-${item.date}-${index}`}
-          className="card"
-          style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: 12 }}
+          className={`card ${styles.timelineCard}`}
         >
-          <img
-            src={PLACEHOLDER_IMAGE}
-            alt="event"
-            style={{ width: "120px", height: "80px", borderRadius: 12, objectFit: "cover" }}
-          />
-          <div>
+          <div className={styles.timelineRail}>
+            <div className={styles.timelineSymbol}>{item.symbol || "--"}</div>
+            <div className={styles.timelineType}>{formatEventType(item.type)}</div>
+            <div className={styles.timelineDate}>{item.date || "--"}</div>
+          </div>
+          <div className={styles.timelineContent}>
             <div className="card-title">{item.title}</div>
-            <div className="helper" style={{ marginTop: 6 }}>
-              {item.symbol}
-              {` | ${item.type} | ${item.date}`}
+            <div className={styles.timelineMeta}>
+              <span className={styles.timelineMetaItem}>
+                <span className={styles.timelineLabel}>{TEXT.source}</span>
+                {item.source || TEXT.unknown}
+              </span>
             </div>
-            <div className="helper" style={{ marginTop: 6 }}>
-              {`${TEXT.source}: ${item.source || TEXT.unknown}`}
-              {item.link ? (
-                <a href={item.link} target="_blank" rel="noreferrer" style={{ marginLeft: 8, color: "var(--accent)" }}>
+            {item.link ? (
+              <div className={`helper ${styles.timelineFooter}`}>
+                <a href={item.link} target="_blank" rel="noreferrer" className={styles.sourceLink}>
                   {TEXT.openSource}
                 </a>
-              ) : null}
-            </div>
+              </div>
+            ) : null}
           </div>
-        </div>
+        </article>
       ))}
     </div>
   );

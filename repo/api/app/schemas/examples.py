@@ -38,6 +38,57 @@ STOCK_WITH_RISK_EXAMPLE = {
     },
 }
 
+STOCK_PROFILE_EXAMPLE = {
+    "symbol": "000001.SH",
+    "name": "平安银行",
+    "market": "A",
+    "sector": "金融",
+    "quote": {
+        "current": 10.2,
+        "change": 0.12,
+        "percent": 0.0119,
+        "open": 10.05,
+        "high": 10.25,
+        "low": 9.98,
+        "last_close": 10.08,
+        "volume": 123456789.0,
+        "amount": 1250000000.0,
+        "turnover_rate": 0.023,
+        "amplitude": 0.027,
+        "timestamp": "2026-03-24T15:00:00",
+    },
+    "quote_detail": {
+        "pe_ttm": 5.6,
+        "pb": 0.72,
+        "ps_ttm": 1.45,
+        "pcf": 3.12,
+        "market_cap": 198000000000.0,
+        "float_market_cap": 176000000000.0,
+        "dividend_yield": 0.052,
+        "volume_ratio": 1.12,
+        "lot_size": 100.0,
+    },
+    "pankou": {
+        "diff": 15200.0,
+        "ratio": 0.18,
+        "timestamp": "2026-03-24T15:00:00",
+        "bids": [],
+        "asks": [],
+    },
+    "risk": {
+        "symbol": "000001.SH",
+        "max_drawdown": -0.12,
+        "volatility": 0.24,
+        "as_of": "2026-03-10",
+    },
+    "fundamental": {
+        "symbol": "000001.SH",
+        "score": 78.5,
+        "summary": "盈利能力稳健，估值处于历史中枢偏下位置。",
+        "updated_at": "2026-03-24T12:00:00",
+    },
+}
+
 RISK_EXAMPLE = {
     "symbol": "000001.SH",
     "max_drawdown": -0.12,
@@ -58,6 +109,31 @@ KLINE_SERIES_EXAMPLE = {
     "items": [
         {"date": "2026-03-06", "open": 10.0, "high": 10.5, "low": 9.8, "close": 10.2},
         {"date": "2026-03-07", "open": 10.2, "high": 10.6, "low": 10.0, "close": 10.4},
+    ],
+}
+
+KLINE_COMPARE_EXAMPLE = {
+    "period": "day",
+    "limit": 200,
+    "series": [
+        {
+            "symbol": "000001.SH",
+            "kind": "index",
+            "period": "day",
+            "items": [
+                {"date": "2026-03-06", "open": 3200.0, "high": 3212.0, "low": 3192.0, "close": 3205.0},
+            ],
+            "error": None,
+        },
+        {
+            "symbol": "000001.SZ",
+            "kind": "stock",
+            "period": "day",
+            "items": [
+                {"date": "2026-03-06", "open": 10.0, "high": 10.5, "low": 9.8, "close": 10.2},
+            ],
+            "error": None,
+        },
     ],
 }
 

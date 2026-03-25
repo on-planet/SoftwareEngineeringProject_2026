@@ -958,6 +958,7 @@ def _build_ak_hk_profit_forecast_rows(symbol: str, *, limit: int = 10) -> list[d
     indicators = ("\u76c8\u5229\u9884\u6d4b\u6982\u89c8", "\u76c8\u5229\u9884\u6d4b")
     frame = None
     last_exception: Exception | None = None
+    no_data_indicators: list[str] = []
     for indicator in indicators:
         try:
             frame = fetch_fn(symbol=code, indicator=indicator)
@@ -966,12 +967,18 @@ def _build_ak_hk_profit_forecast_rows(symbol: str, *, limit: int = 10) -> list[d
             last_exception = exc
             message = str(exc).lower()
             if isinstance(exc, IndexError) or "list index out of range" in message or "out of bounds" in message:
-                LOGGER.info("akshare hk profit forecast no data [%s] indicator=%s", normalized, indicator)
+                no_data_indicators.append(indicator)
                 continue
             LOGGER.warning("akshare hk profit forecast fetch failed [%s] indicator=%s: %s", normalized, indicator, exc)
             return []
     if frame is None:
-        if last_exception is not None:
+        if no_data_indicators:
+            LOGGER.info(
+                "akshare hk profit forecast no data [%s] indicators=%s",
+                normalized,
+                ",".join(no_data_indicators),
+            )
+        elif last_exception is not None:
             LOGGER.info("akshare hk profit forecast unavailable [%s]: %s", normalized, last_exception)
         return []
 

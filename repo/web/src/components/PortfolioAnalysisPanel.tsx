@@ -2,9 +2,9 @@ import React, { useEffect, useMemo, useState } from "react";
 
 import ReactECharts from "echarts-for-react";
 
-import { getStockOverview } from "../services/api";
+import { useApiQuery } from "../hooks/useApiQuery";
+import { getCompareStocks, StockCompareItem } from "../services/api";
 import { formatNumber, formatPercent } from "../utils/format";
-import { readPersistentCache, writePersistentCache } from "../utils/persistentCache";
 
 type WatchOverviewItem = {
   symbol: string;
@@ -16,10 +16,6 @@ type WatchOverviewItem = {
   failed: boolean;
 };
 
-type WatchAnalysisCachePayload = {
-  items: WatchOverviewItem[];
-};
-
 type PortfolioAnalysisPanelProps = {
   symbols: string[];
   title?: string;
@@ -27,7 +23,6 @@ type PortfolioAnalysisPanelProps = {
   pageSize?: number;
 };
 
-const WATCH_ANALYSIS_CACHE_TTL_MS = 5 * 60 * 1000;
 const MAX_ANALYSIS_SYMBOLS = 60;
 const DEFAULT_PAGE_SIZE = 10;
 const UNKNOWN_SECTOR = "未分类";
@@ -36,8 +31,24 @@ function normalizeSymbol(symbol: string) {
   return (symbol || "").trim().toUpperCase();
 }
 
-function buildWatchAnalysisCacheKey(symbols: string[]) {
-  return ["watch-analysis", ...symbols].join(":");
+function buildOverviewItems(symbols: string[], rawItems: StockCompareItem[] | undefined): WatchOverviewItem[] {
+  const itemMap = new Map(
+    (rawItems || []).map((item) => [normalizeSymbol(item.symbol), item]),
+  );
+  return symbols.map((symbol) => {
+    const current = itemMap.get(symbol);
+    const quote = current?.quote || null;
+    const failed = !current || !!current.error;
+    return {
+      symbol,
+      name: String(current?.name || symbol),
+      market: String(current?.market || ""),
+      sector: String(current?.sector || UNKNOWN_SECTOR),
+      current: typeof quote?.current === "number" ? quote.current : null,
+      percent: typeof quote?.percent === "number" ? quote.percent : null,
+      failed,
+    };
+  });
 }
 
 export function PortfolioAnalysisPanel({
@@ -64,97 +75,49 @@ export function PortfolioAnalysisPanel({
   }, [symbols]);
 
   const [topN, setTopN] = useState(10);
-  const [items, setItems] = useState<WatchOverviewItem[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
 
   useEffect(() => {
     setPage(1);
   }, [normalizedSymbols, pageSize]);
 
-  useEffect(() => {
-    if (normalizedSymbols.length === 0) {
-      setItems([]);
-      setLoading(false);
-      setError(null);
-      return;
+  const compareQuery = useApiQuery(
+    normalizedSymbols.length > 0 ? ["stock-compare", "portfolio-analysis", ...normalizedSymbols] : null,
+    () =>
+      getCompareStocks(
+        {
+          symbols: normalizedSymbols,
+          prefer_live: true,
+        },
+        { retry: 1 },
+      ),
+    {
+      staleTimeMs: 60_000,
+      cacheTimeMs: 5 * 60_000,
+    },
+  );
+
+  const items = useMemo(
+    () => buildOverviewItems(normalizedSymbols, compareQuery.data?.items),
+    [compareQuery.data?.items, normalizedSymbols],
+  );
+
+  const derivedError = useMemo(() => {
+    if (compareQuery.error) {
+      return compareQuery.error.message || "组合分析加载失败";
     }
-    let active = true;
-    const cacheKey = buildWatchAnalysisCacheKey(normalizedSymbols);
-    const cachedPayload = readPersistentCache<WatchAnalysisCachePayload>(
-      cacheKey,
-      WATCH_ANALYSIS_CACHE_TTL_MS,
-    );
-    if (cachedPayload?.items?.length) {
-      setItems(cachedPayload.items);
-      setLoading(false);
-    } else {
-      setLoading(true);
+    if (items.length === 0) {
+      return null;
     }
-
-    Promise.allSettled(
-      normalizedSymbols.map((symbol) => getStockOverview(symbol, { prefer_live: true })),
-    )
-      .then((results) => {
-        if (!active) {
-          return;
-        }
-
-        let failedCount = 0;
-        const nextItems = normalizedSymbols.map((symbol, index): WatchOverviewItem => {
-          const result = results[index];
-          if (!result || result.status !== "fulfilled") {
-            failedCount += 1;
-            return {
-              symbol,
-              name: symbol,
-              market: "",
-              sector: UNKNOWN_SECTOR,
-              current: null,
-              percent: null,
-              failed: true,
-            };
-          }
-          const payload = result.value as any;
-          const quote = payload?.quote || {};
-          return {
-            symbol: normalizeSymbol(payload?.symbol || symbol),
-            name: String(payload?.name || symbol),
-            market: String(payload?.market || ""),
-            sector: String(payload?.sector || UNKNOWN_SECTOR),
-            current: typeof quote.current === "number" ? quote.current : null,
-            percent: typeof quote.percent === "number" ? quote.percent : null,
-            failed: false,
-          };
-        });
-
-        setItems(nextItems);
-        writePersistentCache(cacheKey, { items: nextItems });
-        if (failedCount >= normalizedSymbols.length) {
-          setError("行情接口暂时不可用，已展示本地占位数据。");
-        } else if (failedCount > 0) {
-          setError(`部分标的加载失败（${failedCount}/${normalizedSymbols.length}）。`);
-        } else {
-          setError(null);
-        }
-      })
-      .catch((err: Error) => {
-        if (!active) {
-          return;
-        }
-        setError(err.message || "组合分析加载失败");
-      })
-      .finally(() => {
-        if (active) {
-          setLoading(false);
-        }
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [normalizedSymbols]);
+    const failedCount = items.filter((item) => item.failed).length;
+    if (failedCount >= items.length) {
+      return "行情接口暂时不可用，已展示本地占位数据。";
+    }
+    if (failedCount > 0) {
+      return `部分标的加载失败（${failedCount}/${items.length}）。`;
+    }
+    return null;
+  }, [compareQuery.error, items]);
 
   const summary = useMemo(() => {
     const total = items.length;
@@ -291,13 +254,13 @@ export function PortfolioAnalysisPanel({
         </div>
       </section>
 
-      {loading ? (
+      {compareQuery.isLoading && items.length === 0 ? (
         <div className="helper">组合分析加载中...</div>
       ) : (
         <>
-          {error ? (
+          {derivedError ? (
             <div className="helper" style={{ color: "#b45309" }}>
-              {error}
+              {derivedError}
             </div>
           ) : null}
           <section className="grid grid-3">

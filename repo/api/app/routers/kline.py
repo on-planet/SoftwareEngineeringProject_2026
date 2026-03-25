@@ -5,9 +5,9 @@ from datetime import date
 from fastapi import APIRouter, Query
 
 from app.schemas.error import ErrorResponse
-from app.schemas.examples import ERROR_EXAMPLE, KLINE_SERIES_EXAMPLE
-from app.schemas.kline import KlineSeriesOut
-from app.services.kline_service import get_index_kline, get_stock_kline
+from app.schemas.examples import ERROR_EXAMPLE, KLINE_COMPARE_EXAMPLE, KLINE_SERIES_EXAMPLE
+from app.schemas.kline import KlineCompareIn, KlineCompareOut, KlineSeriesOut
+from app.services.kline_service import get_compare_kline, get_index_kline, get_stock_kline
 from etl.fetchers.snowball_client import normalize_index_symbol
 
 router = APIRouter(tags=["kline"])
@@ -49,3 +49,15 @@ def get_stock_kline_route(
 ):
     items = get_stock_kline(symbol, period=period, limit=limit, end=end, start=start)
     return {"symbol": symbol.upper(), "period": period, "items": items}
+
+
+@router.post(
+    "/kline/compare",
+    response_model=KlineCompareOut,
+    responses={
+        200: {"content": {"application/json": {"example": KLINE_COMPARE_EXAMPLE}}},
+        500: {"model": ErrorResponse, "content": {"application/json": {"example": ERROR_EXAMPLE}}},
+    },
+)
+def get_compare_kline_route(payload: KlineCompareIn):
+    return get_compare_kline(payload)

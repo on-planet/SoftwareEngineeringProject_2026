@@ -40,7 +40,8 @@ class EventTimelineNonBlockingTests(unittest.TestCase):
         with (
             patch.object(event_feed_service, "_load_cached_event_feed", return_value=None),
             patch.object(event_feed_service, "load_preloaded_event_feed", return_value=None),
-            patch.object(event_feed_service, "_query_event_feed", side_effect=[[], []]) as query_mock,
+            patch.object(event_feed_service, "_query_event_feed_preview", return_value=([], 0)),
+            patch.object(event_feed_service, "_event_feed_exists", return_value=False),
             patch.object(event_feed_service, "_schedule_remote_backfill", return_value=True) as schedule_mock,
             patch.object(event_feed_service, "run_events_job") as run_mock,
         ):
@@ -52,23 +53,24 @@ class EventTimelineNonBlockingTests(unittest.TestCase):
             )
 
         self.assertEqual(items, [])
-        self.assertEqual(query_mock.call_count, 2)
         schedule_mock.assert_called_once_with(date(2026, 3, 16), date(2026, 3, 16))
         run_mock.assert_not_called()
 
-    def test_event_timeline_service_requests_async_backfill(self) -> None:
+    def test_event_timeline_service_uses_db_page_query(self) -> None:
         feed_items = [EventTimelineItem(symbol="000001.SZ", type="report", title="event", date=date(2026, 3, 16))]
 
         with (
             patch.object(event_timeline_service, "get_json", return_value={"items": [], "total": 0}),
-            patch.object(event_timeline_service, "load_or_backfill_event_feed", return_value=feed_items) as load_mock,
+            patch.object(event_timeline_service, "list_event_feed_page", return_value=(feed_items, 1)) as list_mock,
             patch.object(event_timeline_service, "set_json"),
         ):
             items, total = event_timeline_service.list_event_timeline(object(), limit=20, offset=0, sort="desc")
 
         self.assertEqual(total, 1)
         self.assertEqual(items, feed_items)
-        self.assertEqual(load_mock.call_args.kwargs["backfill_mode"], "async")
+        self.assertEqual(list_mock.call_args.kwargs["limit"], 20)
+        self.assertEqual(list_mock.call_args.kwargs["offset"], 0)
+        self.assertEqual(list_mock.call_args.kwargs["sort"], "desc")
 
 
 if __name__ == "__main__":

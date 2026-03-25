@@ -8,11 +8,13 @@ from threading import Lock
 from types import SimpleNamespace
 from typing import Iterable, Literal
 
+from sqlalchemy import or_
 from app.core.cache import get_json, set_json
 from app.core.db import SessionLocal
 from app.core.logger import get_logger
 from app.models.daily_prices import DailyPrice
 from app.models.financials import Financial
+from app.models.stocks import Stock
 from app.models.stock_intraday_kline import StockIntradayKline
 from app.models.stock_live_snapshot import StockLiveSnapshot
 from app.models.stock_research_item import StockResearchItem
@@ -20,9 +22,18 @@ from app.schemas.indicators import IndicatorPoint
 from app.schemas.kline import KlinePoint
 from app.schemas.risk_series import RiskPoint
 from app.services.cache_utils import build_cache_key, item_to_dict
-from app.utils.symbols import normalize_symbol, symbol_lookup_aliases
-from etl.fetchers.market_client import get_stock_basic as get_cached_stock_basic
-from etl.fetchers.snowball_client import (
+from app.services.live_market_metrics import (
+    build_fundamental_payload,
+    build_indicator_payload,
+    build_risk_series,
+    build_risk_snapshot_payload,
+    calc_fundamental_score,
+    calc_growth,
+    calc_profit_quality,
+    calc_risk,
+)
+from app.services.live_market_remote import (
+    get_cached_stock_basic,
     get_daily_history,
     get_kline_history,
     get_recent_financials,
@@ -31,32 +42,11 @@ from etl.fetchers.snowball_client import (
     get_stock_quote,
     get_stock_quote_detail,
     get_stock_reports,
-    normalize_index_symbol,
+    load_stock_basics_cache,
     market_from_symbol,
+    normalize_index_symbol,
 )
-from etl.transformers.fundamentals import calc_fundamental_score, calc_growth, calc_profit_quality, calc_risk
-from etl.transformers.indicators import (
-    calc_adx,
-    calc_atr,
-    calc_bollinger_bands,
-    calc_cci,
-    calc_ema,
-    calc_kdj,
-    calc_ma,
-    calc_macd,
-    calc_max_drawdown,
-    calc_mfi,
-    calc_momentum,
-    calc_obv,
-    calc_roc,
-    calc_rsi,
-    calc_volatility,
-    calc_wma,
-)
-from etl.utils.env import load_project_env
-from etl.utils.stock_basics_cache import load_stock_basics_cache
-
-load_project_env()
+from app.utils.symbols import normalize_symbol, symbol_lookup_aliases
 
 LiveKlinePeriod = Literal["1m", "30m", "60m", "day", "week", "month", "quarter", "year"]
 LOGGER = get_logger("api.live_market")
@@ -296,6 +286,77 @@ def _refresh_stock_rows_sectors(rows: list[dict]) -> list[dict]:
     if not refreshed:
         return rows
     return _merge_stock_rows(rows, refreshed, limit=len(rows))
+
+
+def _stock_market_symbol_filters(market: str | None = None):
+    normalized_market = str(market or "").strip().upper() or None
+    clauses: list = []
+    if normalized_market in {None, "A"}:
+        clauses.extend(Stock.symbol.like(f"{prefix}%.SH") for prefix in A_SHARE_SH_PREFIXES)
+        clauses.extend(Stock.symbol.like(f"{prefix}%.SZ") for prefix in A_SHARE_SZ_PREFIXES)
+        clauses.extend(Stock.symbol.like(f"{prefix}%.BJ") for prefix in BJ_SHARE_PREFIXES)
+    if normalized_market in {None, "HK"}:
+        clauses.append(Stock.symbol.like("%.HK"))
+    if normalized_market in {None, "US"}:
+        clauses.append(Stock.symbol.like("%.US"))
+    return or_(*clauses) if clauses else None
+
+
+def _list_stock_rows_from_db(
+    *,
+    market: str | None = None,
+    keyword: str | None = None,
+    sector: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+    sort: str = "asc",
+) -> tuple[list[dict], int]:
+    keyword_text = str(keyword or "").strip()
+    sector_text = str(sector or "").strip()
+    ordering = Stock.symbol.desc() if sort == "desc" else Stock.symbol.asc()
+    try:
+        with SessionLocal() as db:
+            query = db.query(Stock.symbol, Stock.name, Stock.market, Stock.sector)
+            symbol_filter = _stock_market_symbol_filters(market)
+            if symbol_filter is not None:
+                query = query.filter(symbol_filter)
+            if sector_text:
+                query = query.filter(Stock.sector.ilike(f"%{sector_text}%"))
+            if keyword_text:
+                keyword_like = f"%{keyword_text}%"
+                query = query.filter(
+                    or_(
+                        Stock.symbol.ilike(keyword_like),
+                        Stock.name.ilike(keyword_like),
+                        Stock.sector.ilike(keyword_like),
+                    )
+                )
+            total = int(query.count() or 0)
+            rows = query.order_by(ordering).offset(offset).limit(limit).all()
+    except Exception as exc:
+        LOGGER.warning(
+            "stock pool db query failed [market=%s keyword=%s sector=%s]: %s",
+            market,
+            keyword_text or None,
+            sector_text or None,
+            exc,
+        )
+        return [], 0
+
+    items: list[dict] = []
+    for row in rows:
+        symbol = normalize_symbol(str(row.symbol or ""))
+        if not symbol or not _looks_like_equity_symbol(symbol):
+            continue
+        items.append(
+            {
+                "symbol": symbol,
+                "name": str(row.name or symbol),
+                "market": str(row.market or market_from_symbol(symbol)),
+                "sector": str(row.sector or "Unknown"),
+            }
+        )
+    return items, total
 
 
 
@@ -911,15 +972,7 @@ def list_live_stocks(
         limit=limit,
         offset=offset,
         sort=sort,
-        version=1,
-    )
-    all_cache_key = build_cache_key(
-        "live:stocks:all",
-        market=normalized_market,
-        keyword=normalized_keyword,
-        sector=normalized_sector,
-        sort=sort,
-        version=1,
+        version=2,
     )
     cached = get_json(page_cache_key)
     if isinstance(cached, dict) and isinstance(cached.get("items"), list) and isinstance(cached.get("total"), int):
@@ -932,11 +985,16 @@ def list_live_stocks(
             set_json(page_cache_key, {"items": hydrated, "total": cached["total"]}, ttl=LIVE_CACHE_TTL)
         return hydrated, cached["total"]
 
-    all_cached = get_json(all_cache_key)
-    if isinstance(all_cached, dict) and isinstance(all_cached.get("items"), list) and isinstance(all_cached.get("total"), int):
-        all_items = _dedupe_stock_rows(all_cached["items"])
-        total = int(all_cached["total"])
-    else:
+    payload, total = _list_stock_rows_from_db(
+        market=normalized_market,
+        keyword=keyword_text,
+        sector=sector_text,
+        limit=limit,
+        offset=offset,
+        sort=sort,
+    )
+
+    if total <= 0:
         all_items = _fallback_stock_rows(
             market=normalized_market,
             keyword=keyword_text,
@@ -946,9 +1004,8 @@ def list_live_stocks(
         all_items = _dedupe_stock_rows(all_items)
         all_items.sort(key=lambda item: str(item.get("symbol", "")), reverse=sort == "desc")
         total = len(all_items)
-        set_json(all_cache_key, {"items": all_items, "total": total}, ttl=LIVE_CACHE_TTL)
+        payload = all_items[offset : offset + limit]
 
-    payload = all_items[offset : offset + limit]
     if _needs_local_name_hydration(payload):
         payload = _hydrate_stock_rows_from_local_basics(payload, limit=len(payload))
     payload = _hydrate_stock_rows_from_profile_cache(payload, limit=len(payload))
@@ -1284,6 +1341,7 @@ def get_live_fundamental(symbol: str) -> dict | None:
         ),
         "updated_at": datetime.now(),
     }
+    result = build_fundamental_payload(normalized, rows, as_of=datetime.now())
     if _fundamental_payload_is_usable(result):
         set_json(cache_key, item_to_dict(result), ttl=LIVE_CACHE_TTL)
     return result
@@ -1317,63 +1375,6 @@ def _load_indicator_rows(
     required_count = max(limit + window * 4, 300)
     remote_rows = get_daily_history(normalized, count=required_count, as_of=end)
     return _filter_indicator_rows(remote_rows, start=start, end=end, limit=limit)
-
-
-def _indicator_lines_and_params(indicator: str, window: int) -> tuple[list[str], dict[str, int | float | str]]:
-    if indicator in {"ma", "sma", "ema", "wma", "rsi", "atr", "cci", "wr", "roc", "mom", "mfi"}:
-        return [indicator], {"window": window}
-    if indicator == "obv":
-        return ["obv"], {}
-    if indicator == "macd":
-        return ["macd", "signal", "hist"], {"fast": 12, "slow": 26, "signal": 9}
-    if indicator == "boll":
-        return ["middle", "upper", "lower"], {"window": window, "stddev": 2.0}
-    if indicator == "kdj":
-        return ["k", "d", "j"], {"window": window, "k_smooth": 3, "d_smooth": 3}
-    if indicator == "adx":
-        return ["adx", "plus_di", "minus_di"], {"window": window}
-    return [indicator], {"window": window}
-
-
-def _calculate_indicator_payload(indicator: str, rows: list[dict], window: int) -> tuple[list[str], dict[str, int | float | str], dict[str, list[float]]]:
-    closes = [float(row.get("close") or 0.0) for row in rows]
-    highs = [float(row.get("high") or 0.0) for row in rows]
-    lows = [float(row.get("low") or 0.0) for row in rows]
-    volumes = [float(row.get("volume") or 0.0) for row in rows]
-    lines, params = _indicator_lines_and_params(indicator, window)
-
-    if indicator in {"ma", "sma"}:
-        values = calc_ma(closes, window)
-        return lines, params, {"ma" if indicator == "ma" else "sma": values}
-    if indicator == "ema":
-        return lines, params, {"ema": calc_ema(closes, window)}
-    if indicator == "wma":
-        return lines, params, {"wma": calc_wma(closes, window)}
-    if indicator == "rsi":
-        return lines, params, {"rsi": calc_rsi(closes, window)}
-    if indicator == "macd":
-        return lines, params, calc_macd(closes, fast=12, slow=26, signal=9)
-    if indicator == "boll":
-        return lines, params, calc_bollinger_bands(closes, window, num_std=2.0)
-    if indicator == "kdj":
-        return lines, params, calc_kdj(highs, lows, closes, window)
-    if indicator == "atr":
-        return lines, params, {"atr": calc_atr(highs, lows, closes, window)}
-    if indicator == "cci":
-        return lines, params, {"cci": calc_cci(highs, lows, closes, window)}
-    if indicator == "wr":
-        return lines, params, {"wr": calc_wr(highs, lows, closes, window)}
-    if indicator == "obv":
-        return lines, params, {"obv": calc_obv(closes, volumes)}
-    if indicator == "roc":
-        return lines, params, {"roc": calc_roc(closes, window)}
-    if indicator == "mom":
-        return lines, params, {"mom": calc_momentum(closes, window)}
-    if indicator == "adx":
-        return lines, params, calc_adx(highs, lows, closes, window)
-    if indicator == "mfi":
-        return lines, params, {"mfi": calc_mfi(highs, lows, closes, volumes, window)}
-    return [indicator], {"window": window}, {indicator: calc_ma(closes, window)}
 
 
 def get_live_indicator_series(
@@ -1415,7 +1416,7 @@ def get_live_indicator_series(
     )
     if not rows:
         return [], [], {}, False
-    lines, params, series_payload = _calculate_indicator_payload(indicator, rows, window)
+    lines, params, series_payload = build_indicator_payload(indicator, rows, window)
     items: list[IndicatorPoint] = []
     for idx, row in enumerate(rows):
         values = {
@@ -1452,19 +1453,10 @@ def get_live_risk_snapshot(symbol: str, *, window: int = 60) -> dict | None:
     points = get_live_kline(normalized, period="day", limit=window)
     if not points:
         return None
-    closes = [float(point.close) for point in points]
-    returns = [
-        (closes[idx] - closes[idx - 1]) / closes[idx - 1]
-        for idx in range(1, len(closes))
-        if closes[idx - 1]
-    ]
-    payload = {
-        "symbol": normalized,
-        "max_drawdown": calc_max_drawdown(closes),
-        "volatility": calc_volatility(returns),
-        "as_of": points[-1].date,
-        "cache_hit": False,
-    }
+    payload = build_risk_snapshot_payload(normalized, points)
+    if payload is None:
+        return None
+    payload["cache_hit"] = False
     set_json(cache_key, item_to_dict(payload), ttl=LIVE_CACHE_TTL)
     return payload
 
@@ -1493,26 +1485,9 @@ def get_live_risk_series(
             return items, True
 
     points = get_live_kline(normalized, period="day", limit=limit, start=start, end=end)
-    closes = [float(point.close) for point in points]
-    if not closes:
+    if not points:
         return [], False
-    returns = [
-        (closes[idx] - closes[idx - 1]) / closes[idx - 1]
-        for idx in range(1, len(closes))
-        if closes[idx - 1]
-    ]
-    items: list[RiskPoint] = []
-    for idx, point in enumerate(points):
-        window_start = max(0, idx - window + 1)
-        window_prices = closes[window_start : idx + 1]
-        window_returns = returns[window_start:idx] if idx > 0 else []
-        items.append(
-            RiskPoint(
-                date=point.date,
-                max_drawdown=calc_max_drawdown(window_prices),
-                volatility=calc_volatility(window_returns),
-            )
-        )
+    items = build_risk_series(points, window=window)
     set_json(cache_key, [item.dict() for item in items], ttl=LIVE_CACHE_TTL)
     return items, False
 

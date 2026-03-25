@@ -7,12 +7,15 @@ from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.schemas.common import IdOut
-from app.schemas.risk import RiskOut
 from app.schemas.stock import (
     DailyPriceOut,
+    StockCompareBatchIn,
+    StockCompareBatchOut,
     StockCreate,
+    StockCompareItemOut,
     StockExtrasOut,
     StockOut,
+    StockProfilePanelOut,
     StockOverviewOut,
     StockUpdate,
     StockWithRiskOut,
@@ -21,25 +24,27 @@ from app.schemas.fundamental import FundamentalOut, FundamentalCreate, Fundament
 from app.schemas.pagination import Page
 from app.schemas.research import ResearchPanelOut
 from app.schemas.error import ErrorResponse
-from app.schemas.examples import ERROR_EXAMPLE, STOCK_WITH_RISK_EXAMPLE
+from app.schemas.examples import ERROR_EXAMPLE, STOCK_PROFILE_EXAMPLE, STOCK_WITH_RISK_EXAMPLE
+from app.services.profile_service import (
+    StockRequestContext,
+    build_stock_overview_panel,
+    build_stock_profile_panel,
+    build_stock_with_risk,
+)
 from app.services.stock_service import (
     list_stocks,
-    get_stock_profile,
-    get_stock_overview_profile,
-    get_stock_profile_extras,
     get_stock_daily,
     create_stock,
     update_stock,
     delete_stock,
+    get_stock_compare_batch,
 )
-from app.services.risk_service import get_risk_snapshot
 from app.services.score_service import (
     get_fundamental_score,
     create_fundamental_score,
     update_fundamental_score,
     delete_fundamental_score,
 )
-from app.services.research_service import get_stock_research
 from app.utils.errors import ensure_found
 from app.utils.query_params import pagination_params, sort_params
 from app.utils.validators import validate_symbol_match
@@ -84,21 +89,35 @@ def list_stocks_route(
 )
 def get_stock(symbol: str, prefer_live: bool = Query(False)):
     """获取股票基本信息。"""
-    stock = ensure_found(get_stock_profile(symbol, prefer_live=prefer_live), "Stock not found")
-    risk_payload = get_risk_snapshot(symbol)
-    if isinstance(stock, dict):
-        result = StockWithRiskOut(**stock)
-    else:
-        result = StockWithRiskOut.from_orm(stock)
-    if risk_payload:
-        result.risk = RiskOut(
-            symbol=symbol,
-            max_drawdown=risk_payload.get("max_drawdown"),
-            volatility=risk_payload.get("volatility"),
-            as_of=risk_payload.get("as_of"),
-            cache_hit=risk_payload.get("cache_hit"),
-        )
-    return result
+    context = StockRequestContext(symbol=symbol, prefer_live=prefer_live)
+    return ensure_found(build_stock_with_risk(context), "Stock not found")
+
+
+@router.get(
+    "/stock/{symbol}/profile",
+    response_model=StockProfilePanelOut,
+    responses={
+        200: {"content": {"application/json": {"example": STOCK_PROFILE_EXAMPLE}}},
+        404: {"model": ErrorResponse, "content": {"application/json": {"example": ERROR_EXAMPLE}}},
+        500: {"model": ErrorResponse, "content": {"application/json": {"example": ERROR_EXAMPLE}}},
+    },
+)
+def get_stock_profile_panel(symbol: str, prefer_live: bool = Query(False)):
+    context = StockRequestContext(symbol=symbol, prefer_live=prefer_live)
+    return ensure_found(build_stock_profile_panel(context), "Stock not found")
+
+
+@router.post(
+    "/stock/compare",
+    response_model=StockCompareBatchOut,
+    responses={500: {"model": ErrorResponse, "content": {"application/json": {"example": ERROR_EXAMPLE}}}},
+)
+def get_stock_compare_batch_route(payload: StockCompareBatchIn, db: Session = Depends(get_db)):
+    items = [
+        StockCompareItemOut(**item)
+        for item in get_stock_compare_batch(db, payload.symbols, prefer_live=payload.prefer_live)
+    ]
+    return {"items": items}
 
 
 @router.get(
@@ -110,20 +129,8 @@ def get_stock(symbol: str, prefer_live: bool = Query(False)):
     },
 )
 def get_stock_overview(symbol: str, prefer_live: bool = Query(False)):
-    stock = ensure_found(get_stock_overview_profile(symbol, prefer_live=prefer_live), "Stock not found")
-    risk_payload = get_risk_snapshot(symbol)
-    fundamental = get_fundamental_score(symbol)
-    payload = dict(stock) if isinstance(stock, dict) else StockOverviewOut.from_orm(stock).model_dump()
-    if risk_payload:
-        payload["risk"] = RiskOut(
-            symbol=symbol,
-            max_drawdown=risk_payload.get("max_drawdown"),
-            volatility=risk_payload.get("volatility"),
-            as_of=risk_payload.get("as_of"),
-            cache_hit=risk_payload.get("cache_hit"),
-        )
-    payload["fundamental"] = fundamental
-    return StockOverviewOut(**payload)
+    context = StockRequestContext(symbol=symbol, prefer_live=prefer_live)
+    return ensure_found(build_stock_overview_panel(context), "Stock not found")
 
 
 @router.get(
@@ -132,7 +139,8 @@ def get_stock_overview(symbol: str, prefer_live: bool = Query(False)):
     responses={500: {"model": ErrorResponse, "content": {"application/json": {"example": ERROR_EXAMPLE}}}},
 )
 def get_stock_extras(symbol: str, prefer_live: bool = Query(False)):
-    return get_stock_profile_extras(symbol, prefer_live=prefer_live)
+    context = StockRequestContext(symbol=symbol, prefer_live=prefer_live)
+    return context.get_profile_extras_payload()
 
 
 @router.post(
@@ -210,7 +218,8 @@ def get_research_panel(
     report_limit: int = Query(10, ge=1, le=50),
     forecast_limit: int = Query(10, ge=1, le=50),
 ):
-    return get_stock_research(symbol, report_limit=report_limit, forecast_limit=forecast_limit)
+    context = StockRequestContext(symbol=symbol)
+    return context.get_research_payload(report_limit=report_limit, forecast_limit=forecast_limit)
 
 
 @router.post(

@@ -117,3 +117,36 @@ class StockExtrasOut(BaseModel):
     symbol: str
     quote_detail: StockQuoteDetailOut | None = None
     pankou: StockPankouOut | None = None
+
+
+class StockProfilePanelOut(BaseModel):
+    symbol: str
+    name: str
+    market: str
+    sector: str
+    quote: StockQuoteOut | None = None
+    quote_detail: StockQuoteDetailOut | None = None
+    pankou: StockPankouOut | None = None
+    risk: RiskOut | None = None
+    fundamental: FundamentalOut | None = None
+
+    class Config:
+        from_attributes = True
+
+
+class StockCompareBatchIn(BaseModel):
+    symbols: list[str] = Field(default_factory=list)
+    prefer_live: bool = False
+
+
+class StockCompareItemOut(BaseModel):
+    symbol: str
+    name: str
+    market: str
+    sector: str
+    quote: StockQuoteOut | None = None
+    error: str | None = None
+
+
+class StockCompareBatchOut(BaseModel):
+    items: list[StockCompareItemOut] = Field(default_factory=list)

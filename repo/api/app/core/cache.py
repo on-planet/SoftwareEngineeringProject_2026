@@ -66,10 +66,12 @@ def get_json(key: str):
         value = client.get(key)
         if value is None:
             return _memory_get(key)
+        ttl = client.ttl(key)
         if isinstance(value, bytes):
             value = value.decode("utf-8")
         payload = json.loads(value)
-        _memory_set(key, payload)
+        memory_ttl = ttl if isinstance(ttl, int) and ttl > 0 else DEFAULT_CACHE_TTL
+        _memory_set(key, payload, ttl=memory_ttl)
         return payload
     except Exception as exc:  # pragma: no cover - redis failure
         logger.warning("Redis 读取失败 [%s]：%s", key, exc)

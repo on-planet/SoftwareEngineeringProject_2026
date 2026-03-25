@@ -1,0 +1,170 @@
+.workspaceGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.workspaceCard {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.workspaceHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.workspaceList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.workspaceItem {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 12px 14px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.workspaceItemText {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.workspaceItemActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.selectionToolbar {
+  justify-content: space-between;
+}
+
+.selectionToolbarActions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.selectableCard {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+}
+
+.selectableCard[data-selected="true"] {
+  border-color: rgba(21, 94, 239, 0.28);
+  box-shadow: 0 18px 32px rgba(21, 94, 239, 0.08);
+}
+
+.cardSelectionRow {
+  display: flex;
+  justify-content: flex-start;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.cardSelection {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--finance-neutral);
+}
+
+.cardSelection input {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.stockLink {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.stockLink :global(.stock-card-meta) {
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+
+.activePoolPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.activePoolGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.activePoolCard {
+  padding: 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(255, 255, 255, 0.92);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.activePoolMeta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.workspaceForm {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.workspaceMetrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.workspaceMetric {
+  border: 1px solid rgba(21, 94, 239, 0.12);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.workspaceMetricValue {
+  margin-top: 6px;
+  font-size: 20px;
+  font-weight: 800;
+}
+
+@media (max-width: 768px) {
+  .workspaceItem {
+    flex-direction: column;
+  }
+
+  .selectionToolbar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

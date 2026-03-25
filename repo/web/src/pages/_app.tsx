@@ -1,67 +1,23 @@
-import React, { useEffect, useState } from "react";
+import React from "react";
 import Link from "next/link";
-import { useRouter } from "next/router";
 
 import type { AppProps } from "next/app";
 
+import { AuthProvider, useAuth } from "../providers/AuthProvider";
 import "../styles/global.css";
-import { getCurrentUser } from "../services/api";
-import { AUTH_CHANGED_EVENT, clearAuthToken, getAuthToken } from "../utils/auth";
+import { clearAuthToken } from "../utils/auth";
 
 const NAV_LINKS = [
-  { href: "/", label: "总览" },
-  { href: "/stocks", label: "股票" },
-  { href: "/insights", label: "洞察" },
-  { href: "/macro", label: "宏观" },
-  { href: "/futures", label: "期货" },
+  { href: "/", label: "Overview" },
+  { href: "/stocks", label: "Stocks" },
+  { href: "/insights", label: "Insights" },
+  { href: "/macro", label: "Macro" },
+  { href: "/futures", label: "Futures" },
+  { href: "/alerts", label: "Alerts" },
 ];
 
-export default function App({ Component, pageProps }: AppProps) {
-  const router = useRouter();
-  const [authEmail, setAuthEmail] = useState<string | null>(null);
-
-  useEffect(() => {
-    let disposed = false;
-
-    const syncAuthUser = async () => {
-      const token = getAuthToken();
-      if (!token) {
-        if (!disposed) {
-          setAuthEmail(null);
-        }
-        return;
-      }
-      try {
-        const user: any = await getCurrentUser(token);
-        const identity = String(user?.account || user?.email || "");
-        if (!disposed) {
-          setAuthEmail(identity || null);
-        }
-      } catch {
-        clearAuthToken();
-        if (!disposed) {
-          setAuthEmail(null);
-        }
-      }
-    };
-
-    const handleAuthChanged = () => {
-      void syncAuthUser();
-    };
-    const handleRouteChanged = () => {
-      void syncAuthUser();
-    };
-
-    void syncAuthUser();
-    window.addEventListener(AUTH_CHANGED_EVENT, handleAuthChanged);
-    router.events.on("routeChangeComplete", handleRouteChanged);
-
-    return () => {
-      disposed = true;
-      window.removeEventListener(AUTH_CHANGED_EVENT, handleAuthChanged);
-      router.events.off("routeChangeComplete", handleRouteChanged);
-    };
-  }, [router.events]);
+function AppShell({ Component, pageProps }: AppProps) {
+  const { authEmail, isAuthenticated } = useAuth();
 
   return (
     <div className="app-shell">
@@ -73,10 +29,10 @@ export default function App({ Component, pageProps }: AppProps) {
               {item.label}
             </Link>
           ))}
-          {authEmail ? (
+          {isAuthenticated ? (
             <>
               <Link href="/stats" className="nav-link">
-                账号
+                Workspace
               </Link>
               <span className="nav-link" style={{ background: "rgba(15, 23, 42, 0.08)", color: "#0f172a" }}>
                 {authEmail}
@@ -86,15 +42,14 @@ export default function App({ Component, pageProps }: AppProps) {
                 className="nav-link-button"
                 onClick={() => {
                   clearAuthToken();
-                  setAuthEmail(null);
                 }}
               >
-                退出
+                Logout
               </button>
             </>
           ) : (
             <Link href="/auth" className="nav-link">
-              账号
+              Account
             </Link>
           )}
         </nav>
@@ -103,5 +58,13 @@ export default function App({ Component, pageProps }: AppProps) {
         <Component {...pageProps} />
       </main>
     </div>
+  );
+}
+
+export default function App(props: AppProps) {
+  return (
+    <AuthProvider>
+      <AppShell {...props} />
+    </AuthProvider>
   );
 }

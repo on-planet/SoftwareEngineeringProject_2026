@@ -151,6 +151,14 @@ class AkshareMacroIntegrationTests(unittest.TestCase):
         self.assertIn("AK_USA_FED_RATE_FORECAST:USA", keys)
         self.assertIn("AK_USA_FED_RATE_PREVIOUS:USA", keys)
 
+    def test_central_bank_interest_rate_specs_expand_supported_macro_keys(self) -> None:
+        supported_keys = set(akshare_macro_client.AKSHARE_MACRO_SERIES_KEYS)
+
+        self.assertIn("AK_EUR_ECB_RATE_ACTUAL:EUR", supported_keys)
+        self.assertIn("AK_GBR_BOE_RATE_ACTUAL:GBR", supported_keys)
+        self.assertIn("AK_JPN_BOJ_RATE_PREVIOUS:JPN", supported_keys)
+        self.assertIn("AK_BRA_BCB_RATE_FORECAST:BRA", supported_keys)
+
     def test_fetch_akshare_rows_for_house_price_spec_splits_city_keys(self) -> None:
         spec = akshare_macro_client.AkShareMacroSpec(
             "demo",

@@ -12,7 +12,15 @@ from app.schemas.macro_series import MacroSeriesOut
 from app.schemas.pagination import Page
 from app.schemas.error import ErrorResponse
 from app.schemas.examples import ERROR_EXAMPLE, MACRO_PAGE_EXAMPLE, MACRO_SERIES_EXAMPLE
-from app.services.macro_service import list_macro, get_cached_macro, get_macro_series, create_macro, update_macro, delete_macro
+from app.services.macro_service import (
+    create_macro,
+    delete_macro,
+    get_cached_macro,
+    get_macro_series,
+    list_macro,
+    list_macro_snapshot,
+    update_macro,
+)
 from app.utils.query_params import pagination_params, sort_params
 
 router = APIRouter(tags=["macro"])
@@ -41,6 +49,27 @@ def list_macro_route(
         items = list_macro(db, start, end, sorting["sort"])
     else:
         items = cached
+    total = len(items)
+    sliced = items[paging["offset"] : paging["offset"] + paging["limit"]]
+    return {"items": sliced, "total": total, **paging}
+
+
+@router.get(
+    "/macro/snapshot",
+    response_model=Page[MacroOut],
+    responses={
+        404: {"model": ErrorResponse, "content": {"application/json": {"example": ERROR_EXAMPLE}}},
+        500: {"model": ErrorResponse, "content": {"application/json": {"example": ERROR_EXAMPLE}}},
+    },
+)
+def list_macro_snapshot_route(
+    as_of: date | None = None,
+    paging: dict = Depends(pagination_params),
+    sorting: dict = Depends(sort_params),
+    db: Session = Depends(get_db),
+):
+    """鑾峰彇姣忎釜瀹忚鎸囨爣鐨勬渶鏂板揩鐓с€?"""
+    items = list_macro_snapshot(db, as_of=as_of, sort=sorting["sort"])
     total = len(items)
     sliced = items[paging["offset"] : paging["offset"] + paging["limit"]]
     return {"items": sliced, "total": total, **paging}

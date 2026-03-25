@@ -1,9 +1,9 @@
-﻿import React, { useEffect, useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 
 import ReactECharts from "echarts-for-react";
 
+import { useApiQuery } from "../hooks/useApiQuery";
 import { getStockKline } from "../services/api";
-import { readPersistentCache, writePersistentCache } from "../utils/persistentCache";
 
 type KlinePeriod = "1m" | "30m" | "60m" | "day" | "week" | "month" | "quarter" | "year";
 
@@ -81,57 +81,25 @@ function getDefaultLimit(period: KlinePeriod) {
 
 export function StockKlinePanel({ symbol }: Props) {
   const [period, setPeriod] = useState<KlinePeriod>("day");
-  const [items, setItems] = useState<KlinePoint[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const normalizedSymbol = symbol.trim().toUpperCase();
-
-  useEffect(() => {
-    if (!normalizedSymbol) {
-      setItems([]);
-      setLoading(false);
-      setRefreshing(false);
-      setError(null);
-      return;
-    }
-    let active = true;
-    const limit = getDefaultLimit(period);
-    const cacheKey = buildKlineCacheKey(normalizedSymbol, period, limit);
-    const cached = readPersistentCache<KlineSeries>(cacheKey, getCacheMaxAge(period));
-    setItems(cached?.items ?? []);
-    setLoading(!cached?.items?.length);
-    setRefreshing(!!cached?.items?.length);
-    setError(null);
-    getStockKline(normalizedSymbol, { period, limit })
-      .then((res) => {
-        if (!active) {
-          return;
-        }
-        const payload = res as KlineSeries;
-        writePersistentCache(cacheKey, payload);
-        setItems(payload.items ?? []);
-        setError(null);
-      })
-      .catch((err: Error) => {
-        if (!active) {
-          return;
-        }
-        if (!cached?.items?.length) {
-          setItems([]);
-          setError(err.message || "K 线加载失败");
-        }
-      })
-      .finally(() => {
-        if (active) {
-          setLoading(false);
-          setRefreshing(false);
-        }
-      });
-    return () => {
-      active = false;
-    };
-  }, [normalizedSymbol, period]);
+  const limit = useMemo(() => getDefaultLimit(period), [period]);
+  const cacheMaxAgeMs = useMemo(() => getCacheMaxAge(period), [period]);
+  const cacheKey = normalizedSymbol ? buildKlineCacheKey(normalizedSymbol, period, limit) : null;
+  const klineQuery = useApiQuery<KlineSeries>(
+    cacheKey,
+    () => getStockKline(normalizedSymbol, { period, limit }) as Promise<KlineSeries>,
+    {
+      staleTimeMs: 0,
+      cacheTimeMs: cacheMaxAgeMs,
+      persist: {
+        maxAgeMs: cacheMaxAgeMs,
+      },
+    },
+  );
+  const items = klineQuery.data?.items ?? [];
+  const loading = Boolean(normalizedSymbol) && klineQuery.isLoading;
+  const refreshing = Boolean(normalizedSymbol) && klineQuery.isFetching && items.length > 0;
+  const error = klineQuery.error?.message ?? null;
 
   const option = useMemo(() => {
     if (!items.length) {

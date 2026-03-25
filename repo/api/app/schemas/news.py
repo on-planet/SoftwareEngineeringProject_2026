@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class NewsOut(BaseModel):
@@ -17,8 +17,8 @@ class NewsOut(BaseModel):
     source_category: str | None = None
     topic_category: str | None = None
     time_bucket: str | None = None
-    related_symbols: str | None = None
-    related_sectors: str | None = None
+    related_symbols: list[str] = Field(default_factory=list)
+    related_sectors: list[str] = Field(default_factory=list)
 
     class Config:
         from_attributes = True
@@ -35,8 +35,8 @@ class NewsCreate(BaseModel):
     source_category: str | None = None
     topic_category: str | None = None
     time_bucket: str | None = None
-    related_symbols: str | None = None
-    related_sectors: str | None = None
+    related_symbols: list[str] | str | None = None
+    related_sectors: list[str] | str | None = None
 
 
 class NewsUpdate(BaseModel):
@@ -49,5 +49,5 @@ class NewsUpdate(BaseModel):
     source_category: str | None = None
     topic_category: str | None = None
     time_bucket: str | None = None
-    related_symbols: str | None = None
-    related_sectors: str | None = None
+    related_symbols: list[str] | str | None = None
+    related_sectors: list[str] | str | None = None

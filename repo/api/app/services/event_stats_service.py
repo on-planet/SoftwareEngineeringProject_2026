@@ -3,12 +3,13 @@ from __future__ import annotations
 from collections import Counter
 from datetime import date, timedelta
 
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.cache import get_json, set_json
 from app.schemas.event_stats import CountByDateItem, CountBySymbolItem, CountByTypeItem
 from app.services.cache_utils import item_to_dict
-from app.services.event_feed_service import load_or_backfill_event_feed
+from app.services.event_feed_service import _build_event_feed_source
 
 
 def _cache_key(
@@ -61,21 +62,42 @@ def get_event_stats(
                     [CountBySymbolItem(**item) for item in by_symbol if isinstance(item, dict)],
                 )
 
-    items = load_or_backfill_event_feed(
-        db,
+    date_counter: Counter[date] = Counter()
+    type_counter: Counter[str] = Counter()
+    symbol_counter: Counter[str] = Counter()
+    source = _build_event_feed_source(
         symbols=symbols,
         event_types=event_types,
         start=start,
         end=end,
     )
+    if source is not None:
+        by_day_rows = db.execute(
+            select(source.c.date.label("date"), func.count().label("count"))
+            .select_from(source)
+            .group_by(source.c.date)
+        ).all()
+        for row in by_day_rows:
+            bucket = _date_bucket(row.date, granularity)
+            date_counter[bucket] += int(row.count or 0)
 
-    date_counter: Counter[date] = Counter()
-    type_counter: Counter[str] = Counter()
-    symbol_counter: Counter[str] = Counter()
-    for item in items:
-        date_counter[_date_bucket(item.date, granularity)] += 1
-        type_counter[item.type] += 1
-        symbol_counter[item.symbol] += 1
+        by_type_rows = db.execute(
+            select(source.c.type.label("type"), func.count().label("count"))
+            .select_from(source)
+            .group_by(source.c.type)
+        ).all()
+        for row in by_type_rows:
+            if row.type:
+                type_counter[str(row.type)] += int(row.count or 0)
+
+        by_symbol_rows = db.execute(
+            select(source.c.symbol.label("symbol"), func.count().label("count"))
+            .select_from(source)
+            .group_by(source.c.symbol)
+        ).all()
+        for row in by_symbol_rows:
+            if row.symbol:
+                symbol_counter[str(row.symbol)] += int(row.count or 0)
 
     if top_date:
         sorted_dates = sorted(date_counter.items(), key=lambda item: (-item[1], item[0]))[:top_date]

@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.core.cache import get_json, set_json
 from app.schemas.event_timeline import EventTimelineItem
 from app.services.cache_utils import item_to_dict
-from app.services.event_feed_service import load_or_backfill_event_feed, sort_event_feed_items
+from app.services.event_feed_service import list_event_feed_page
 
 EVENT_TIMELINE_CACHE_TTL = max(60, int(os.getenv("EVENT_TIMELINE_CACHE_TTL", "120")))
 
@@ -60,17 +60,17 @@ def list_event_timeline(
             else:
                 return items, cached.get("total")
 
-    items = load_or_backfill_event_feed(
+    paged, total = list_event_feed_page(
         db,
         symbols=symbols,
         event_types=event_types,
         keyword=keyword,
         start=start,
         end=end,
-        backfill_mode="async",
+        sort_by=sort_by,
+        limit=limit,
+        offset=offset,
+        sort=sort,
     )
-    ordered = sort_event_feed_items(items, sort_by=sort_by, sort=sort)
-    total = len(ordered)
-    paged = ordered[offset : offset + limit]
     set_json(cache_key, {"items": [item_to_dict(item) for item in paged], "total": total}, ttl=EVENT_TIMELINE_CACHE_TTL)
     return paged, total

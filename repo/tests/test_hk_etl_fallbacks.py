@@ -222,6 +222,29 @@ class HongKongEtlFallbackTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["source"], "雪球研报")
 
+    def test_hk_profit_forecast_no_data_logs_single_summary_message(self) -> None:
+        def bad_fetch(symbol, indicator):
+            raise IndexError("list index out of range")
+
+        logger = unittest.mock.MagicMock()
+        with patch.object(
+            snowball_client,
+            "ak",
+            SimpleNamespace(stock_hk_profit_forecast_et=bad_fetch),
+        ), patch.object(
+            snowball_client,
+            "LOGGER",
+            logger,
+        ):
+            rows = snowball_client._build_ak_hk_profit_forecast_rows("00007.HK", limit=5)
+
+        self.assertEqual(rows, [])
+        logger.info.assert_called_once()
+        args = logger.info.call_args.args
+        self.assertIn("akshare hk profit forecast no data", args[0])
+        self.assertEqual(args[1], "00007.HK")
+        self.assertEqual(args[2], "盈利预测概览,盈利预测")
+
     def test_hk_kline_uses_akshare_when_snowball_unavailable(self) -> None:
         frame = pd.DataFrame(
             [

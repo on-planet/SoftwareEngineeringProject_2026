@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from threading import Lock
 from typing import Iterable
 
 from sqlalchemy import bindparam, create_engine, text
@@ -15,6 +16,9 @@ _FUTURES_WEEKLY_COLUMNS_READY = False
 _SECTOR_EXPOSURE_TABLES_READY = False
 _NEWS_COLUMNS_READY = False
 _STOCK_DETAIL_TABLES_READY = False
+_LOADER_LOCK = Lock()
+_LOADER = None
+_CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "settings.yml"
 
 
 def _validate_rows(rows: Iterable[dict], required: Iterable[str], context: str) -> list[dict]:
@@ -60,6 +64,56 @@ def _sanitize_stock_rows(rows: Iterable[dict]) -> list[dict]:
             }
         )
     return output
+
+
+def _normalize_news_relation_values(values: object) -> list[str]:
+    if values is None:
+        return []
+    if isinstance(values, str):
+        raw_values = values.split(",")
+    elif isinstance(values, Iterable):
+        raw_values = list(values)
+    else:
+        raw_values = [values]
+    seen: set[str] = set()
+    output: list[str] = []
+    for raw in raw_values:
+        text = _clip_text(raw, 64)
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        output.append(text)
+    return output
+
+
+def _join_news_relation_values(values: object) -> str | None:
+    normalized = _normalize_news_relation_values(values)
+    return ",".join(normalized) if normalized else None
+
+
+def _replace_news_relation_rows(conn, table_name: str, column_name: str, news_id: int, values: object) -> None:
+    normalized = _normalize_news_relation_values(values)
+    conn.execute(
+        text(f"DELETE FROM {table_name} WHERE news_id = :news_id"),
+        {"news_id": news_id},
+    )
+    if not normalized:
+        return
+    conn.execute(
+        text(
+            f"""
+            INSERT INTO {table_name} (news_id, {column_name})
+            VALUES (:news_id, :value)
+            ON CONFLICT (news_id, {column_name}) DO NOTHING
+            """
+        ),
+        [{"news_id": news_id, "value": value} for value in normalized],
+    )
+
+
+def _sync_news_relation_rows(conn, news_id: int, *, related_symbols: object, related_sectors: object) -> None:
+    _replace_news_relation_rows(conn, "news_related_symbols", "symbol", news_id, related_symbols)
+    _replace_news_relation_rows(conn, "news_related_sectors", "sector", news_id, related_sectors)
 
 
 class PgLoader:
@@ -132,12 +186,41 @@ def _get_loader() -> PgLoader:
     config_path = Path(__file__).resolve().parents[1] / "config" / "settings.yml"
     config = load_config(config_path)
     if not config.postgres_url:
-        raise ValueError("postgres_url 未配置")
+        raise ValueError("postgres_url is not configured")
     return PgLoader(
         config.postgres_url,
         pool_size=getattr(config, "postgres_pool_size", None),
         max_overflow=getattr(config, "postgres_max_overflow", None),
     )
+
+
+def _build_loader() -> PgLoader:
+    config = load_config(_CONFIG_PATH)
+    if not config.postgres_url:
+        raise ValueError("postgres_url is not configured")
+    return PgLoader(
+        config.postgres_url,
+        pool_size=getattr(config, "postgres_pool_size", None),
+        max_overflow=getattr(config, "postgres_max_overflow", None),
+    )
+
+
+def _get_loader() -> PgLoader:
+    global _LOADER
+    if _LOADER is not None:
+        return _LOADER
+    with _LOADER_LOCK:
+        if _LOADER is None:
+            _LOADER = _build_loader()
+        return _LOADER
+
+
+def _reset_loader_cache(*, dispose_engine: bool = True) -> None:
+    global _LOADER
+    with _LOADER_LOCK:
+        if _LOADER is not None and dispose_engine:
+            _LOADER.engine.dispose()
+        _LOADER = None
 
 
 def upsert_stocks(rows: Iterable[dict]) -> int:
@@ -199,20 +282,49 @@ def upsert_fundamental_score(rows: Iterable[dict]) -> int:
 
 def upsert_news(rows: Iterable[dict]) -> int:
     _ensure_news_columns()
-    sql = """
-    INSERT INTO news (
-        symbol, title, sentiment, published_at, link, source,
-        source_site, source_category, topic_category, time_bucket,
-        related_symbols, related_sectors
-    )
-    VALUES (
-        :symbol, :title, :sentiment, :published_at, :link, :source,
-        :source_site, :source_category, :topic_category, :time_bucket,
-        :related_symbols, :related_sectors
-    )
-    """
     payload = _validate_rows(rows, ["symbol", "title", "published_at"], "news")
-    return _get_loader().execute_many(sql, payload)
+    if not payload:
+        return 0
+    insert_sql = text(
+        """
+        INSERT INTO news (
+            symbol, title, sentiment, published_at, link, source,
+            source_site, source_category, topic_category, time_bucket,
+            related_symbols, related_sectors
+        )
+        VALUES (
+            :symbol, :title, :sentiment, :published_at, :link, :source,
+            :source_site, :source_category, :topic_category, :time_bucket,
+            :related_symbols, :related_sectors
+        )
+        RETURNING id
+        """
+    )
+    loader = _get_loader()
+    total = 0
+    try:
+        with loader.engine.begin() as conn:
+            for row in payload:
+                related_symbols = _normalize_news_relation_values(row.get("related_symbols"))
+                related_sectors = _normalize_news_relation_values(row.get("related_sectors"))
+                params = {
+                    **row,
+                    "related_symbols": ",".join(related_symbols) if related_symbols else None,
+                    "related_sectors": ",".join(related_sectors) if related_sectors else None,
+                }
+                news_id = conn.execute(insert_sql, params).scalar()
+                if news_id is not None:
+                    _sync_news_relation_rows(
+                        conn,
+                        int(news_id),
+                        related_symbols=related_symbols,
+                        related_sectors=related_sectors,
+                    )
+                total += 1
+    except Exception as exc:
+        LOGGER.exception("PgLoader batch write failed: %s", exc, exc_info=exc)
+        raise
+    return total
 
 
 def upsert_events(rows: Iterable[dict]) -> int:
@@ -604,6 +716,22 @@ def _ensure_news_columns() -> None:
         "ALTER TABLE news ADD COLUMN IF NOT EXISTS time_bucket VARCHAR(32)",
         "ALTER TABLE news ADD COLUMN IF NOT EXISTS related_symbols TEXT",
         "ALTER TABLE news ADD COLUMN IF NOT EXISTS related_sectors TEXT",
+        """
+        CREATE TABLE IF NOT EXISTS news_related_symbols (
+            news_id INTEGER NOT NULL REFERENCES news(id) ON DELETE CASCADE,
+            symbol VARCHAR(32) NOT NULL,
+            PRIMARY KEY (news_id, symbol)
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS news_related_sectors (
+            news_id INTEGER NOT NULL REFERENCES news(id) ON DELETE CASCADE,
+            sector VARCHAR(64) NOT NULL,
+            PRIMARY KEY (news_id, sector)
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_news_related_symbols_symbol ON news_related_symbols(symbol)",
+        "CREATE INDEX IF NOT EXISTS idx_news_related_sectors_sector ON news_related_sectors(sector)",
     ]
     for statement in statements:
         loader.execute(statement)
@@ -715,18 +843,47 @@ def list_news_rows(
 
 def update_news_metadata(rows: Iterable[dict]) -> int:
     _ensure_news_columns()
-    sql = """
-    UPDATE news
-    SET source_site = :source_site,
-        source_category = :source_category,
-        topic_category = :topic_category,
-        time_bucket = :time_bucket,
-        related_symbols = :related_symbols,
-        related_sectors = :related_sectors
-    WHERE id = :id
-    """
     payload = _validate_rows(rows, ["id"], "news.metadata")
-    return _get_loader().execute_many(sql, payload)
+    if not payload:
+        return 0
+    update_sql = text(
+        """
+        UPDATE news
+        SET source_site = :source_site,
+            source_category = :source_category,
+            topic_category = :topic_category,
+            time_bucket = :time_bucket,
+            related_symbols = :related_symbols,
+            related_sectors = :related_sectors
+        WHERE id = :id
+        """
+    )
+    loader = _get_loader()
+    total = 0
+    try:
+        with loader.engine.begin() as conn:
+            for row in payload:
+                related_symbols = _normalize_news_relation_values(row.get("related_symbols"))
+                related_sectors = _normalize_news_relation_values(row.get("related_sectors"))
+                conn.execute(
+                    update_sql,
+                    {
+                        **row,
+                        "related_symbols": ",".join(related_symbols) if related_symbols else None,
+                        "related_sectors": ",".join(related_sectors) if related_sectors else None,
+                    },
+                )
+                _sync_news_relation_rows(
+                    conn,
+                    int(row["id"]),
+                    related_symbols=related_symbols,
+                    related_sectors=related_sectors,
+                )
+                total += 1
+    except Exception as exc:
+        LOGGER.exception("PgLoader batch write failed: %s", exc, exc_info=exc)
+        raise
+    return total
 
 
 def update_news_sentiment(rows: Iterable[dict]) -> int:
