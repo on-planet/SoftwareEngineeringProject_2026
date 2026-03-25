@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/router";
 
 import { StockFundamental } from "../../components/StockFundamental";
+import { StockSmokeButtCard } from "../../components/StockSmokeButtCard";
 import { getMyWatchTargets, upsertMyWatchTarget } from "../../services/api";
 import { AUTH_CHANGED_EVENT, getAuthToken } from "../../utils/auth";
 import { addWatchTarget, hasWatchTarget, readWatchTargets, replaceWatchTargets } from "../../utils/watchTargets";
@@ -241,6 +242,10 @@ export default function StockPage({ symbol }: Props) {
         <>
           <section>
             <StockFundamental symbol={activeSymbol} />
+          </section>
+
+          <section>
+            <StockSmokeButtCard symbol={activeSymbol} />
           </section>
 
           <section>

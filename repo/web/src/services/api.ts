@@ -841,6 +841,120 @@ export async function getStockResearch(symbol: string, params?: {
   return request(`/api/stock/${encodeURIComponent(symbol)}/research${suffix ? `?${suffix}` : ""}`);
 }
 
+export type StrategySignal = "strong_buy" | "buy" | "watch" | "avoid";
+
+export type SmokeButtFeatureImportance = {
+  feature: string;
+  importance?: number | null;
+  stddev?: number | null;
+  p_value?: number | null;
+  n?: number | null;
+};
+
+export type SmokeButtLeaderboardItem = {
+  model: string;
+  score_val?: number | null;
+  fit_time?: number | null;
+  pred_time_val?: number | null;
+};
+
+export type SmokeButtRun = {
+  id: number;
+  strategy_code: string;
+  strategy_name: string;
+  as_of: string;
+  label_horizon: number;
+  status: string;
+  model_path?: string | null;
+  train_rows: number;
+  scored_rows: number;
+  trained_at: string;
+  evaluation: Record<string, number | string | null>;
+  leaderboard: SmokeButtLeaderboardItem[];
+  feature_importance: SmokeButtFeatureImportance[];
+};
+
+export type SmokeButtCandidate = {
+  symbol: string;
+  name: string;
+  market: string;
+  sector: string;
+  as_of: string;
+  score: number;
+  rank: number;
+  percentile: number;
+  expected_return?: number | null;
+  signal: StrategySignal;
+  summary?: string | null;
+};
+
+export type SmokeButtDriver = {
+  label: string;
+  tone: string;
+  value?: number | null;
+  display_value?: string | null;
+};
+
+export type SmokeButtFeatureValue = {
+  name: string;
+  value?: number | null;
+  display_value?: string | null;
+};
+
+export type SmokeButtDetailResponse =
+  | (SmokeButtCandidate & {
+      run: SmokeButtRun;
+      drivers: SmokeButtDriver[];
+      feature_values: SmokeButtFeatureValue[];
+    })
+  | null;
+
+export type SmokeButtListResponse = ApiPage<SmokeButtCandidate> & {
+  run?: SmokeButtRun | null;
+};
+
+export async function getSmokeButtStrategyLeaderboard(
+  params?: {
+    market?: "A" | "HK" | "US";
+    signal?: StrategySignal;
+    limit?: number;
+    offset?: number;
+  },
+  options?: ApiQueryOptions,
+) {
+  const query = new URLSearchParams();
+  if (params?.market) query.set("market", params.market);
+  if (params?.signal) query.set("signal", params.signal);
+  if (params?.limit !== undefined) query.set("limit", String(params.limit));
+  if (params?.offset !== undefined) query.set("offset", String(params.offset));
+  const suffix = query.toString();
+  return request<SmokeButtListResponse>(`/api/strategy/smoke-butt${suffix ? `?${suffix}` : ""}`, options);
+}
+
+export async function getSmokeButtStrategyDetail(symbol: string, options?: ApiQueryOptions) {
+  return request<SmokeButtDetailResponse>(`/api/strategy/smoke-butt/${encodeURIComponent(symbol)}`, options);
+}
+
+export async function trainSmokeButtStrategy(payload?: {
+  as_of?: string;
+  horizon_days?: number;
+  sample_step?: number;
+  time_limit_seconds?: number;
+  force_retrain?: boolean;
+}) {
+  return requestJson<{ run: SmokeButtRun; items: SmokeButtCandidate[] }>(
+    "/api/strategy/smoke-butt/train",
+    {
+      as_of: payload?.as_of ?? null,
+      horizon_days: payload?.horizon_days ?? 60,
+      sample_step: payload?.sample_step ?? 21,
+      time_limit_seconds: payload?.time_limit_seconds ?? 120,
+      force_retrain: payload?.force_retrain ?? false,
+    },
+    { retry: 0 },
+  );
+}
+
 export async function getNews(symbol: string, params?: { limit?: number; offset?: number }) {
   const query = new URLSearchParams();
   if (params?.limit !== undefined) query.set("limit", String(params.limit));

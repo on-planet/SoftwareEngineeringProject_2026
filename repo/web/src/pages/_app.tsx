@@ -10,6 +10,7 @@ import { clearAuthToken } from "../utils/auth";
 const NAV_LINKS = [
   { href: "/", label: "Overview" },
   { href: "/stocks", label: "Stocks" },
+  { href: "/strategy/smoke-butt", label: "Strategy" },
   { href: "/insights", label: "Insights" },
   { href: "/macro", label: "Macro" },
   { href: "/futures", label: "Futures" },
