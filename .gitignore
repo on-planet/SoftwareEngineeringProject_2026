@@ -13,6 +13,7 @@ repo/logs/
 # Env files
 .env
 .env.*
+!.env.local.example
 
 # Node / Next.js
 node_modules/
