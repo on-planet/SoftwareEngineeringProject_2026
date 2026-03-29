@@ -37,7 +37,7 @@ _ETL_DEFAULTS = _load_etl_defaults()
 
 def _default_database_url() -> str:
     postgres = _ETL_DEFAULTS.get("postgres") or {}
-    return postgres.get("url") or "postgresql+psycopg2://user:pass@localhost:5432/kiloquant"
+    return postgres.get("url") or "postgresql+psycopg2://user:pass@localhost:5432/quantpulse"
 
 
 def _default_redis_url() -> str:
@@ -56,7 +56,7 @@ def _default_max_overflow() -> int:
 
 
 class Settings(BaseSettings):
-    app_name: str = "KiloQuant API"
+    app_name: str = "QuantPulse API"
     database_url: str = _default_database_url()
     redis_url: str = _default_redis_url()
     db_pool_size: int = _default_pool_size()
@@ -69,6 +69,8 @@ class Settings(BaseSettings):
     llm_model: str = "gpt-4o-mini"
     auth_token_secret: str = "CHANGE_ME_TO_A_RANDOM_SECRET"
     auth_token_expire_hours: int = 24
+    auth_admin_account: str = "admin"
+    auth_admin_password: str = "admin"
     auth_code_expire_minutes: int = 10
     auth_code_resend_seconds: int = 60
     smtp_host: str | None = None

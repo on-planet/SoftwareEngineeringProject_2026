@@ -24,3 +24,6 @@ class NewsStatsOut(BaseModel):
     by_date: list[NewsCountByDateItem]
     by_sentiment: list[NewsCountBySentimentItem]
     by_symbol: list[NewsCountBySymbolItem]
+    cache_hit: bool | None = None
+    as_of: str | None = None
+    refresh_queued: bool | None = None

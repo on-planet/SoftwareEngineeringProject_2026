@@ -21,7 +21,7 @@ class RegisterIn(BaseModel):
 class LoginIn(BaseModel):
     account: str | None = Field(None, min_length=3, max_length=64)
     email: str | None = Field(None, min_length=3, max_length=255)
-    password: str = Field(..., min_length=8, max_length=128)
+    password: str = Field(..., min_length=1, max_length=128)
 
     @root_validator(pre=True)
     def fill_account(cls, values: dict):
@@ -35,6 +35,7 @@ class AuthUserOut(BaseModel):
     email: str
     is_active: bool
     is_email_verified: bool
+    is_admin: bool = False
     created_at: datetime | None = None
 
     class Config:

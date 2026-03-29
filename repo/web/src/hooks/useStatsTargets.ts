@@ -1,15 +1,21 @@
 import { Dispatch, FormEvent, KeyboardEvent, SetStateAction, useEffect, useState } from "react";
 
+import { useApiQuery } from "./useApiQuery";
 import {
   BoughtTargetItem,
+  buildMyBoughtTargetsQueryKey,
+  buildMyWatchTargetsQueryKey,
   deleteMyBoughtTarget,
   deleteMyWatchTarget,
   getMyBoughtTargets,
   getMyWatchTargets,
+  getUserScopedQueryOptions,
+  primeApiQuery,
   upsertMyBoughtTarget,
   upsertMyBoughtTargetsBatch,
   upsertMyWatchTarget,
   upsertMyWatchTargetsBatch,
+  WatchTargetItem,
 } from "../services/api";
 import {
   BoughtTarget,
@@ -89,6 +95,18 @@ function dedupeSymbols(values: string[]) {
   return result;
 }
 
+function areSymbolListsEqual(left: string[], right: string[]) {
+  if (left.length !== right.length) {
+    return false;
+  }
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function parseTimestamp(value: string | null | undefined, fallback: number) {
   if (!value) {
     return fallback;
@@ -162,6 +180,46 @@ function mergeBoughtTargets(remoteItems: BoughtTarget[], localItems: BoughtTarge
   return Array.from(merged.values()).sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
+function areBoughtTargetsEqual(left: BoughtTarget[], right: BoughtTarget[]) {
+  if (left.length !== right.length) {
+    return false;
+  }
+  for (let index = 0; index < left.length; index += 1) {
+    const current = left[index];
+    const next = right[index];
+    if (
+      current.symbol !== next.symbol ||
+      current.buyPrice !== next.buyPrice ||
+      current.lots !== next.lots ||
+      current.buyDate !== next.buyDate ||
+      current.fee !== next.fee ||
+      current.note !== next.note ||
+      current.createdAt !== next.createdAt ||
+      current.updatedAt !== next.updatedAt
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function toWatchTargetItems(symbols: string[]) {
+  return symbols.map((symbol) => ({ symbol }));
+}
+
+function toBoughtTargetItems(items: BoughtTarget[]): BoughtTargetItem[] {
+  return items.map((item) => ({
+    symbol: item.symbol,
+    buy_price: item.buyPrice,
+    lots: item.lots,
+    buy_date: item.buyDate,
+    fee: item.fee,
+    note: item.note,
+    created_at: new Date(item.createdAt).toISOString(),
+    updated_at: new Date(item.updatedAt).toISOString(),
+  }));
+}
+
 export function useStatsTargets({
   authToken,
   authed,
@@ -178,71 +236,99 @@ export function useStatsTargets({
   const [pendingBuySymbols, setPendingBuySymbols] = useState<string[]>([]);
   const [buyForm, setBuyForm] = useState<BuyFormState>(buildInitialBuyForm);
 
+  const watchTargetsQueryKey =
+    authed && authToken ? buildMyWatchTargetsQueryKey(authToken) : null;
+  const boughtTargetsQueryKey =
+    authed && authToken ? buildMyBoughtTargetsQueryKey(authToken) : null;
+  const watchTargetsQuery = useApiQuery<WatchTargetItem[]>(
+    watchTargetsQueryKey,
+    () => getMyWatchTargets(authToken as string),
+    getUserScopedQueryOptions("watch-targets"),
+  );
+  const boughtTargetsQuery = useApiQuery<BoughtTargetItem[]>(
+    boughtTargetsQueryKey,
+    () => getMyBoughtTargets(authToken as string),
+    getUserScopedQueryOptions("bought-targets"),
+  );
+
   useEffect(() => {
     setWatchTargets(readWatchTargets());
     setBoughtTargets(readBoughtTargets());
   }, [routeKey, authToken]);
 
   useEffect(() => {
-    if (!authed || !authToken) {
+    if (!authed || !authToken || !watchTargetsQueryKey || !watchTargetsQuery.data) {
       return;
     }
-    let active = true;
-    const syncFromRemote = async () => {
-      try {
-        const localWatch = readWatchTargets();
-        const localBought = readBoughtTargets();
-        const [remoteWatchRaw, remoteBoughtRaw] = await Promise.all([
-          getMyWatchTargets(authToken),
-          getMyBoughtTargets(authToken),
-        ]);
-        if (!active) {
-          return;
-        }
+    const localWatch = readWatchTargets();
+    const remoteWatch = dedupeSymbols(
+      (watchTargetsQuery.data || []).map((item: any) => String(item?.symbol || "")),
+    );
+    const mergedWatch = dedupeSymbols([...remoteWatch, ...localWatch]);
+    const nextWatch = areSymbolListsEqual(localWatch, mergedWatch)
+      ? localWatch
+      : replaceWatchTargets(mergedWatch);
+    const hasWatchGap = mergedWatch.some((item) => !remoteWatch.includes(item));
+    const shouldPrimeWatchQuery = !areSymbolListsEqual(remoteWatch, nextWatch);
 
-        const remoteWatch = dedupeSymbols((remoteWatchRaw || []).map((item: any) => String(item?.symbol || "")));
-        const mergedWatch = dedupeSymbols([...remoteWatch, ...localWatch]);
-        const nextWatch = replaceWatchTargets(mergedWatch);
-        const hasWatchGap = mergedWatch.some((item) => !remoteWatch.includes(item));
-        if (hasWatchGap && mergedWatch.length > 0) {
-          void upsertMyWatchTargetsBatch(authToken, mergedWatch).catch(() => undefined);
-        }
+    setWatchTargets((current) => (areSymbolListsEqual(current, nextWatch) ? current : nextWatch));
 
-        const remoteBought = (remoteBoughtRaw || [])
-          .map((item) => normalizeRemoteBoughtItem(item))
-          .filter((item): item is BoughtTarget => !!item);
-        const mergedBought = mergeBoughtTargets(remoteBought, localBought);
-        const nextBought = replaceBoughtTargets(mergedBought);
-        const remoteBoughtBySymbol = new Map(remoteBought.map((item) => [item.symbol, item]));
-        const hasBoughtGap = mergedBought.some((item) => {
-          const remote = remoteBoughtBySymbol.get(item.symbol);
-          return !remote || item.updatedAt > remote.updatedAt;
-        });
-        if (hasBoughtGap && mergedBought.length > 0) {
-          void upsertMyBoughtTargetsBatch(
-            authToken,
-            mergedBought.map((item) => ({
-              symbol: item.symbol,
-              buy_price: item.buyPrice,
-              lots: item.lots,
-              buy_date: item.buyDate,
-              fee: item.fee,
-              note: item.note,
-            })),
-          ).catch(() => undefined);
-        }
+    if (shouldPrimeWatchQuery) {
+      primeApiQuery(
+        watchTargetsQueryKey,
+        toWatchTargetItems(nextWatch),
+        getUserScopedQueryOptions("watch-targets"),
+      );
+    }
 
-        setWatchTargets(nextWatch);
-        setBoughtTargets(nextBought);
-      } catch {
-        // Keep local data when remote sync fails.
-      }
-    };
-    void syncFromRemote();
-    return () => {
-      active = false;
-    };
-  }, [authed, authToken]);
+    if (hasWatchGap && mergedWatch.length > 0) {
+      void upsertMyWatchTargetsBatch(authToken, mergedWatch).catch(() => undefined);
+    }
+  }, [authed, authToken, watchTargetsQuery.data, watchTargetsQueryKey]);
+
+  useEffect(() => {
+    if (!authed || !authToken || !boughtTargetsQueryKey || !boughtTargetsQuery.data) {
+      return;
+    }
+    const localBought = readBoughtTargets();
+    const remoteBought = (boughtTargetsQuery.data || [])
+      .map((item) => normalizeRemoteBoughtItem(item))
+      .filter((item): item is BoughtTarget => !!item);
+    const mergedBought = mergeBoughtTargets(remoteBought, localBought);
+    const nextBought = areBoughtTargetsEqual(localBought, mergedBought)
+      ? localBought
+      : replaceBoughtTargets(mergedBought);
+    const remoteBoughtBySymbol = new Map(remoteBought.map((item) => [item.symbol, item]));
+    const hasBoughtGap = mergedBought.some((item) => {
+      const remote = remoteBoughtBySymbol.get(item.symbol);
+      return !remote || item.updatedAt > remote.updatedAt;
+    });
+    const shouldPrimeBoughtQuery = !areBoughtTargetsEqual(remoteBought, nextBought);
+
+    setBoughtTargets((current) => (areBoughtTargetsEqual(current, nextBought) ? current : nextBought));
+
+    if (shouldPrimeBoughtQuery) {
+      primeApiQuery(
+        boughtTargetsQueryKey,
+        toBoughtTargetItems(nextBought),
+        getUserScopedQueryOptions("bought-targets"),
+      );
+    }
+
+    if (hasBoughtGap && mergedBought.length > 0) {
+      void upsertMyBoughtTargetsBatch(
+        authToken,
+        mergedBought.map((item) => ({
+          symbol: item.symbol,
+          buy_price: item.buyPrice,
+          lots: item.lots,
+          buy_date: item.buyDate,
+          fee: item.fee,
+          note: item.note,
+        })),
+      ).catch(() => undefined);
+    }
+  }, [authed, authToken, boughtTargetsQuery.data, boughtTargetsQueryKey]);
 
   useEffect(() => {
     setSelectedWatchSymbols((prev) => prev.filter((item) => watchTargets.includes(item)));
@@ -283,16 +369,23 @@ export function useStatsTargets({
   const handleQuickAddWatchTarget = () => {
     const target = normalizeSymbol(watchInput);
     if (!target) {
-      setWatchError("请输入标的代码");
+      setWatchError("Please enter a symbol.");
       return;
     }
     const next = addWatchTarget(target);
     setWatchTargets(next);
     setWatchInputState("");
     setWatchError(null);
+    if (watchTargetsQueryKey) {
+      primeApiQuery(
+        watchTargetsQueryKey,
+        toWatchTargetItems(next),
+        getUserScopedQueryOptions("watch-targets"),
+      );
+    }
     if (authToken) {
       void upsertMyWatchTarget(authToken, target).catch(() => {
-        setWatchError("已写入本地，云端同步失败");
+        setWatchError("Saved locally, but remote sync failed.");
       });
     }
   };
@@ -302,9 +395,16 @@ export function useStatsTargets({
     setWatchTargets(next);
     setSelectedWatchSymbols((prev) => prev.filter((item) => item !== target));
     setSymbol((current) => (current === target ? "" : current));
+    if (watchTargetsQueryKey) {
+      primeApiQuery(
+        watchTargetsQueryKey,
+        toWatchTargetItems(next),
+        getUserScopedQueryOptions("watch-targets"),
+      );
+    }
     if (authToken) {
       void deleteMyWatchTarget(authToken, target).catch(() => {
-        setWatchError("本地已删除，云端同步失败");
+        setWatchError("Removed locally, but remote sync failed.");
       });
     }
   };
@@ -322,6 +422,13 @@ export function useStatsTargets({
     setSelectedWatchSymbols([]);
     if (removed.length > 0) {
       setSymbol((current) => (removed.includes(current) ? "" : current));
+    }
+    if (watchTargetsQueryKey) {
+      primeApiQuery(
+        watchTargetsQueryKey,
+        toWatchTargetItems(next),
+        getUserScopedQueryOptions("watch-targets"),
+      );
     }
     if (authToken && removed.length > 0) {
       void Promise.allSettled(removed.map((item) => deleteMyWatchTarget(authToken, item))).then(() => undefined);
@@ -351,23 +458,23 @@ export function useStatsTargets({
     const lots = Number(buyForm.lots);
     const fee = Number(buyForm.fee || 0);
     if (!symbolValue) {
-      setBuyModalError("缺少股票代码");
+      setBuyModalError("Missing symbol.");
       return;
     }
     if (!Number.isFinite(buyPrice) || buyPrice <= 0) {
-      setBuyModalError("买入价格必须大于 0");
+      setBuyModalError("Buy price must be greater than 0.");
       return;
     }
     if (!Number.isFinite(lots) || lots <= 0) {
-      setBuyModalError("买入手数必须大于 0");
+      setBuyModalError("Lots must be greater than 0.");
       return;
     }
     if (!Number.isFinite(fee) || fee < 0) {
-      setBuyModalError("手续费不能小于 0");
+      setBuyModalError("Fee cannot be negative.");
       return;
     }
     if (!buyForm.buyDate) {
-      setBuyModalError("请选择买入日期");
+      setBuyModalError("Please choose a buy date.");
       return;
     }
     const next = upsertBoughtTarget({
@@ -380,6 +487,13 @@ export function useStatsTargets({
     });
     setBoughtTargets(next);
     setSymbol(symbolValue);
+    if (boughtTargetsQueryKey) {
+      primeApiQuery(
+        boughtTargetsQueryKey,
+        toBoughtTargetItems(next),
+        getUserScopedQueryOptions("bought-targets"),
+      );
+    }
     if (authToken) {
       void upsertMyBoughtTarget(authToken, {
         symbol: symbolValue,
@@ -389,7 +503,7 @@ export function useStatsTargets({
         fee,
         note: buyForm.note.trim(),
       }).catch(() => {
-        setBuyModalError("本地已保存，云端同步失败");
+        setBuyModalError("Saved locally, but remote sync failed.");
       });
     }
 
@@ -424,6 +538,13 @@ export function useStatsTargets({
   const handleRemoveBoughtTarget = (targetSymbol: string) => {
     const next = removeBoughtTarget(targetSymbol);
     setBoughtTargets(next);
+    if (boughtTargetsQueryKey) {
+      primeApiQuery(
+        boughtTargetsQueryKey,
+        toBoughtTargetItems(next),
+        getUserScopedQueryOptions("bought-targets"),
+      );
+    }
     if (authToken) {
       void deleteMyBoughtTarget(authToken, targetSymbol).catch(() => undefined);
     }

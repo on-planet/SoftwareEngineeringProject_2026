@@ -4,11 +4,12 @@ from pathlib import Path
 from threading import Lock
 from typing import Iterable
 
-from sqlalchemy import bindparam, create_engine, text
+from sqlalchemy import bindparam, text
 from datetime import date
 
 from etl.config.loader import load_config
 from etl.utils.logging import get_logger
+from etl.utils.db_pool import get_engine
 
 LOGGER = get_logger(__name__)
 _FUTURES_COLUMNS_READY = False
@@ -66,7 +67,7 @@ def _sanitize_stock_rows(rows: Iterable[dict]) -> list[dict]:
     return output
 
 
-def _normalize_news_relation_values(values: object) -> list[str]:
+def _normalize_news_relation_values(values: object, *, max_length: int = 64) -> list[str]:
     if values is None:
         return []
     if isinstance(values, str):
@@ -78,7 +79,7 @@ def _normalize_news_relation_values(values: object) -> list[str]:
     seen: set[str] = set()
     output: list[str] = []
     for raw in raw_values:
-        text = _clip_text(raw, 64)
+        text = _clip_text(raw, max_length)
         if not text or text in seen:
             continue
         seen.add(text)
@@ -86,8 +87,8 @@ def _normalize_news_relation_values(values: object) -> list[str]:
     return output
 
 
-def _join_news_relation_values(values: object) -> str | None:
-    normalized = _normalize_news_relation_values(values)
+def _join_news_relation_values(values: object, *, max_length: int = 64) -> str | None:
+    normalized = _normalize_news_relation_values(values, max_length=max_length)
     return ",".join(normalized) if normalized else None
 
 
@@ -125,12 +126,23 @@ class PgLoader:
         max_overflow: int | None = None,
         execution_options: dict | None = None,
     ):
-        engine_kwargs = {"pool_pre_ping": True}
-        if pool_size is not None:
-            engine_kwargs["pool_size"] = pool_size
-        if max_overflow is not None:
-            engine_kwargs["max_overflow"] = max_overflow
-        self.engine = create_engine(database_url, **engine_kwargs)
+        """
+        初始化 PgLoader。
+        
+        优化：使用共享的数据库引擎，避免重复创建连接池。
+        
+        Args:
+            database_url: 数据库连接字符串
+            pool_size: 连接池大小
+            max_overflow: 最大溢出连接数
+            execution_options: 执行选项
+        """
+        # 使用共享引擎，避免重复创建连接池
+        self.engine = get_engine(
+            database_url,
+            pool_size=pool_size or 5,
+            max_overflow=max_overflow or 5,
+        )
         self.execution_options = execution_options or {"stream_results": True}
 
     @staticmethod
@@ -290,12 +302,16 @@ def upsert_news(rows: Iterable[dict]) -> int:
         INSERT INTO news (
             symbol, title, sentiment, published_at, link, source,
             source_site, source_category, topic_category, time_bucket,
-            related_symbols, related_sectors
+            related_symbols, related_sectors,
+            event_type, event_tags, themes, impact_direction,
+            nlp_confidence, nlp_version, keywords
         )
         VALUES (
             :symbol, :title, :sentiment, :published_at, :link, :source,
             :source_site, :source_category, :topic_category, :time_bucket,
-            :related_symbols, :related_sectors
+            :related_symbols, :related_sectors,
+            :event_type, :event_tags, :themes, :impact_direction,
+            :nlp_confidence, :nlp_version, :keywords
         )
         RETURNING id
         """
@@ -307,10 +323,16 @@ def upsert_news(rows: Iterable[dict]) -> int:
             for row in payload:
                 related_symbols = _normalize_news_relation_values(row.get("related_symbols"))
                 related_sectors = _normalize_news_relation_values(row.get("related_sectors"))
+                event_tags = _normalize_news_relation_values(row.get("event_tags"))
+                themes = _normalize_news_relation_values(row.get("themes"))
+                keywords = _normalize_news_relation_values(row.get("keywords"), max_length=128)
                 params = {
                     **row,
                     "related_symbols": ",".join(related_symbols) if related_symbols else None,
                     "related_sectors": ",".join(related_sectors) if related_sectors else None,
+                    "event_tags": ",".join(event_tags) if event_tags else None,
+                    "themes": ",".join(themes) if themes else None,
+                    "keywords": ",".join(keywords) if keywords else None,
                 }
                 news_id = conn.execute(insert_sql, params).scalar()
                 if news_id is not None:
@@ -707,7 +729,14 @@ def _ensure_news_columns() -> None:
             topic_category VARCHAR(64),
             time_bucket VARCHAR(32),
             related_symbols TEXT,
-            related_sectors TEXT
+            related_sectors TEXT,
+            event_type VARCHAR(64),
+            event_tags TEXT,
+            themes TEXT,
+            impact_direction VARCHAR(32),
+            nlp_confidence DOUBLE PRECISION,
+            nlp_version VARCHAR(32),
+            keywords TEXT
         )
         """,
         "ALTER TABLE news ADD COLUMN IF NOT EXISTS source_site VARCHAR(128)",
@@ -716,6 +745,13 @@ def _ensure_news_columns() -> None:
         "ALTER TABLE news ADD COLUMN IF NOT EXISTS time_bucket VARCHAR(32)",
         "ALTER TABLE news ADD COLUMN IF NOT EXISTS related_symbols TEXT",
         "ALTER TABLE news ADD COLUMN IF NOT EXISTS related_sectors TEXT",
+        "ALTER TABLE news ADD COLUMN IF NOT EXISTS event_type VARCHAR(64)",
+        "ALTER TABLE news ADD COLUMN IF NOT EXISTS event_tags TEXT",
+        "ALTER TABLE news ADD COLUMN IF NOT EXISTS themes TEXT",
+        "ALTER TABLE news ADD COLUMN IF NOT EXISTS impact_direction VARCHAR(32)",
+        "ALTER TABLE news ADD COLUMN IF NOT EXISTS nlp_confidence DOUBLE PRECISION",
+        "ALTER TABLE news ADD COLUMN IF NOT EXISTS nlp_version VARCHAR(32)",
+        "ALTER TABLE news ADD COLUMN IF NOT EXISTS keywords TEXT",
         """
         CREATE TABLE IF NOT EXISTS news_related_symbols (
             news_id INTEGER NOT NULL REFERENCES news(id) ON DELETE CASCADE,
@@ -822,7 +858,9 @@ def list_news_rows(
     sql = """
     SELECT id, symbol, title, sentiment, published_at, link, source,
            source_site, source_category, topic_category, time_bucket,
-           related_symbols, related_sectors
+           related_symbols, related_sectors,
+           event_type, event_tags, themes, impact_direction,
+           nlp_confidence, nlp_version, keywords
     FROM news
     WHERE 1 = 1
     """
@@ -854,7 +892,14 @@ def update_news_metadata(rows: Iterable[dict]) -> int:
             topic_category = :topic_category,
             time_bucket = :time_bucket,
             related_symbols = :related_symbols,
-            related_sectors = :related_sectors
+            related_sectors = :related_sectors,
+            event_type = :event_type,
+            event_tags = :event_tags,
+            themes = :themes,
+            impact_direction = :impact_direction,
+            nlp_confidence = :nlp_confidence,
+            nlp_version = :nlp_version,
+            keywords = :keywords
         WHERE id = :id
         """
     )
@@ -865,12 +910,18 @@ def update_news_metadata(rows: Iterable[dict]) -> int:
             for row in payload:
                 related_symbols = _normalize_news_relation_values(row.get("related_symbols"))
                 related_sectors = _normalize_news_relation_values(row.get("related_sectors"))
+                event_tags = _normalize_news_relation_values(row.get("event_tags"))
+                themes = _normalize_news_relation_values(row.get("themes"))
+                keywords = _normalize_news_relation_values(row.get("keywords"), max_length=128)
                 conn.execute(
                     update_sql,
                     {
                         **row,
                         "related_symbols": ",".join(related_symbols) if related_symbols else None,
                         "related_sectors": ",".join(related_sectors) if related_sectors else None,
+                        "event_tags": ",".join(event_tags) if event_tags else None,
+                        "themes": ",".join(themes) if themes else None,
+                        "keywords": ",".join(keywords) if keywords else None,
                     },
                 )
                 _sync_news_relation_rows(

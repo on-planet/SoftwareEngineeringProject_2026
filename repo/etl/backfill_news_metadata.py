@@ -10,7 +10,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from etl.loaders.pg_loader import list_news_rows, update_news_metadata
-from etl.utils.news_relevance import infer_news_relevance
+from etl.utils.news_nlp import extract_news_nlp
 from etl.utils.news_taxonomy import classify_news_metadata
 
 
@@ -43,9 +43,13 @@ def main() -> int:
             link=row.get("link"),
             published_at=row.get("published_at"),
         )
-        relevance = infer_news_relevance(
+        sentiment = str(row.get("sentiment") or "")
+        nlp = extract_news_nlp(
             str(row.get("title") or ""),
             symbol=str(row.get("symbol") or ""),
+            source=row.get("source"),
+            topic_category=metadata.get("topic_category"),
+            sentiment=sentiment,
         )
         candidate = {
             "id": row.get("id"),
@@ -53,16 +57,30 @@ def main() -> int:
             "source_category": metadata.get("source_category"),
             "topic_category": metadata.get("topic_category"),
             "time_bucket": metadata.get("time_bucket"),
-            "related_symbols": relevance.get("related_symbols"),
-            "related_sectors": relevance.get("related_sectors"),
+            "related_symbols": nlp.related_symbols,
+            "related_sectors": nlp.related_sectors,
+            "event_type": nlp.event_type,
+            "event_tags": nlp.event_tags,
+            "themes": nlp.themes,
+            "impact_direction": nlp.impact_direction,
+            "nlp_confidence": nlp.confidence,
+            "nlp_version": nlp.version,
+            "keywords": nlp.keywords,
         }
         if (
             candidate["source_site"] == row.get("source_site")
             and candidate["source_category"] == row.get("source_category")
             and candidate["topic_category"] == row.get("topic_category")
             and candidate["time_bucket"] == row.get("time_bucket")
-            and candidate["related_symbols"] == row.get("related_symbols")
-            and candidate["related_sectors"] == row.get("related_sectors")
+            and ",".join(candidate["related_symbols"] or []) == str(row.get("related_symbols") or "")
+            and ",".join(candidate["related_sectors"] or []) == str(row.get("related_sectors") or "")
+            and candidate["event_type"] == row.get("event_type")
+            and ",".join(candidate["event_tags"] or []) == str(row.get("event_tags") or "")
+            and ",".join(candidate["themes"] or []) == str(row.get("themes") or "")
+            and candidate["impact_direction"] == row.get("impact_direction")
+            and float(candidate["nlp_confidence"] or 0) == float(row.get("nlp_confidence") or 0)
+            and candidate["nlp_version"] == row.get("nlp_version")
+            and ",".join(candidate["keywords"] or []) == str(row.get("keywords") or "")
         ):
             continue
         updates.append(candidate)

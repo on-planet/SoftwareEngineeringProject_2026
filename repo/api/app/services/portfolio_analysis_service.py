@@ -52,8 +52,27 @@ def get_portfolio_analysis(db: Session, user_id: int, top_n: int = 5) -> Portfol
         except Exception:
             pass
 
+    # 优化：一次性查询所有持仓数据
     holdings = db.query(UserPortfolio).filter(UserPortfolio.user_id == user_id).all()
+    
+    if not holdings:
+        # 空持仓时返回空分析结果
+        return PortfolioAnalysisOut(
+            user_id=user_id,
+            items=[],
+            summary=PortfolioSummary(
+                total_cost=0.0,
+                total_value=0.0,
+                total_pnl=0.0,
+                total_pnl_pct=0.0,
+            ),
+            sector_exposure=[],
+            top_holdings=[],
+        )
+    
     symbols = [item.symbol for item in holdings]
+    
+    # 优化：批量查询价格和行业信息，避免 N+1
     price_map = _latest_prices_map(db, symbols)
     sector_map = {
         symbol: normalize_sector_name(sector)

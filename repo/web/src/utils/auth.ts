@@ -1,5 +1,8 @@
-const AUTH_TOKEN_KEY = "kiloquant_auth_token";
-export const AUTH_CHANGED_EVENT = "kiloquant:auth-token-changed";
+const AUTH_TOKEN_KEY = "quantpulse_auth_token";
+const LEGACY_AUTH_TOKEN_KEY = "kiloquant_auth_token";
+const ADMIN_MODE_KEY = "quantpulse_admin_mode";
+export const AUTH_CHANGED_EVENT = "quantpulse:auth-token-changed";
+const LEGACY_AUTH_CHANGED_EVENT = "kiloquant:auth-token-changed";
 
 function parseJwtPayload(token: string): Record<string, unknown> | null {
   const parts = String(token || "").split(".");
@@ -24,11 +27,29 @@ function parseJwtPayload(token: string): Record<string, unknown> | null {
   }
 }
 
+function dispatchAuthChanged() {
+  window.dispatchEvent(new Event(AUTH_CHANGED_EVENT));
+  window.dispatchEvent(new Event(LEGACY_AUTH_CHANGED_EVENT));
+}
+
+function readStoredToken() {
+  const current = window.localStorage.getItem(AUTH_TOKEN_KEY);
+  if (current) {
+    return current;
+  }
+  const legacy = window.localStorage.getItem(LEGACY_AUTH_TOKEN_KEY);
+  if (legacy) {
+    window.localStorage.setItem(AUTH_TOKEN_KEY, legacy);
+    return legacy;
+  }
+  return null;
+}
+
 export function getAuthToken(): string | null {
   if (typeof window === "undefined") {
     return null;
   }
-  return window.localStorage.getItem(AUTH_TOKEN_KEY);
+  return readStoredToken();
 }
 
 export function getAuthUserId(token?: string | null): number | null {
@@ -52,7 +73,8 @@ export function setAuthToken(token: string) {
     return;
   }
   window.localStorage.setItem(AUTH_TOKEN_KEY, token);
-  window.dispatchEvent(new Event(AUTH_CHANGED_EVENT));
+  window.localStorage.removeItem(LEGACY_AUTH_TOKEN_KEY);
+  dispatchAuthChanged();
 }
 
 export function clearAuthToken() {
@@ -60,5 +82,25 @@ export function clearAuthToken() {
     return;
   }
   window.localStorage.removeItem(AUTH_TOKEN_KEY);
-  window.dispatchEvent(new Event(AUTH_CHANGED_EVENT));
+  window.localStorage.removeItem(LEGACY_AUTH_TOKEN_KEY);
+  window.localStorage.removeItem(ADMIN_MODE_KEY);
+  dispatchAuthChanged();
+}
+
+export function getAdminModeEnabled() {
+  if (typeof window === "undefined") {
+    return false;
+  }
+  return window.localStorage.getItem(ADMIN_MODE_KEY) === "1";
+}
+
+export function setAdminModeEnabled(enabled: boolean) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  if (enabled) {
+    window.localStorage.setItem(ADMIN_MODE_KEY, "1");
+  } else {
+    window.localStorage.removeItem(ADMIN_MODE_KEY);
+  }
 }

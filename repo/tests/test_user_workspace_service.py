@@ -4,7 +4,7 @@ from pathlib import Path
 import sys
 import unittest
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect
 from sqlalchemy.orm import sessionmaker
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -70,6 +70,35 @@ class UserWorkspaceServiceTests(unittest.TestCase):
 
         self.assertEqual(len(pools), 1)
         self.assertEqual(pools[0].symbols, ["300750.SZ", "600000.SH"])
+
+    def test_list_stock_pools_creates_missing_relation_table_and_backfills_legacy_symbols(self) -> None:
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(
+            engine,
+            tables=[UserStockPool.__table__],
+        )
+        session_factory = sessionmaker(bind=engine)
+        db = session_factory()
+        self.addCleanup(db.close)
+
+        db.add(
+            UserStockPool(
+                user_id=9,
+                name="legacy-only",
+                market="A",
+                symbols_json='["300750.sz", "600000.sh"]',
+                note="legacy",
+            )
+        )
+        db.commit()
+
+        pools = list_stock_pools(db, 9)
+
+        self.assertTrue(inspect(engine).has_table("user_stock_pool_items"))
+        self.assertEqual(len(pools), 1)
+        self.assertEqual(pools[0].symbols, ["300750.SZ", "600000.SH"])
+        rows = db.query(UserStockPoolItem).order_by(UserStockPoolItem.position).all()
+        self.assertEqual([(row.symbol, row.position) for row in rows], [("300750.SZ", 0), ("600000.SH", 1)])
 
     def test_update_stock_pool_replaces_relation_rows_and_clears_legacy_shadow(self) -> None:
         created = create_stock_pool(

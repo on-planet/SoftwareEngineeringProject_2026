@@ -9,7 +9,7 @@ from app.core.db import get_db
 from app.schemas.error import ErrorResponse
 from app.schemas.examples import ERROR_EXAMPLE
 from app.schemas.news import NewsOut
-from app.schemas.pagination import Page
+from app.schemas.pagination import CachedPage
 from app.services.news_aggregate_service import list_news_aggregate
 from app.utils.query_params import pagination_params, sort_params
 
@@ -18,7 +18,7 @@ router = APIRouter(tags=["news"])
 
 @router.get(
     "/news/aggregate",
-    response_model=Page[NewsOut],
+    response_model=CachedPage[NewsOut],
     responses={
         200: {"content": {"application/json": {"example": {"items": [{"id": 1, "symbol": "000001.SH", "title": "示例新闻", "sentiment": "positive", "published_at": "2026-03-10T08:00:00Z"}], "total": 1, "limit": 20, "offset": 0}}}},
         500: {"model": ErrorResponse, "content": {"application/json": {"example": ERROR_EXAMPLE}}},
@@ -58,7 +58,7 @@ def get_news_aggregate(
     time_buckets_filter = time_buckets or ([time_bucket] if time_bucket else None)
     related_symbols_filter = related_symbols or ([related_symbol] if related_symbol else None)
     related_sectors_filter = related_sectors or ([related_sector] if related_sector else None)
-    items, total = list_news_aggregate(
+    items, total, cache_meta = list_news_aggregate(
         db,
         symbols=symbols_filter,
         start=start,
@@ -75,5 +75,6 @@ def get_news_aggregate(
         limit=paging["limit"],
         offset=paging["offset"],
         sort=sorting["sort"],
+        return_meta=True,
     )
-    return {"items": items, "total": total, **paging}
+    return {"items": items, "total": total, **paging, **cache_meta}

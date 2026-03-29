@@ -1,23 +1,37 @@
+import dynamic from "next/dynamic";
 import Link from "next/link";
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 
+import { VirtualTable } from "../../components/virtual/VirtualTable";
+import {
+  buildStrategySignalExplanation,
+  buildStrategyLeaderboardQueryKey,
+  getStrategyScoreQueryOptions,
+  loadStrategyLeaderboard,
+  retrainStrategyScore,
+} from "../../domain/strategyScore";
 import { useApiQuery } from "../../hooks/useApiQuery";
 import {
-  getSmokeButtStrategyLeaderboard,
   SmokeButtListResponse,
   StrategySignal,
-  trainSmokeButtStrategy,
 } from "../../services/api";
 import { formatNullableNumber, formatPercent } from "../../utils/format";
 
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 100;
+const SmokeButtBacktestPanel = dynamic(
+  () => import("../../components/SmokeButtBacktestPanel").then((module) => module.SmokeButtBacktestPanel),
+  {
+    ssr: false,
+    loading: () => <div className="helper">Preparing backtest panel...</div>,
+  },
+);
 
 const SIGNAL_OPTIONS: Array<{ value: "" | StrategySignal; label: string }> = [
-  { value: "", label: "全部信号" },
-  { value: "strong_buy", label: "强关注" },
-  { value: "buy", label: "关注" },
-  { value: "watch", label: "观察" },
-  { value: "avoid", label: "回避" },
+  { value: "", label: "All Signals" },
+  { value: "strong_buy", label: "Strong Buy" },
+  { value: "buy", label: "Buy" },
+  { value: "watch", label: "Watch" },
+  { value: "avoid", label: "Avoid" },
 ];
 
 function signalTone(signal?: string | null) {
@@ -35,6 +49,56 @@ function signalLabel(signal?: string | null) {
   return target?.label ?? signal ?? "--";
 }
 
+type DeferredSectionProps = {
+  children: React.ReactNode;
+  placeholder: React.ReactNode;
+  resetKey: string;
+  minHeight?: number;
+  rootMargin?: string;
+};
+
+function DeferredSection({
+  children,
+  placeholder,
+  resetKey,
+  minHeight = 180,
+  rootMargin = "320px 0px",
+}: DeferredSectionProps) {
+  const [visible, setVisible] = useState(false);
+  const [node, setNode] = useState<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    setVisible(false);
+  }, [resetKey]);
+
+  useEffect(() => {
+    if (visible || !node) {
+      return;
+    }
+    if (typeof window === "undefined" || typeof IntersectionObserver === "undefined") {
+      setVisible(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setVisible(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [node, rootMargin, visible]);
+
+  return (
+    <div ref={setNode} style={!visible ? { minHeight } : undefined}>
+      {visible ? children : placeholder}
+    </div>
+  );
+}
+
 export default function SmokeButtStrategyPage() {
   const [market, setMarket] = useState<"" | "A" | "HK" | "US">("");
   const [signal, setSignal] = useState<"" | StrategySignal>("");
@@ -44,22 +108,9 @@ export default function SmokeButtStrategyPage() {
 
   const offset = useMemo(() => (page - 1) * PAGE_SIZE, [page]);
   const listQuery = useApiQuery<SmokeButtListResponse>(
-    ["smoke-butt-board", market || "all", signal || "all", page],
-    () =>
-      getSmokeButtStrategyLeaderboard(
-        {
-          market: market || undefined,
-          signal: signal || undefined,
-          limit: PAGE_SIZE,
-          offset,
-        },
-        { cache: false },
-      ),
-    {
-      staleTimeMs: 2 * 60 * 1000,
-      cacheTimeMs: 10 * 60 * 1000,
-      retry: 1,
-    },
+    buildStrategyLeaderboardQueryKey(market, signal, page),
+    () => loadStrategyLeaderboard(market, signal, PAGE_SIZE, offset),
+    getStrategyScoreQueryOptions("strategy-score-leaderboard"),
   );
 
   const run = listQuery.data?.run ?? null;
@@ -71,25 +122,14 @@ export default function SmokeButtStrategyPage() {
     setIsTraining(true);
     setNotice(null);
     try {
-      const response = await trainSmokeButtStrategy({
-        force_retrain: true,
-        time_limit_seconds: 120,
-      });
-      setNotice(`训练完成：${response.run.as_of} · 样本 ${response.run.train_rows} · 覆盖 ${response.run.scored_rows}`);
-      await listQuery.refetch(() =>
-        getSmokeButtStrategyLeaderboard(
-          {
-            market: market || undefined,
-            signal: signal || undefined,
-            limit: PAGE_SIZE,
-            offset: 0,
-          },
-          { cache: false },
-        ),
+      const response = await retrainStrategyScore();
+      setNotice(
+        `Training finished: ${response.run.as_of} | train rows ${response.run.train_rows} | scored ${response.run.scored_rows}`,
       );
+      await listQuery.refetch(() => loadStrategyLeaderboard(market, signal, PAGE_SIZE, 0));
       setPage(1);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "训练失败");
+      setNotice(error instanceof Error ? error.message : "Training failed");
     } finally {
       setIsTraining(false);
     }
@@ -100,32 +140,32 @@ export default function SmokeButtStrategyPage() {
       <section className="card hero-card">
         <div className="page-header">
           <div>
-            <h1 className="page-title">AutoGluon 烟蒂股策略</h1>
+            <h1 className="page-title">AutoGluon Smoke Butt Strategy</h1>
             <p className="helper">
-              用 AutoGluon 对历史价格、财务、事件、回购和研报做横截面排序，输出当前的烟蒂股候选榜单。
+              Historical prices, fundamentals, events, buybacks, and research are ranked into a cross-sectional idea board.
             </p>
           </div>
           <div className="toolbar">
             <button type="button" className="primary-button" onClick={() => void handleTrain()} disabled={isTraining}>
-              {isTraining ? "训练中..." : "重新训练"}
+              {isTraining ? "Training..." : "Retrain"}
             </button>
           </div>
         </div>
         <div className="hero-grid">
           <div className="hero-metric">
-            <div className="card-title">策略状态</div>
+            <div className="card-title">Status</div>
             <div className="hero-metric-value">{run ? "Ready" : "Not Trained"}</div>
-            <div className="helper">{run ? `最近训练：${run.as_of}` : "还没有训练结果"}</div>
+            <div className="helper">{run ? `Latest run: ${run.as_of}` : "Run the model to generate the board."}</div>
           </div>
           <div className="hero-metric">
-            <div className="card-title">训练样本</div>
+            <div className="card-title">Train Rows</div>
             <div className="hero-metric-value">{run ? formatNullableNumber(run.train_rows, 0) : "--"}</div>
-            <div className="helper">用于 AutoGluon 拟合的历史样本数</div>
+            <div className="helper">Rows used for model fitting</div>
           </div>
           <div className="hero-metric">
-            <div className="card-title">覆盖股票</div>
+            <div className="card-title">Scored Symbols</div>
             <div className="hero-metric-value">{run ? formatNullableNumber(run.scored_rows, 0) : "--"}</div>
-            <div className="helper">最新一轮成功输出的策略评分数量</div>
+            <div className="helper">Symbols with fresh signals</div>
           </div>
         </div>
         {notice ? <div className="helper">{notice}</div> : null}
@@ -141,10 +181,10 @@ export default function SmokeButtStrategyPage() {
               setPage(1);
             }}
           >
-            <option value="">全部市场</option>
-            <option value="A">A 股</option>
-            <option value="HK">港股</option>
-            <option value="US">美股</option>
+            <option value="">All Markets</option>
+            <option value="A">A-share</option>
+            <option value="HK">HK</option>
+            <option value="US">US</option>
           </select>
           <select
             className="select"
@@ -165,13 +205,15 @@ export default function SmokeButtStrategyPage() {
         {run ? (
           <div className="strategy-board-meta">
             <div className="helper">
-              训练时间：{new Date(run.trained_at).toLocaleString("zh-CN")} · 预测窗口：{run.label_horizon} 个交易日
+              {`Trained at ${new Date(run.trained_at).toLocaleString("zh-CN")} | horizon ${run.label_horizon} trading days`}
             </div>
             <div className="strategy-pill-row">
               {run.feature_importance.slice(0, 5).map((item) => (
                 <span key={item.feature} className="strategy-pill" data-tone="neutral">
                   {item.feature}
-                  {item.importance !== null && item.importance !== undefined ? ` · ${formatNullableNumber(item.importance, 2)}` : ""}
+                  {item.importance !== null && item.importance !== undefined
+                    ? ` | ${formatNullableNumber(item.importance, 2)}`
+                    : ""}
                 </span>
               ))}
             </div>
@@ -179,57 +221,73 @@ export default function SmokeButtStrategyPage() {
         ) : null}
 
         {listQuery.isLoading ? (
-          <div className="helper">策略榜单加载中...</div>
+          <div className="helper">Loading strategy board...</div>
         ) : !run ? (
           <div className="surface-empty">
-            <strong>还没有策略结果</strong>
-            <div className="helper">先点击上面的“重新训练”，完成后这里会出现榜单和特征重要性。</div>
+            <strong>No strategy output yet</strong>
+            <div className="helper">Run a training pass first. The leaderboard and diagnostics will appear here.</div>
           </div>
         ) : (
           <>
-            <div style={{ overflowX: "auto", marginTop: 16 }}>
-              <table className="data-table dense-table">
-                <thead>
-                  <tr>
-                    <th>排名</th>
-                    <th>股票</th>
-                    <th>市场</th>
-                    <th>行业</th>
-                    <th>策略分</th>
-                    <th>预期收益</th>
-                    <th>信号</th>
-                    <th>摘要</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {items.map((item) => (
-                    <tr key={item.symbol}>
-                      <td>{item.rank}</td>
-                      <td>
-                        <Link href={`/stock/${encodeURIComponent(item.symbol)}`} className="subtle-link">
-                          {item.symbol} {item.name}
-                        </Link>
-                      </td>
-                      <td>{item.market}</td>
-                      <td>{item.sector}</td>
-                      <td>{formatNullableNumber(item.score, 1)}</td>
-                      <td>{item.expected_return !== null && item.expected_return !== undefined ? formatPercent(item.expected_return, 2) : "--"}</td>
-                      <td>
-                        <span className="strategy-pill" data-tone={signalTone(item.signal)}>
-                          {signalLabel(item.signal)}
-                        </span>
-                      </td>
-                      <td>{item.summary ?? "--"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div style={{ marginTop: 16 }}>
+              <VirtualTable
+                rows={items}
+                rowKey={(item) => item.symbol}
+                height={560}
+                rowHeight={52}
+                columns={[
+                  { key: "rank", header: "Rank", width: 72, align: "right", cell: (item) => item.rank },
+                  {
+                    key: "symbol",
+                    header: "Stock",
+                    width: "1.3fr",
+                    cell: (item) => (
+                      <Link href={`/stock/${encodeURIComponent(item.symbol)}`} className="subtle-link">
+                        {item.symbol} {item.name}
+                      </Link>
+                    ),
+                  },
+                  { key: "market", header: "Market", width: 96, cell: (item) => item.market },
+                  { key: "sector", header: "Sector", width: "1fr", cell: (item) => item.sector || "--" },
+                  {
+                    key: "score",
+                    header: "Score",
+                    width: 100,
+                    align: "right",
+                    cell: (item) => formatNullableNumber(item.score, 1),
+                  },
+                  {
+                    key: "expected_return",
+                    header: "Expected",
+                    width: 116,
+                    align: "right",
+                    cell: (item) =>
+                      item.expected_return !== null && item.expected_return !== undefined
+                        ? formatPercent(item.expected_return, 2)
+                        : "--",
+                  },
+                  {
+                    key: "signal",
+                    header: "Signal",
+                    width: 120,
+                    cell: (item) => (
+                      <span className="strategy-pill" data-tone={signalTone(item.signal)}>
+                        {signalLabel(item.signal)}
+                      </span>
+                    ),
+                  },
+                  {
+                    key: "summary",
+                    header: "Summary",
+                    width: "1.6fr",
+                    cell: (item) => buildStrategySignalExplanation(item),
+                  },
+                ]}
+              />
             </div>
 
             <div className="stock-pagination">
-              <div className="helper">
-                共 {total} 条，当前第 {page}/{totalPages} 页
-              </div>
+              <div className="helper">{`${total} rows | page ${page}/${totalPages}`}</div>
               <div className="stock-pagination-actions">
                 <button
                   type="button"
@@ -237,7 +295,7 @@ export default function SmokeButtStrategyPage() {
                   disabled={page <= 1}
                   onClick={() => setPage((value) => Math.max(1, value - 1))}
                 >
-                  上一页
+                  Prev
                 </button>
                 <button
                   type="button"
@@ -245,12 +303,31 @@ export default function SmokeButtStrategyPage() {
                   disabled={page >= totalPages}
                   onClick={() => setPage((value) => Math.min(totalPages, value + 1))}
                 >
-                  下一页
+                  Next
                 </button>
               </div>
             </div>
           </>
         )}
+      </section>
+
+      <section className="card">
+        <div className="page-header">
+          <div>
+            <h2 className="section-title" style={{ marginBottom: 4 }}>
+              Backtest Confidence
+            </h2>
+            <p className="helper">
+              Review 20d and 60d bucket behavior, spread return, win rate, and drawdown on the latest model run.
+            </p>
+          </div>
+        </div>
+        <DeferredSection
+          resetKey={market || "all"}
+          placeholder={<div className="helper">Backtest panel will load when this section is in view.</div>}
+        >
+          <SmokeButtBacktestPanel market={market} />
+        </DeferredSection>
       </section>
     </div>
   );

@@ -91,7 +91,14 @@ CREATE TABLE IF NOT EXISTS news (
     topic_category VARCHAR(64),
     time_bucket VARCHAR(32),
     related_symbols TEXT,
-    related_sectors TEXT
+    related_sectors TEXT,
+    event_type VARCHAR(64),
+    event_tags TEXT,
+    themes TEXT,
+    impact_direction VARCHAR(32),
+    nlp_confidence DOUBLE PRECISION,
+    nlp_version VARCHAR(32),
+    keywords TEXT
 );
 
 CREATE TABLE IF NOT EXISTS news_related_symbols (

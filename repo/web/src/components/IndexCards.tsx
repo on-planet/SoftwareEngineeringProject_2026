@@ -1,9 +1,14 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo } from "react";
 
+import { useApiQuery } from "../hooks/useApiQuery";
 import { INDEX_NAME_MAP, INDEX_OPTIONS } from "../constants/indices";
-import { getIndices } from "../services/api";
+import {
+  buildIndicesQueryKey,
+  getIndices,
+  getIndicesQueryOptions,
+  primeApiQuery,
+} from "../services/api";
 import { formatNumber, formatSigned } from "../utils/format";
-import { readPersistentCache, writePersistentCache } from "../utils/persistentCache";
 
 type IndexMarket = "A" | "HK";
 
@@ -23,15 +28,9 @@ type IndexPage = {
   offset: number;
 };
 
-const INDEX_CARDS_CACHE_TTL_MS = 5 * 60 * 1000;
-
-function buildIndexCardsCacheKey(asOf?: string) {
-  return `index-cards:asOf=${asOf || "latest"}`;
-}
-
 const MARKET_OPTIONS: Array<{ key: IndexMarket; label: string; hint: string }> = [
-  { key: "A", label: "A 股", hint: "上证、深证、科创与北交所宽基" },
-  { key: "HK", label: "港股", hint: "恒生、国企与恒生科技" },
+  { key: "A", label: "A Share", hint: "Shanghai, Shenzhen, STAR, and Beijing benchmarks" },
+  { key: "HK", label: "Hong Kong", hint: "HSI, HSCEI, and Hang Seng Tech" },
 ];
 
 const INDEX_ORDER_MAP = new Map(INDEX_OPTIONS.map((item, index) => [item.symbol, index]));
@@ -42,48 +41,35 @@ type Props = {
   selectedSymbol: string;
   onMarketChange: (market: IndexMarket) => void;
   onSymbolChange: (symbol: string) => void;
+  initialPage?: IndexPage;
 };
 
-export function IndexCards({ asOf, activeMarket, selectedSymbol, onMarketChange, onSymbolChange }: Props) {
-  const [data, setData] = useState<IndexItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+export function IndexCards({
+  asOf,
+  activeMarket,
+  selectedSymbol,
+  onMarketChange,
+  onSymbolChange,
+  initialPage,
+}: Props) {
+  const cacheKey = useMemo(() => buildIndicesQueryKey(asOf), [asOf]);
 
   useEffect(() => {
-    let active = true;
-    const cacheKey = buildIndexCardsCacheKey(asOf);
-    const cachedPage = readPersistentCache<IndexPage>(cacheKey, INDEX_CARDS_CACHE_TTL_MS);
-    if (cachedPage) {
-      setData(cachedPage.items ?? []);
-      setLoading(false);
-    } else {
-      setLoading(true);
+    if (!initialPage) {
+      return;
     }
-    getIndices({ as_of: asOf })
-      .then((res) => {
-        if (!active) {
-          return;
-        }
-        const page = res as IndexPage;
-        setData(page.items ?? []);
-        writePersistentCache(cacheKey, page);
-        setError(null);
-      })
-      .catch((err: Error) => {
-        if (!active) {
-          return;
-        }
-        setError(err.message || "指数数据加载失败");
-      })
-      .finally(() => {
-        if (active) {
-          setLoading(false);
-        }
-      });
-    return () => {
-      active = false;
-    };
-  }, [asOf]);
+    primeApiQuery(cacheKey, initialPage, getIndicesQueryOptions(cacheKey));
+  }, [cacheKey, initialPage]);
+
+  const listQuery = useApiQuery<IndexPage>(
+    cacheKey,
+    () => getIndices({ as_of: asOf }) as Promise<IndexPage>,
+    getIndicesQueryOptions(cacheKey),
+  );
+  const pageData = listQuery.data ?? initialPage ?? null;
+  const data = pageData?.items ?? [];
+  const loading = listQuery.isLoading && !pageData;
+  const error = !pageData ? listQuery.error?.message ?? null : null;
 
   const visibleItems = useMemo(() => {
     const marketItems = data.filter((item) => (item.market || "").toUpperCase() === activeMarket);
@@ -100,28 +86,28 @@ export function IndexCards({ asOf, activeMarket, selectedSymbol, onMarketChange,
   const activeMarketMeta = MARKET_OPTIONS.find((item) => item.key === activeMarket) || MARKET_OPTIONS[0];
 
   if (loading) {
-    return <div className="helper">指数数据加载中...</div>;
+    return <div className="helper">Loading index snapshot...</div>;
   }
 
   if (error) {
-    return <div className="helper">指数数据加载失败：{error}</div>;
+    return <div className="helper">{`Failed to load index snapshot: ${error}`}</div>;
   }
 
   if (data.length === 0) {
-    return <div className="helper">暂无指数数据。</div>;
+    return <div className="helper">No index snapshot data.</div>;
   }
 
   return (
     <div className="index-snapshot">
       <div className="index-snapshot-head">
         <div>
-          <div className="card-title">市场切换</div>
+          <div className="card-title">Market Switch</div>
           <div className="helper">
             {activeMarketMeta.hint}
-            {visibleItems.length ? ` · 共 ${visibleItems.length} 个指数` : ""}
+            {visibleItems.length ? ` | ${visibleItems.length} indices` : ""}
           </div>
         </div>
-        <div className="index-market-switch" role="tablist" aria-label="指数市场切换">
+        <div className="index-market-switch" role="tablist" aria-label="Index market switch">
           {MARKET_OPTIONS.map((item) => (
             <button
               key={item.key}
@@ -138,36 +124,44 @@ export function IndexCards({ asOf, activeMarket, selectedSymbol, onMarketChange,
         </div>
       </div>
 
-      {!visibleItems.length ? (
-        <div className="helper">暂无{activeMarket === "A" ? "A 股" : "港股"}指数数据。</div>
-      ) : (
-        <div className="grid grid-3">
-          {visibleItems.map((item) => {
-            const changeColor = item.change >= 0 ? "#ef4444" : "#10b981";
-            const isActive = item.symbol === selectedSymbol;
-            return (
-              <button
-                key={`${item.symbol}-${item.date}`}
-                type="button"
-                className="card index-card index-card-button"
-                data-active={isActive}
-                onClick={() => onSymbolChange(item.symbol)}
-              >
-                <div className="card-title">{INDEX_NAME_MAP[item.symbol] || item.name || item.symbol}</div>
-                <div className="index-card-meta">
-                  <span>{item.symbol}</span>
-                  {item.market ? <span className="index-card-market">{item.market}</span> : null}
-                </div>
-                <div className="helper" style={{ marginTop: 6 }}>
-                  {item.date}
-                </div>
-                <div className="index-card-close">{formatNumber(item.close)}</div>
-                <div style={{ marginTop: 4, color: changeColor, fontWeight: 700 }}>{formatSigned(item.change)}</div>
-              </button>
-            );
-          })}
-        </div>
-      )}
+      <div key={activeMarket} className="motion-tab-panel">
+        {!visibleItems.length ? (
+          <div className="helper">
+            No {activeMarket === "A" ? "A Share" : "Hong Kong"} index data.
+          </div>
+        ) : (
+          <div className="grid grid-3">
+            {visibleItems.map((item) => {
+              const changeColor = item.change >= 0 ? "#ef4444" : "#10b981";
+              const isActive = item.symbol === selectedSymbol;
+              return (
+                <button
+                  key={`${item.symbol}-${item.date}`}
+                  type="button"
+                  className="card index-card index-card-button"
+                  data-active={isActive}
+                  onClick={() => onSymbolChange(item.symbol)}
+                >
+                  <div className="card-title">
+                    {INDEX_NAME_MAP[item.symbol] || item.name || item.symbol}
+                  </div>
+                  <div className="index-card-meta">
+                    <span>{item.symbol}</span>
+                    {item.market ? <span className="index-card-market">{item.market}</span> : null}
+                  </div>
+                  <div className="helper" style={{ marginTop: 6 }}>
+                    {item.date}
+                  </div>
+                  <div className="index-card-close">{formatNumber(item.close)}</div>
+                  <div style={{ marginTop: 4, color: changeColor, fontWeight: 700 }}>
+                    {formatSigned(item.change)}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

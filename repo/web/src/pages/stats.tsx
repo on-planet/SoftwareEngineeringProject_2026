@@ -100,6 +100,7 @@ export default function StatsPage() {
       statsViewTab={statsViewTab}
       portfolioViewTab={portfolioViewTab}
       statsTargetTab={statsTargetTab}
+      groupedStatsSymbols={groupedStatsSymbols}
       filteredStatsSymbols={filteredStatsSymbols}
       targets={targets}
       onSymbolChange={setSymbol}

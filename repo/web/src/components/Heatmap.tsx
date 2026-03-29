@@ -25,6 +25,7 @@ type HeatmapProps = {
   minChange?: number;
   maxChange?: number;
   showMarketSelector?: boolean;
+  preloadedPages?: Partial<Record<"A" | "HK", HeatmapPage>>;
 };
 
 const HEATMAP_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -60,6 +61,7 @@ export function Heatmap({
   minChange,
   maxChange,
   showMarketSelector = initialMarket === undefined,
+  preloadedPages,
 }: HeatmapProps) {
   const [market, setMarket] = useState(initialMarket ?? "");
   const [sort, setSort] = useState<SortOrder>("desc");
@@ -91,6 +93,26 @@ export function Heatmap({
       limit,
       offset,
     });
+    const preloadedPage =
+      asOf === undefined &&
+      minChange === undefined &&
+      maxChange === undefined &&
+      sort === "desc" &&
+      limit === 24 &&
+      offset === 0 &&
+      (market === "A" || market === "HK")
+        ? preloadedPages?.[market]
+        : undefined;
+    if (preloadedPage !== undefined) {
+      setItems(preloadedPage.items ?? []);
+      setTotal(preloadedPage.total ?? 0);
+      setLoading(false);
+      setError(null);
+      writePersistentCache(cacheKey, preloadedPage);
+      return () => {
+        active = false;
+      };
+    }
     const cachedPage = readPersistentCache<HeatmapPage>(cacheKey, HEATMAP_CACHE_TTL_MS);
     if (cachedPage) {
       setItems(cachedPage.items ?? []);
@@ -134,7 +156,7 @@ export function Heatmap({
     return () => {
       active = false;
     };
-  }, [asOf, market, minChange, maxChange, sort, limit, offset]);
+  }, [asOf, market, minChange, maxChange, sort, limit, offset, preloadedPages]);
 
   const handlePrev = () => setPage((prev) => Math.max(1, prev - 1));
   const handleNext = () => setPage((prev) => Math.min(maxPage, prev + 1));

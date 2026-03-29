@@ -46,7 +46,7 @@ export function useApiQuery<T>(
     if (!cacheKey) {
       return idleQueryState<T>();
     }
-    return getApiQuerySnapshot<T>(cacheKey, options);
+    return getApiQuerySnapshot<T>(cacheKey, options, { hydrateFromPersistence: false });
   });
 
   useEffect(() => {
@@ -68,6 +68,7 @@ export function useApiQuery<T>(
     options?.cache,
     options?.cacheTimeMs,
     options?.force,
+    options?.label,
     options?.persist?.key,
     options?.persist?.maxAgeMs,
     options?.retry,

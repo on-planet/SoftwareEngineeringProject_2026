@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+import inspect
 import json
 import math
 import os
@@ -36,6 +38,12 @@ STRATEGY_CODE = "smoke_butt_autogluon"
 STRATEGY_NAME = "AutoGluon Smoke Butt"
 DEFAULT_HORIZON_DAYS = 60
 DEFAULT_SAMPLE_STEP = 21
+BACKTEST_WINDOWS = (20, 60)
+DEFAULT_BACKTEST_BUCKET_COUNT = 5
+BACKTEST_CACHE_VERSION = 2
+BACKTEST_LOOKBACK_DAYS = 2 * 366
+BACKTEST_WARMUP_DAYS = 240
+BACKTEST_SAMPLE_STEP = 5
 MIN_TRAIN_ROWS = 60
 MODEL_FEATURE_COLUMNS = [
     "market",
@@ -91,6 +99,7 @@ DIVIDEND_FEATURE_LABEL = next(label for key, label in FEATURE_VALUE_LABELS if ke
 _YYYYMM_RE = re.compile(r"^(?P<year>\d{4})(?P<month>\d{2})$")
 _QUARTER_RE = re.compile(r"^(?P<year>\d{4})Q(?P<quarter>[1-4])$", re.IGNORECASE)
 _DATE_RE = re.compile(r"^(?P<year>\d{4})[-/]?(?P<month>\d{2})(?:[-/]?(?P<day>\d{2}))?$")
+_BACKTEST_RESPONSE_CACHE: dict[tuple[int, str | None, int], dict[str, Any]] = {}
 
 
 class SmokeButtStrategyError(RuntimeError):
@@ -112,6 +121,33 @@ class StrategyDataset:
     as_of: date
 
 
+def _patch_fillna_downcast_compat(target: type[pd.DataFrame] | type[pd.Series]) -> None:
+    original = target.fillna
+    if getattr(original, "__smoke_butt_fillna_compat__", False):
+        return
+    try:
+        if "downcast" in inspect.signature(original).parameters:
+            return
+    except (TypeError, ValueError):
+        return
+
+    def fillna_compat(self, *args, **kwargs):
+        kwargs.pop("downcast", None)
+        return original(self, *args, **kwargs)
+
+    fillna_compat.__smoke_butt_fillna_compat__ = True
+    target.fillna = fillna_compat
+
+
+def _ensure_pandas_fillna_compatibility() -> None:
+    # AutoGluon still passes `downcast=` to pandas.fillna; pandas 3 removed that argument.
+    _patch_fillna_downcast_compat(pd.DataFrame)
+    _patch_fillna_downcast_compat(pd.Series)
+
+
+_ensure_pandas_fillna_compatibility()
+
+
 def _load_tabular_predictor():
     vendor_path = _autogluon_vendor_path()
     if vendor_path.exists() and str(vendor_path) not in sys.path:
@@ -130,6 +166,14 @@ def _strategy_model_root() -> Path:
     if configured:
         return Path(configured)
     return Path(__file__).resolve().parents[3] / "etl" / "state" / "autogluon"
+
+
+def _strategy_backtest_cache_root() -> Path:
+    return _strategy_model_root() / "backtest_cache"
+
+
+def _strategy_feature_cache_root() -> Path:
+    return _strategy_model_root() / "feature_cache"
 
 
 def _utcnow() -> datetime:
@@ -430,6 +474,146 @@ def _load_live_snapshot_frame(db: Session) -> pd.DataFrame:
     )
 
 
+def _load_backtest_base_frames(
+    db: Session,
+    *,
+    as_of: date,
+    forward_horizon_days: int,
+    history_days: int | None,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    if history_days is None:
+        return _load_base_frames(db, as_of)
+
+    bind = db.get_bind()
+    if bind is None:
+        raise SmokeButtDataError("数据库连接不可用，无法构建回测特征。")
+
+    warmup_days = max(BACKTEST_WARMUP_DAYS, int(forward_horizon_days))
+    start_date = as_of - timedelta(days=max(int(history_days), 1) + warmup_days)
+    price_frame = _safe_read_sql(
+        db.query(
+            DailyPrice.symbol,
+            DailyPrice.date,
+            DailyPrice.open,
+            DailyPrice.high,
+            DailyPrice.low,
+            DailyPrice.close,
+            DailyPrice.volume,
+        )
+        .filter(DailyPrice.date >= start_date, DailyPrice.date <= as_of)
+        .order_by(DailyPrice.symbol.asc(), DailyPrice.date.asc()),
+        bind,
+        ["symbol", "date", "open", "high", "low", "close", "volume"],
+    )
+    stock_frame = _safe_read_sql(
+        db.query(Stock.symbol, Stock.name, Stock.market, Stock.sector).order_by(Stock.symbol.asc()),
+        bind,
+        ["symbol", "name", "market", "sector"],
+    )
+    financial_frame = _safe_read_sql(
+        db.query(
+            Financial.symbol,
+            Financial.period,
+            Financial.revenue,
+            Financial.net_income,
+            Financial.cash_flow,
+            Financial.roe,
+            Financial.debt_ratio,
+        ).order_by(Financial.symbol.asc(), Financial.period.asc()),
+        bind,
+        ["symbol", "period", "revenue", "net_income", "cash_flow", "roe", "debt_ratio"],
+    )
+    event_frame = _safe_read_sql(
+        db.query(Event.symbol, Event.date)
+        .filter(Event.date >= start_date, Event.date <= as_of)
+        .order_by(Event.symbol.asc(), Event.date.asc()),
+        bind,
+        ["symbol", "date"],
+    )
+    buyback_frame = _safe_read_sql(
+        db.query(Buyback.symbol, Buyback.date)
+        .filter(Buyback.date >= start_date, Buyback.date <= as_of)
+        .order_by(Buyback.symbol.asc(), Buyback.date.asc()),
+        bind,
+        ["symbol", "date"],
+    )
+    research_frame = _safe_read_sql(
+        db.query(StockResearchItem.symbol, StockResearchItem.published_at)
+        .filter(
+            StockResearchItem.published_at.isnot(None),
+            StockResearchItem.published_at >= datetime.combine(start_date, datetime.min.time()),
+            StockResearchItem.published_at <= datetime.combine(as_of, datetime.max.time()),
+        )
+        .order_by(StockResearchItem.symbol.asc(), StockResearchItem.published_at.asc()),
+        bind,
+        ["symbol", "published_at"],
+    )
+    return price_frame, stock_frame, financial_frame, event_frame, buyback_frame, research_frame
+
+
+def _build_feature_history(
+    db: Session,
+    *,
+    as_of: date,
+    forward_horizon_days: int,
+    history_days: int | None = None,
+) -> pd.DataFrame:
+    cached_frame = _load_feature_history_from_disk(
+        as_of=as_of,
+        forward_horizon_days=forward_horizon_days,
+        history_days=history_days,
+    )
+    if cached_frame is not None:
+        return cached_frame
+
+    price_frame, stock_frame, financial_frame, event_frame, buyback_frame, research_frame = _load_backtest_base_frames(
+        db,
+        as_of=as_of,
+        forward_horizon_days=forward_horizon_days,
+        history_days=history_days,
+    )
+    if price_frame.empty:
+        raise SmokeButtDataError("daily_prices 为空，无法训练烟蒂股策略。")
+
+    features = _prepare_price_frame(price_frame, forward_horizon_days)
+    features = _merge_financial_features(features, _prepare_financial_frame(financial_frame))
+    features = _attach_window_count(features, _build_date_lookup(event_frame, "date"), window_days=90, output_column="event_count_90d")
+    features = _attach_window_count(features, _build_date_lookup(research_frame, "published_at"), window_days=180, output_column="research_count_180d")
+    features = _attach_window_count(features, _build_date_lookup(buyback_frame, "date"), window_days=180, output_column="buyback_count_180d")
+
+    if not stock_frame.empty:
+        features = features.merge(stock_frame, on="symbol", how="left")
+    else:
+        features["name"] = features["symbol"]
+        features["market"] = "A"
+        features["sector"] = "Unknown"
+
+    features["name"] = features["name"].fillna(features["symbol"])
+    features["market"] = features["market"].fillna("A")
+    features["sector"] = features["sector"].fillna("Unknown")
+    features["date"] = pd.to_datetime(features["date"])
+    result = features.reset_index(drop=True)
+    try:
+        _write_feature_history_to_disk(
+            as_of=as_of,
+            forward_horizon_days=forward_horizon_days,
+            history_days=history_days,
+            frame=result,
+        )
+    except OSError:
+        pass
+    return result
+
+
+def _attach_forward_return_columns(feature_frame: pd.DataFrame, horizons: Iterable[int]) -> pd.DataFrame:
+    frame = feature_frame.copy().sort_values(["symbol", "date"]).reset_index(drop=True)
+    grouped = frame.groupby("symbol", sort=False)["close"]
+    for horizon in sorted({max(1, int(item)) for item in horizons}):
+        column = f"forward_return_{horizon}d"
+        frame[column] = _clip_series((grouped.shift(-horizon) / frame["close"]) - 1.0, -0.75, 1.5)
+    return frame
+
+
 def _build_dataset(
     db: Session,
     *,
@@ -501,6 +685,129 @@ def _serialize_json(payload: Any, fallback: str) -> str:
         return json.dumps(payload, ensure_ascii=False)
     except (TypeError, ValueError):
         return fallback
+
+
+def _backtest_json_default(value: Any) -> Any:
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, Path):
+        return str(value)
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
+
+def _backtest_cache_path(run_id: int, market: str | None, bucket_count: int) -> Path:
+    market_token = str(market or "all").strip().lower() or "all"
+    return _strategy_backtest_cache_root() / f"v{BACKTEST_CACHE_VERSION}_run_{run_id}_{market_token}_b{bucket_count}.json"
+
+
+def _feature_history_cache_path(as_of: date, forward_horizon_days: int, history_days: int | None) -> Path:
+    history_token = "all" if history_days is None else str(int(history_days))
+    return _strategy_feature_cache_root() / (
+        f"v{BACKTEST_CACHE_VERSION}_feature_{as_of.isoformat()}_h{int(forward_horizon_days)}_lookback_{history_token}.pkl"
+    )
+
+
+def _find_compatible_backtest_cache_path(run_id: int, market: str | None, bucket_count: int) -> Path | None:
+    cache_root = _strategy_backtest_cache_root()
+    if not cache_root.exists():
+        return None
+    market_token = str(market or "all").strip().lower() or "all"
+    candidates = sorted(
+        cache_root.glob(f"v*_run_{run_id}_{market_token}_b{bucket_count}.json"),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    return candidates[0] if candidates else None
+
+
+def _find_compatible_feature_history_cache_path(
+    as_of: date,
+    forward_horizon_days: int,
+    history_days: int | None,
+) -> Path | None:
+    cache_root = _strategy_feature_cache_root()
+    if not cache_root.exists():
+        return None
+    history_token = "all" if history_days is None else str(int(history_days))
+    direct_candidates = sorted(
+        cache_root.glob(f"v*_feature_{as_of.isoformat()}_h{int(forward_horizon_days)}_lookback_{history_token}.pkl"),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    if direct_candidates:
+        return direct_candidates[0]
+    fallback_candidates = sorted(
+        cache_root.glob(f"v*_feature_{as_of.isoformat()}_h{int(forward_horizon_days)}_lookback_*.pkl"),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    return fallback_candidates[0] if fallback_candidates else None
+
+
+def _load_feature_history_from_disk(
+    *,
+    as_of: date,
+    forward_horizon_days: int,
+    history_days: int | None,
+) -> pd.DataFrame | None:
+    cache_path = _feature_history_cache_path(as_of, forward_horizon_days, history_days)
+    if not cache_path.exists():
+        cache_path = _find_compatible_feature_history_cache_path(as_of, forward_horizon_days, history_days) or cache_path
+    if not cache_path.exists():
+        return None
+    try:
+        frame = pd.read_pickle(cache_path)
+    except (OSError, TypeError, ValueError):
+        return None
+    if not isinstance(frame, pd.DataFrame):
+        return None
+    if history_days is not None and "date" in frame.columns:
+        warmup_days = max(BACKTEST_WARMUP_DAYS, int(forward_horizon_days))
+        start_date = pd.Timestamp(as_of - timedelta(days=max(int(history_days), 1) + warmup_days))
+        frame = frame[pd.to_datetime(frame["date"]) >= start_date].copy()
+    return frame.copy()
+
+
+def _write_feature_history_to_disk(
+    *,
+    as_of: date,
+    forward_horizon_days: int,
+    history_days: int | None,
+    frame: pd.DataFrame,
+) -> None:
+    cache_root = _strategy_feature_cache_root()
+    cache_root.mkdir(parents=True, exist_ok=True)
+    frame.to_pickle(_feature_history_cache_path(as_of, forward_horizon_days, history_days))
+
+
+def _load_backtest_payload_from_disk(run: StockStrategyRun, market: str | None, bucket_count: int) -> dict[str, Any] | None:
+    cache_path = _backtest_cache_path(int(run.id), market, int(bucket_count))
+    if not cache_path.exists():
+        cache_path = _find_compatible_backtest_cache_path(int(run.id), market, int(bucket_count)) or cache_path
+    if not cache_path.exists():
+        return None
+    try:
+        payload = json.loads(cache_path.read_text(encoding="utf-8"))
+    except (OSError, TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    run_payload = payload.get("run")
+    if not isinstance(run_payload, dict):
+        return None
+    if int(run_payload.get("id") or 0) != int(run.id):
+        return None
+    return payload
+
+
+def _write_backtest_payload_to_disk(run: StockStrategyRun, market: str | None, bucket_count: int, payload: dict[str, Any]) -> None:
+    cache_root = _strategy_backtest_cache_root()
+    cache_root.mkdir(parents=True, exist_ok=True)
+    cache_path = _backtest_cache_path(int(run.id), market, int(bucket_count))
+    cache_path.write_text(
+        json.dumps(payload, ensure_ascii=False, default=_backtest_json_default),
+        encoding="utf-8",
+    )
 
 
 def _load_json_object(raw: str | None, default: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -687,6 +994,55 @@ def _build_summary(
     return "".join(parts)
 
 
+def _build_summary(
+    *,
+    expected_return: float | None,
+    rank: int,
+    total: int,
+    drivers: Iterable[dict[str, Any]],
+    horizon_days: int,
+) -> str:
+    parts = [f"AutoGluon expects a {horizon_days} trading-day return horizon."]
+    if expected_return is None:
+        parts.append("Expected return is not available yet.")
+    else:
+        parts.append(f"Current expected return is {expected_return * 100:.2f}% with rank {rank}/{total}.")
+    labels = [str(item.get("label") or "").strip() for item in drivers if str(item.get("label") or "").strip()]
+    if labels:
+        parts.append(f"Top drivers: {', '.join(labels[:3])}.")
+    return " ".join(parts)
+
+
+def _signal_label(signal: str) -> str:
+    if signal == "strong_buy":
+        return "strong buy"
+    if signal == "buy":
+        return "buy"
+    if signal == "avoid":
+        return "avoid"
+    return "watch"
+
+
+def _build_signal_explanation(
+    *,
+    signal: str,
+    expected_return: float | None,
+    rank: int,
+    total: int,
+    drivers: Iterable[dict[str, Any]],
+    horizon_days: int,
+) -> str:
+    parts = [f"This is a {_signal_label(signal)} signal on a {horizon_days} trading-day horizon."]
+    if expected_return is not None:
+        parts.append(f"The model-implied return is {expected_return * 100:.2f}%.")
+    if total > 0 and rank > 0:
+        parts.append(f"It ranks #{rank} out of {total} scored symbols.")
+    driver_labels = [str(item.get("label") or "").strip() for item in drivers if str(item.get("label") or "").strip()]
+    if driver_labels:
+        parts.append(f"Main contributors: {', '.join(driver_labels[:2])}.")
+    return " ".join(parts)
+
+
 def _signal_from_percentile(percentile: float) -> str:
     if percentile >= 0.9:
         return "strong_buy"
@@ -721,6 +1077,8 @@ def _serialize_score_row(run: StockStrategyRun, score: StockStrategyScore, stock
     sector = stock.sector if stock and stock.sector else "Unknown"
     drivers = [_sanitize_driver_factor(item) for item in _load_json_list(score.driver_factors_json)]
     feature_values = [_sanitize_feature_value(item) for item in _load_json_list(score.feature_values_json)]
+    expected_return = _safe_float(score.expected_return)
+    signal = score.signal or "watch"
     return {
         "symbol": score.symbol,
         "name": stock_name,
@@ -730,9 +1088,17 @@ def _serialize_score_row(run: StockStrategyRun, score: StockStrategyScore, stock
         "score": float(score.score or 0.0),
         "rank": int(score.rank or 0),
         "percentile": float(score.percentile or 0.0),
-        "expected_return": _safe_float(score.expected_return),
-        "signal": score.signal or "watch",
+        "expected_return": expected_return,
+        "signal": signal,
         "summary": score.summary,
+        "signal_explanation": _build_signal_explanation(
+            signal=signal,
+            expected_return=expected_return,
+            rank=int(score.rank or 0),
+            total=int(run.scored_rows or 0),
+            drivers=drivers,
+            horizon_days=int(run.label_horizon or DEFAULT_HORIZON_DAYS),
+        ),
         "run": _serialize_run(run),
         "drivers": drivers,
         "feature_values": feature_values,
@@ -805,6 +1171,264 @@ def get_latest_smoke_butt_run(db: Session) -> StockStrategyRun | None:
         .order_by(StockStrategyRun.updated_at.desc(), StockStrategyRun.id.desc())
         .first()
     )
+
+
+def _load_trained_predictor(run: StockStrategyRun):
+    model_path = str(run.model_path or "").strip()
+    if not model_path:
+        raise SmokeButtDataError("策略模型路径缺失，无法生成复盘看板。")
+    predictor_cls = _load_tabular_predictor()
+    load_method = getattr(predictor_cls, "load", None)
+    if not callable(load_method):
+        raise SmokeButtDataError("当前 AutoGluon 版本不支持加载已训练模型。")
+    try:
+        return load_method(model_path)
+    except Exception as exc:  # pragma: no cover - depends on runtime model files
+        raise SmokeButtDataError(f"加载策略模型失败：{exc}") from exc
+
+
+def _bucket_key(bucket_index: int) -> str:
+    return f"q{bucket_index}"
+
+
+def _bucket_label(bucket_index: int, bucket_count: int) -> str:
+    upper = int(round(bucket_index * 100 / bucket_count))
+    if bucket_index == 1:
+        return f"前{upper}%"
+    lower = int(round((bucket_index - 1) * 100 / bucket_count))
+    return f"{lower}-{upper}%"
+
+
+def _attach_predicted_return(feature_frame: pd.DataFrame, predictor: Any) -> pd.DataFrame:
+    if feature_frame.empty:
+        frame = feature_frame.copy()
+        frame["predicted_return"] = np.nan
+        return frame
+
+    frame = feature_frame.copy()
+    predictions = predictor.predict(frame[MODEL_FEATURE_COLUMNS].copy())
+    prediction_series = pd.Series(np.asarray(predictions, dtype="float64"), index=frame.index)
+    frame["predicted_return"] = pd.to_numeric(prediction_series, errors="coerce")
+    return frame
+
+
+def _build_backtest_window(
+    feature_frame: pd.DataFrame,
+    *,
+    horizon_days: int,
+    bucket_count: int,
+) -> dict[str, Any]:
+    forward_column = f"forward_return_{horizon_days}d"
+    window_frame = feature_frame[
+        feature_frame[forward_column].notna() & feature_frame["predicted_return"].notna()
+    ].copy()
+    window_frame["session_date"] = pd.to_datetime(window_frame["date"]).dt.normalize()
+    eligible_dates = sorted(window_frame["session_date"].dropna().unique())
+    rebalance_dates = list(eligible_dates[::max(1, horizon_days)])
+
+    period_rows: list[dict[str, Any]] = []
+    for rebalance_date in rebalance_dates:
+        cross_section = window_frame[window_frame["session_date"] == rebalance_date].copy()
+        if len(cross_section) < bucket_count:
+            continue
+        cross_section.sort_values(["predicted_return", "symbol"], ascending=[False, True], inplace=True)
+        cross_section.reset_index(drop=True, inplace=True)
+        total = len(cross_section)
+        cross_section["bucket_index"] = np.minimum((np.arange(total) * bucket_count // total) + 1, bucket_count)
+
+        for bucket_index in range(1, bucket_count + 1):
+            bucket_frame = cross_section[cross_section["bucket_index"] == bucket_index]
+            if bucket_frame.empty:
+                continue
+            period_rows.append(
+                {
+                    "date": pd.Timestamp(rebalance_date).date(),
+                    "bucket_index": bucket_index,
+                    "period_return": _safe_float(bucket_frame[forward_column].mean()),
+                    "predicted_return": _safe_float(bucket_frame["predicted_return"].mean()),
+                    "sample_count": int(len(bucket_frame)),
+                    "win_count": int((bucket_frame[forward_column] > 0).sum()),
+                }
+            )
+
+    bucket_payloads: list[dict[str, Any]] = []
+    for bucket_index in range(1, bucket_count + 1):
+        bucket_rows = [row for row in period_rows if int(row["bucket_index"]) == bucket_index]
+        bucket_rows.sort(key=lambda item: item["date"])
+
+        equity = 1.0
+        peak = 1.0
+        max_drawdown = 0.0
+        curve: list[dict[str, Any]] = []
+        period_returns = [row["period_return"] for row in bucket_rows if row.get("period_return") is not None]
+        predicted_returns = [row["predicted_return"] for row in bucket_rows if row.get("predicted_return") is not None]
+        sample_count = sum(int(row.get("sample_count") or 0) for row in bucket_rows)
+        win_count = sum(int(row.get("win_count") or 0) for row in bucket_rows)
+
+        for row in bucket_rows:
+            period_return = _safe_float(row.get("period_return"))
+            if period_return is None:
+                continue
+            equity *= 1.0 + period_return
+            peak = max(peak, equity)
+            max_drawdown = min(max_drawdown, (equity / peak) - 1.0)
+            curve.append(
+                {
+                    "date": row["date"],
+                    "period_return": period_return,
+                    "cumulative_return": equity - 1.0,
+                }
+            )
+
+        bucket_payloads.append(
+            {
+                "bucket": _bucket_key(bucket_index),
+                "label": _bucket_label(bucket_index, bucket_count),
+                "bucket_index": bucket_index,
+                "avg_return": float(np.mean(period_returns)) if period_returns else None,
+                "win_rate": (win_count / sample_count) if sample_count else None,
+                "max_drawdown": max_drawdown if curve else None,
+                "avg_predicted_return": float(np.mean(predicted_returns)) if predicted_returns else None,
+                "sample_count": sample_count,
+                "period_count": len(curve),
+                "curve": curve,
+            }
+        )
+
+    top_bucket = bucket_payloads[0] if bucket_payloads else {}
+    bottom_bucket = bucket_payloads[-1] if bucket_payloads else {}
+    adjacent_pairs = 0
+    monotonic_hits = 0
+    for left, right in zip(bucket_payloads, bucket_payloads[1:]):
+        left_return = _safe_float(left.get("avg_return"))
+        right_return = _safe_float(right.get("avg_return"))
+        if left_return is None or right_return is None:
+            continue
+        adjacent_pairs += 1
+        if left_return >= right_return:
+            monotonic_hits += 1
+
+    top_curve = {item["date"]: _safe_float(item.get("period_return")) for item in top_bucket.get("curve", [])}
+    bottom_curve = {item["date"]: _safe_float(item.get("period_return")) for item in bottom_bucket.get("curve", [])}
+    spread_dates = sorted(set(top_curve.keys()) & set(bottom_curve.keys()))
+    spread_hits = 0
+    spread_count = 0
+    for current_date in spread_dates:
+        top_return = top_curve.get(current_date)
+        bottom_return = bottom_curve.get(current_date)
+        if top_return is None or bottom_return is None:
+            continue
+        spread_count += 1
+        if top_return > bottom_return:
+            spread_hits += 1
+
+    sample_count = sum(int(item.get("sample_count") or 0) for item in bucket_payloads)
+    period_count = max((int(item.get("period_count") or 0) for item in bucket_payloads), default=0)
+    return {
+        "horizon_days": horizon_days,
+        "rebalance_step": horizon_days,
+        "buckets": bucket_payloads,
+        "summary": {
+            "top_bucket_return": _safe_float(top_bucket.get("avg_return")),
+            "top_bucket_win_rate": _safe_float(top_bucket.get("win_rate")),
+            "top_bucket_max_drawdown": _safe_float(top_bucket.get("max_drawdown")),
+            "spread_return": (
+                _safe_float(top_bucket.get("avg_return")) - _safe_float(bottom_bucket.get("avg_return"))
+                if _safe_float(top_bucket.get("avg_return")) is not None and _safe_float(bottom_bucket.get("avg_return")) is not None
+                else None
+            ),
+            "spread_win_rate": (
+                _safe_float(top_bucket.get("win_rate")) - _safe_float(bottom_bucket.get("win_rate"))
+                if _safe_float(top_bucket.get("win_rate")) is not None and _safe_float(bottom_bucket.get("win_rate")) is not None
+                else None
+            ),
+            "spread_hit_rate": (spread_hits / spread_count) if spread_count else None,
+            "monotonicity": (monotonic_hits / adjacent_pairs) if adjacent_pairs else None,
+            "sample_count": sample_count,
+            "period_count": period_count,
+        },
+    }
+
+
+def get_smoke_butt_backtest(
+    db: Session,
+    *,
+    market: str | None = None,
+    bucket_count: int = DEFAULT_BACKTEST_BUCKET_COUNT,
+) -> dict[str, Any] | None:
+    active_run = get_latest_smoke_butt_run(db)
+    if active_run is None:
+        return None
+
+    cache_key = (int(active_run.id), str(market or "") or None, int(bucket_count))
+    cached_payload = _BACKTEST_RESPONSE_CACHE.get(cache_key)
+    if cached_payload is not None:
+        return deepcopy(cached_payload)
+    disk_cached_payload = _load_backtest_payload_from_disk(active_run, market, bucket_count)
+    if disk_cached_payload is not None:
+        _BACKTEST_RESPONSE_CACHE[cache_key] = deepcopy(disk_cached_payload)
+        return deepcopy(disk_cached_payload)
+
+    predictor = _load_trained_predictor(active_run)
+    feature_frame = _build_feature_history(
+        db,
+        as_of=active_run.as_of,
+        forward_horizon_days=max(BACKTEST_WINDOWS),
+        history_days=BACKTEST_LOOKBACK_DAYS,
+    )
+    feature_frame = _attach_forward_return_columns(feature_frame, BACKTEST_WINDOWS)
+
+    feature_ready_mask = (
+        feature_frame["ret_120d"].notna()
+        & feature_frame["volatility_20d"].notna()
+        & feature_frame["drawdown_120d"].notna()
+    )
+    evaluation_frame = feature_frame[feature_ready_mask].copy()
+    if market:
+        evaluation_frame = evaluation_frame[evaluation_frame["market"] == market].copy()
+    if BACKTEST_SAMPLE_STEP > 1 and "sample_index" in evaluation_frame.columns:
+        evaluation_frame = evaluation_frame[(evaluation_frame["sample_index"] % BACKTEST_SAMPLE_STEP) == 0].copy()
+    if evaluation_frame.empty:
+        raise SmokeButtDataError("历史样本不足，无法生成策略复盘结果。")
+
+    evaluation_frame = _attach_predicted_return(evaluation_frame, predictor)
+    windows = [
+        _build_backtest_window(
+            evaluation_frame,
+            horizon_days=horizon_days,
+            bucket_count=bucket_count,
+        )
+        for horizon_days in BACKTEST_WINDOWS
+    ]
+    by_horizon = {int(item["horizon_days"]): item for item in windows}
+    evaluation = _load_json_object(active_run.evaluation_json)
+    payload = {
+        "run": _serialize_run(active_run),
+        "market": market,
+        "bucket_count": bucket_count,
+        "windows": windows,
+        "confidence": {
+            "validation_rank_ic": _safe_float(evaluation.get("rank_ic")),
+            "validation_mae": _safe_float(evaluation.get("mae")),
+            "validation_rmse": _safe_float(evaluation.get("rmse")),
+            "spread_return_20d": _safe_float(by_horizon.get(20, {}).get("summary", {}).get("spread_return")),
+            "spread_return_60d": _safe_float(by_horizon.get(60, {}).get("summary", {}).get("spread_return")),
+            "monotonicity_20d": _safe_float(by_horizon.get(20, {}).get("summary", {}).get("monotonicity")),
+            "monotonicity_60d": _safe_float(by_horizon.get(60, {}).get("summary", {}).get("monotonicity")),
+            "top_bucket_win_rate_20d": _safe_float(by_horizon.get(20, {}).get("summary", {}).get("top_bucket_win_rate")),
+            "top_bucket_win_rate_60d": _safe_float(by_horizon.get(60, {}).get("summary", {}).get("top_bucket_win_rate")),
+            "period_count_20d": int(by_horizon.get(20, {}).get("summary", {}).get("period_count") or 0),
+            "period_count_60d": int(by_horizon.get(60, {}).get("summary", {}).get("period_count") or 0),
+            "sample_count_20d": int(by_horizon.get(20, {}).get("summary", {}).get("sample_count") or 0),
+            "sample_count_60d": int(by_horizon.get(60, {}).get("summary", {}).get("sample_count") or 0),
+        },
+    }
+    _BACKTEST_RESPONSE_CACHE[cache_key] = deepcopy(payload)
+    try:
+        _write_backtest_payload_to_disk(active_run, market, bucket_count, payload)
+    except OSError:
+        pass
+    return payload
 
 
 def train_smoke_butt_strategy(

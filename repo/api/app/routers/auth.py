@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.schemas.auth import AuthTokenOut, AuthUserOut, LoginIn, RegisterIn
-from app.services.auth_service import get_user_from_token, login_user, register_user
+from app.services.auth_service import _serialize_auth_user, get_user_from_token, login_user, register_user
 
 router = APIRouter(tags=["auth"])
 http_bearer = HTTPBearer(auto_error=False)
@@ -48,4 +48,4 @@ def get_current_user(
 
 @router.get("/auth/me", response_model=AuthUserOut)
 def me_route(current_user=Depends(get_current_user)):
-    return current_user
+    return _serialize_auth_user(current_user)

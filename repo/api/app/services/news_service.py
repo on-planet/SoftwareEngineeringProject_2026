@@ -8,6 +8,7 @@ from app.core.cache import get_json, set_json
 from app.models.news import News
 from app.services.cache_utils import build_cache_key
 from app.services.news_relation_utils import (
+    apply_news_nlp_metadata,
     apply_news_relations,
     filter_news_by_related_sectors,
     filter_news_by_related_symbols,
@@ -94,6 +95,9 @@ def list_news(
         "time_bucket": News.time_bucket,
         "related_symbols": News.related_symbols_csv,
         "related_sectors": News.related_sectors_csv,
+        "event_type": News.event_type,
+        "impact_direction": News.impact_direction,
+        "nlp_confidence": News.nlp_confidence,
     }
     sort_keys = [key for key in (sort_by or ["published_at"]) if key in sort_fields]
     if not sort_keys:
@@ -117,8 +121,25 @@ def create_news(db: Session, payload: NewsCreate):
     data = payload.model_dump() if hasattr(payload, "model_dump") else payload.dict()
     related_symbols = data.pop("related_symbols", None)
     related_sectors = data.pop("related_sectors", None)
+    event_type = data.pop("event_type", None)
+    event_tags = data.pop("event_tags", None)
+    themes = data.pop("themes", None)
+    impact_direction = data.pop("impact_direction", None)
+    nlp_confidence = data.pop("nlp_confidence", None)
+    nlp_version = data.pop("nlp_version", None)
+    keywords = data.pop("keywords", None)
     item = News(**data)
     apply_news_relations(item, related_symbols=related_symbols, related_sectors=related_sectors)
+    apply_news_nlp_metadata(
+        item,
+        event_type=event_type,
+        event_tags=event_tags,
+        themes=themes,
+        impact_direction=impact_direction,
+        nlp_confidence=nlp_confidence,
+        nlp_version=nlp_version,
+        keywords=keywords,
+    )
     db.add(item)
     db.commit()
     db.refresh(item)
@@ -133,10 +154,36 @@ def update_news(db: Session, news_id: int, payload: NewsUpdate):
     data = payload.model_dump(exclude_unset=True) if hasattr(payload, "model_dump") else payload.dict(exclude_unset=True)
     related_symbols = data.pop("related_symbols", None) if "related_symbols" in field_set else item.related_symbols
     related_sectors = data.pop("related_sectors", None) if "related_sectors" in field_set else item.related_sectors
+    event_type = data.pop("event_type", None) if "event_type" in field_set else item.event_type
+    event_tags = data.pop("event_tags", None) if "event_tags" in field_set else item.event_tags
+    themes = data.pop("themes", None) if "themes" in field_set else item.themes
+    impact_direction = data.pop("impact_direction", None) if "impact_direction" in field_set else item.impact_direction
+    nlp_confidence = data.pop("nlp_confidence", None) if "nlp_confidence" in field_set else item.nlp_confidence
+    nlp_version = data.pop("nlp_version", None) if "nlp_version" in field_set else item.nlp_version
+    keywords = data.pop("keywords", None) if "keywords" in field_set else item.keywords
     for key, value in data.items():
         setattr(item, key, value)
     if "related_symbols" in field_set or "related_sectors" in field_set:
         apply_news_relations(item, related_symbols=related_symbols, related_sectors=related_sectors)
+    if (
+        "event_type" in field_set
+        or "event_tags" in field_set
+        or "themes" in field_set
+        or "impact_direction" in field_set
+        or "nlp_confidence" in field_set
+        or "nlp_version" in field_set
+        or "keywords" in field_set
+    ):
+        apply_news_nlp_metadata(
+            item,
+            event_type=event_type,
+            event_tags=event_tags,
+            themes=themes,
+            impact_direction=impact_direction,
+            nlp_confidence=nlp_confidence,
+            nlp_version=nlp_version,
+            keywords=keywords,
+        )
     db.commit()
     db.refresh(item)
     return item

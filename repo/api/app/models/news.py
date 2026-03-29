@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String
+from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String
 from sqlalchemy.orm import relationship
 
 from app.models.base import Base
@@ -34,6 +34,13 @@ class News(Base):
     time_bucket = Column(String)
     related_symbols_csv = Column("related_symbols", String)
     related_sectors_csv = Column("related_sectors", String)
+    event_type = Column(String)
+    event_tags_csv = Column("event_tags", String)
+    themes_csv = Column("themes", String)
+    impact_direction = Column(String)
+    nlp_confidence = Column(Float)
+    nlp_version = Column(String)
+    keywords_csv = Column("keywords", String)
 
     related_symbol_rows = relationship(
         "NewsRelatedSymbol",
@@ -61,6 +68,18 @@ class News(Base):
         if self.related_sector_rows:
             return [item.sector for item in self.related_sector_rows if item.sector]
         return _split_csv_values(self.related_sectors_csv)
+
+    @property
+    def event_tags(self) -> list[str]:
+        return _split_csv_values(self.event_tags_csv)
+
+    @property
+    def themes(self) -> list[str]:
+        return _split_csv_values(self.themes_csv)
+
+    @property
+    def keywords(self) -> list[str]:
+        return _split_csv_values(self.keywords_csv)
 
 
 class NewsRelatedSymbol(Base):

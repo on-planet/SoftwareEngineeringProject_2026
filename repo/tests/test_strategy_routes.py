@@ -34,6 +34,7 @@ if "pydantic_settings" not in sys.modules:
     sys.modules["pydantic_settings"] = fake_module
 
 from app.routers.strategy import (
+    get_smoke_butt_backtest_route,
     get_smoke_butt_strategy,
     list_smoke_butt_strategy,
     train_smoke_butt_strategy_route,
@@ -90,6 +91,49 @@ class StrategyRouteTests(unittest.TestCase):
             result = get_smoke_butt_strategy("09988.HK", db=MagicMock())
 
         self.assertIsNone(result)
+
+    def test_backtest_route_returns_payload(self) -> None:
+        payload = {
+            "run": {
+                "id": 8,
+                "strategy_code": "smoke_butt_autogluon",
+                "strategy_name": "AutoGluon Smoke Butt",
+                "as_of": date(2026, 3, 15),
+                "label_horizon": 60,
+                "status": "ready",
+                "model_path": "etl/state/autogluon/run",
+                "train_rows": 88,
+                "scored_rows": 320,
+                "trained_at": datetime(2026, 3, 15, 10, 0, 0),
+                "evaluation": {"rank_ic": 0.19},
+                "leaderboard": [],
+                "feature_importance": [],
+            },
+            "market": "HK",
+            "bucket_count": 5,
+            "windows": [],
+            "confidence": {
+                "validation_rank_ic": 0.19,
+                "validation_mae": 0.12,
+                "validation_rmse": 0.16,
+                "spread_return_20d": 0.08,
+                "spread_return_60d": 0.13,
+                "monotonicity_20d": 1.0,
+                "monotonicity_60d": 0.75,
+                "top_bucket_win_rate_20d": 0.62,
+                "top_bucket_win_rate_60d": 0.68,
+                "period_count_20d": 8,
+                "period_count_60d": 4,
+                "sample_count_20d": 320,
+                "sample_count_60d": 160,
+            },
+        }
+
+        with patch("app.routers.strategy.get_smoke_butt_backtest", return_value=payload):
+            result = get_smoke_butt_backtest_route(market="HK", bucket_count=5, db=MagicMock())
+
+        self.assertEqual(result["market"], "HK")
+        self.assertEqual(result["confidence"]["spread_return_20d"], 0.08)
 
     def test_train_route_maps_dependency_error_to_503(self) -> None:
         with patch("app.routers.strategy.train_smoke_butt_strategy", side_effect=AutoGluonUnavailableError("missing")):

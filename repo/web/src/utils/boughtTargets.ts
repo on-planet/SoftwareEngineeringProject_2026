@@ -11,8 +11,10 @@ export type BoughtTarget = {
   updatedAt: number;
 };
 
-const BOUGHT_TARGETS_KEY = "kiloquant_bought_targets";
-const BOUGHT_TARGETS_KEY_BY_USER_PREFIX = "kiloquant_bought_targets_by_user";
+const BOUGHT_TARGETS_KEY = "quantpulse_bought_targets";
+const BOUGHT_TARGETS_KEY_BY_USER_PREFIX = "quantpulse_bought_targets_by_user";
+const LEGACY_BOUGHT_TARGETS_KEY = "kiloquant_bought_targets";
+const LEGACY_BOUGHT_TARGETS_KEY_BY_USER_PREFIX = "kiloquant_bought_targets_by_user";
 const MAX_BOUGHT_TARGETS = 200;
 
 function canUseStorage() {
@@ -33,6 +35,10 @@ function normalizeUserId(value?: number | null): number | null {
 
 function getScopedKeyByUserId(userId: number) {
   return `${BOUGHT_TARGETS_KEY_BY_USER_PREFIX}:${userId}`;
+}
+
+function getLegacyScopedKeyByUserId(userId: number) {
+  return `${LEGACY_BOUGHT_TARGETS_KEY_BY_USER_PREFIX}:${userId}`;
 }
 
 function resolveScopedKey(explicitUserId?: number | null) {
@@ -160,11 +166,20 @@ function migrateLegacyBoughtTargetsIfNeeded(userId: number) {
     if (window.localStorage.getItem(scopedKey)) {
       return;
     }
-    const legacy = readBoughtTargetsByKey(BOUGHT_TARGETS_KEY);
-    if (legacy.length === 0) {
+    const legacyScoped = readBoughtTargetsByKey(getLegacyScopedKeyByUserId(userId));
+    if (legacyScoped.length > 0) {
+      window.localStorage.setItem(scopedKey, JSON.stringify(legacyScoped));
       return;
     }
-    window.localStorage.setItem(scopedKey, JSON.stringify(legacy));
+    const currentGlobal = readBoughtTargetsByKey(BOUGHT_TARGETS_KEY);
+    if (currentGlobal.length > 0) {
+      window.localStorage.setItem(scopedKey, JSON.stringify(currentGlobal));
+      return;
+    }
+    const legacyGlobal = readBoughtTargetsByKey(LEGACY_BOUGHT_TARGETS_KEY);
+    if (legacyGlobal.length > 0) {
+      window.localStorage.setItem(scopedKey, JSON.stringify(legacyGlobal));
+    }
   } catch {
     // Ignore localStorage failures.
   }
@@ -174,8 +189,17 @@ export function readBoughtTargets(): BoughtTarget[] {
   const { key, userId } = resolveScopedKey();
   if (userId) {
     migrateLegacyBoughtTargetsIfNeeded(userId);
+    return readBoughtTargetsByKey(key);
   }
-  return readBoughtTargetsByKey(key);
+  const current = readBoughtTargetsByKey(key);
+  if (current.length > 0) {
+    return current;
+  }
+  const legacy = readBoughtTargetsByKey(LEGACY_BOUGHT_TARGETS_KEY);
+  if (legacy.length > 0 && canUseStorage()) {
+    window.localStorage.setItem(BOUGHT_TARGETS_KEY, JSON.stringify(legacy));
+  }
+  return legacy;
 }
 
 export function getBoughtTarget(symbol: string): BoughtTarget | null {

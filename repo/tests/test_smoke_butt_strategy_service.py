@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 import json
 from pathlib import Path
+import shutil
 import sys
 import types
 import unittest
@@ -55,12 +56,14 @@ class _FakePredictor:
         self.path = path
         self.problem_type = problem_type
         self.eval_metric = eval_metric
+        self.predict_call_count = 0
 
     def fit(self, **kwargs):
         self.fit_kwargs = kwargs
         return self
 
     def predict(self, data):
+        self.predict_call_count += 1
         frame = pd.DataFrame(data)
         signal = frame.get("profit_quality", 0).fillna(0) - frame.get("ret_120d", 0).fillna(0)
         return pd.Series(signal.astype("float64"), index=frame.index)
@@ -93,8 +96,22 @@ class _FakePredictor:
         )
 
 
+class _LegacyFillnaPredictor:
+    def predict(self, data):
+        frame = pd.DataFrame(data)
+        frame.fillna(0, inplace=True, downcast=False)
+        return pd.Series([0.08] * len(frame), index=frame.index, dtype="float64")
+
+
 class SmokeButtStrategyServiceTests(unittest.TestCase):
     def setUp(self) -> None:
+        self._cache_dir = ROOT / "tests" / ".tmp_smoke_butt_cache"
+        shutil.rmtree(self._cache_dir, ignore_errors=True)
+        self._cache_dir.mkdir(parents=True, exist_ok=True)
+        self._strategy_root_patch = patch.object(service, "_strategy_model_root", return_value=self._cache_dir)
+        self._strategy_root_patch.start()
+        self.addCleanup(self._strategy_root_patch.stop)
+        service._BACKTEST_RESPONSE_CACHE.clear()
         engine = create_engine("sqlite:///:memory:")
         Base.metadata.create_all(
             engine,
@@ -311,6 +328,72 @@ class SmokeButtStrategyServiceTests(unittest.TestCase):
         self.assertEqual(detail["drivers"][0]["display_value"], "5.42%")
         self.assertAlmostEqual(detail["feature_values"][0]["value"], 0.05417, places=5)
         self.assertEqual(detail["feature_values"][0]["display_value"], "5.42%")
+
+    def test_backtest_returns_group_metrics_for_20_and_60_day_windows(self) -> None:
+        with patch.object(service, "_load_tabular_predictor", return_value=_FakePredictor), patch.object(
+            service, "MIN_TRAIN_ROWS", 4
+        ):
+            service.train_smoke_butt_strategy(
+                self.db,
+                as_of=date(2026, 3, 15),
+                sample_step=20,
+                time_limit_seconds=30,
+                force_retrain=True,
+            )
+
+        predictor = _FakePredictor(
+            label=service.TARGET_COLUMN,
+            path="tmp",
+            problem_type="regression",
+            eval_metric="mean_absolute_error",
+        )
+        with patch.object(service, "_load_trained_predictor", return_value=predictor):
+            payload = service.get_smoke_butt_backtest(self.db, bucket_count=4)
+
+        self.assertIsNotNone(payload)
+        self.assertEqual(payload["bucket_count"], 4)
+        self.assertEqual(len(payload["windows"]), 2)
+        twenty_day = next(item for item in payload["windows"] if item["horizon_days"] == 20)
+        sixty_day = next(item for item in payload["windows"] if item["horizon_days"] == 60)
+        self.assertEqual(len(twenty_day["buckets"]), 4)
+        self.assertEqual(len(sixty_day["buckets"]), 4)
+        self.assertGreater(twenty_day["summary"]["period_count"], 0)
+        self.assertGreater(sixty_day["summary"]["period_count"], 0)
+        self.assertIn("validation_rank_ic", payload["confidence"])
+        self.assertIsNotNone(twenty_day["buckets"][0]["curve"])
+        self.assertEqual(predictor.predict_call_count, 1)
+
+    def test_attach_predicted_return_supports_legacy_fillna_downcast_calls(self) -> None:
+        feature_frame = pd.DataFrame(
+            [
+                {
+                    "market": "A",
+                    "sector": "Bank",
+                    "ret_20d": 0.01,
+                    "ret_60d": 0.02,
+                    "ret_120d": None,
+                    "volatility_20d": 0.03,
+                    "volatility_60d": 0.05,
+                    "drawdown_120d": -0.04,
+                    "rebound_from_low_120d": 0.06,
+                    "volume_ratio_20d": 1.1,
+                    "roe": 0.12,
+                    "debt_ratio": 0.41,
+                    "profit_quality": 1.3,
+                    "revenue_growth": 0.08,
+                    "net_income_growth": 0.09,
+                    "cash_flow_margin": 0.11,
+                    "financial_age_days": 30.0,
+                    "event_count_90d": 1,
+                    "research_count_180d": 2,
+                    "buyback_count_180d": 0,
+                }
+            ]
+        )
+
+        result = service._attach_predicted_return(feature_frame, _LegacyFillnaPredictor())
+
+        self.assertAlmostEqual(result.loc[0, "predicted_return"], 0.08, places=6)
 
 
 if __name__ == "__main__":

@@ -5,14 +5,13 @@ from datetime import date
 from typing import List
 import os
 
-from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
-from sqlalchemy.orm import sessionmaker
 
 from app.models.daily_prices import DailyPrice
 from etl.loaders.redis_cache import cache_risk_series, cache_indicator
 from etl.transformers.indicators import calc_max_drawdown, calc_volatility, calc_ma, calc_rsi
 from etl.utils.logging import get_logger
+from etl.utils.db_pool import get_session_factory
 
 LOGGER = get_logger(__name__)
 
@@ -123,6 +122,20 @@ def run_metrics_cache_job(
     end: date | None = None,
     workers: int | None = None,
 ) -> int:
+    """
+    运行指标缓存任务。
+    
+    优化：使用共享的数据库连接池，避免为每次调用创建新引擎。
+    
+    Args:
+        database_url: 数据库连接字符串
+        symbols: 需要处理的股票代码列表
+        end: 结束日期
+        workers: 并行工作线程数
+    
+    Returns:
+        int: 成功处理的股票数量
+    """
     unique_symbols: list[str] = []
     seen: set[str] = set()
     for symbol in symbols:
@@ -135,31 +148,45 @@ def run_metrics_cache_job(
         return 0
 
     max_workers = max(1, workers or int(os.getenv("METRICS_CACHE_WORKERS", "4")))
-    engine = create_engine(database_url, pool_pre_ping=True)
-    session_factory = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    
+    # 优化：使用共享连接池，根据并行度调整池大小
+    pool_size = max(max_workers + 2, 5)
+    max_overflow = max(max_workers, 5)
+    
+    session_factory = get_session_factory(
+        database_url,
+        pool_size=pool_size,
+        max_overflow=max_overflow,
+    )
+    
     processed = 0
-    try:
-        if max_workers <= 1 or len(unique_symbols) == 1:
-            for symbol in unique_symbols:
-                _run_symbol_metrics(session_factory, symbol, end)
-                processed += 1
-            return processed
-
-        LOGGER.info("metrics_cache_job workers=%s symbols=%s end=%s", max_workers, len(unique_symbols), end)
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_map = {
-                executor.submit(_run_symbol_metrics, session_factory, symbol, end): symbol
-                for symbol in unique_symbols
-            }
-            for done, future in enumerate(as_completed(future_map), start=1):
-                symbol = future_map[future]
-                try:
-                    future.result()
-                    processed += 1
-                except Exception as exc:
-                    LOGGER.warning("metrics_cache_job failed [%s]: %s", symbol, exc)
-                if done % 100 == 0 or done >= len(unique_symbols):
-                    LOGGER.info("metrics_cache_job progress %s/%s end=%s", done, len(unique_symbols), end)
+    
+    if max_workers <= 1 or len(unique_symbols) == 1:
+        for symbol in unique_symbols:
+            _run_symbol_metrics(session_factory, symbol, end)
+            processed += 1
         return processed
-    finally:
-        engine.dispose()
+
+    LOGGER.info(
+        "metrics_cache_job workers=%s symbols=%s end=%s pool_size=%s max_overflow=%s",
+        max_workers,
+        len(unique_symbols),
+        end,
+        pool_size,
+        max_overflow,
+    )
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_map = {
+            executor.submit(_run_symbol_metrics, session_factory, symbol, end): symbol
+            for symbol in unique_symbols
+        }
+        for done, future in enumerate(as_completed(future_map), start=1):
+            symbol = future_map[future]
+            try:
+                future.result()
+                processed += 1
+            except Exception as exc:
+                LOGGER.warning("metrics_cache_job failed [%s]: %s", symbol, exc)
+            if done % 100 == 0 or done >= len(unique_symbols):
+                LOGGER.info("metrics_cache_job progress %s/%s end=%s", done, len(unique_symbols), end)
+    return processed

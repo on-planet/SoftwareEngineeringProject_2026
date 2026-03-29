@@ -1,32 +1,39 @@
 import dynamic from "next/dynamic";
-import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/router";
+import React, { useEffect, useMemo, useState } from "react";
 
 import { StockFundamental } from "../../components/StockFundamental";
 import { StockSmokeButtCard } from "../../components/StockSmokeButtCard";
-import { getMyWatchTargets, upsertMyWatchTarget } from "../../services/api";
+import { useApiQuery } from "../../hooks/useApiQuery";
+import {
+  buildMyWatchTargetsQueryKey,
+  getMyWatchTargets,
+  getUserScopedQueryOptions,
+  primeApiQuery,
+  upsertMyWatchTarget,
+} from "../../services/api";
 import { AUTH_CHANGED_EVENT, getAuthToken } from "../../utils/auth";
 import { addWatchTarget, hasWatchTarget, readWatchTargets, replaceWatchTargets } from "../../utils/watchTargets";
 
 const StockKlinePanel = dynamic(
   () => import("../../components/StockKlinePanel").then((mod) => mod.StockKlinePanel),
-  { ssr: false, loading: () => <div className="card helper">K 线加载中...</div> }
+  { ssr: false, loading: () => <div className="card helper">Loading K line...</div> },
 );
 const StockIndicatorsChart = dynamic(
   () => import("../../components/StockIndicatorsChart").then((mod) => mod.StockIndicatorsChart),
-  { ssr: false, loading: () => <div className="helper">技术指标加载中...</div> }
+  { ssr: false, loading: () => <div className="helper">Loading indicators...</div> },
 );
 const StockRiskChart = dynamic(
   () => import("../../components/StockRiskChart").then((mod) => mod.StockRiskChart),
-  { ssr: false, loading: () => <div className="helper">风险分析加载中...</div> }
+  { ssr: false, loading: () => <div className="helper">Loading risk view...</div> },
 );
 const StockFinancialTable = dynamic(
   () => import("../../components/StockFinancialTable").then((mod) => mod.StockFinancialTable),
-  { ssr: false, loading: () => <div className="helper">财务报表加载中...</div> }
+  { ssr: false, loading: () => <div className="helper">Loading financials...</div> },
 );
 const StockResearchPanel = dynamic(
   () => import("../../components/StockResearchPanel").then((mod) => mod.StockResearchPanel),
-  { ssr: false, loading: () => <div className="helper">研报与业绩预告加载中...</div> }
+  { ssr: false, loading: () => <div className="helper">Loading research...</div> },
 );
 
 type Props = {
@@ -88,10 +95,7 @@ function DeferredSection({
   }, [resetKey]);
 
   useEffect(() => {
-    if (visible) {
-      return;
-    }
-    if (!node) {
+    if (visible || !node) {
       return;
     }
     if (typeof window === "undefined" || typeof IntersectionObserver === "undefined") {
@@ -105,7 +109,7 @@ function DeferredSection({
           observer.disconnect();
         }
       },
-      { rootMargin }
+      { rootMargin },
     );
     observer.observe(node);
     return () => observer.disconnect();
@@ -135,6 +139,15 @@ export default function StockPage({ symbol }: Props) {
   const [watchMessage, setWatchMessage] = useState<string | null>(null);
   const [isWatched, setIsWatched] = useState(false);
   const [authToken, setAuthToken] = useState<string | null>(null);
+  const watchTargetsQueryKey = useMemo(
+    () => (authToken ? buildMyWatchTargetsQueryKey(authToken) : null),
+    [authToken],
+  );
+  const watchTargetsQuery = useApiQuery(
+    watchTargetsQueryKey,
+    () => getMyWatchTargets(authToken as string),
+    getUserScopedQueryOptions("watch-targets"),
+  );
 
   useEffect(() => {
     if (!normalizedRouteSymbol) {
@@ -170,22 +183,13 @@ export default function StockPage({ symbol }: Props) {
     if (!authToken) {
       return;
     }
-    let active = true;
-    void getMyWatchTargets(authToken)
-      .then((items: any[]) => {
-        if (!active) {
-          return;
-        }
-        const remoteSymbols = dedupeSymbols((items || []).map((item) => String(item?.symbol || "")));
-        const merged = dedupeSymbols([...remoteSymbols, ...readWatchTargets()]);
-        const next = replaceWatchTargets(merged);
-        setIsWatched(next.includes(activeSymbol));
-      })
-      .catch(() => undefined);
-    return () => {
-      active = false;
-    };
-  }, [activeSymbol, authToken]);
+    const remoteSymbols = dedupeSymbols(
+      (watchTargetsQuery.data || []).map((item: any) => String(item?.symbol || "")),
+    );
+    const merged = dedupeSymbols([...remoteSymbols, ...readWatchTargets()]);
+    const next = replaceWatchTargets(merged);
+    setIsWatched(next.includes(activeSymbol));
+  }, [activeSymbol, authToken, watchTargetsQuery.data]);
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -201,12 +205,19 @@ export default function StockPage({ symbol }: Props) {
     if (!targetSymbol) {
       return;
     }
-    addWatchTarget(targetSymbol);
+    const nextTargets = addWatchTarget(targetSymbol);
     setIsWatched(true);
-    setWatchMessage(`已加入观察：${targetSymbol}`);
+    setWatchMessage(`Added to watchlist: ${targetSymbol}`);
+    if (watchTargetsQueryKey) {
+      primeApiQuery(
+        watchTargetsQueryKey,
+        nextTargets.map((item) => ({ symbol: item })),
+        getUserScopedQueryOptions("watch-targets"),
+      );
+    }
     if (authToken) {
       void upsertMyWatchTarget(authToken, targetSymbol).catch(() => {
-        setWatchMessage(`已加入本地，云端同步失败：${targetSymbol}`);
+        setWatchMessage(`Saved locally, remote sync failed: ${targetSymbol}`);
       });
     }
   };
@@ -216,8 +227,12 @@ export default function StockPage({ symbol }: Props) {
       <section className="card">
         <div className="page-header">
           <div>
-            <h1 className="page-title">个股详情</h1>
-            <p className="helper">页面优先读取本地缓存并后台刷新，展示实时快照、盘口、多周期 K 线、财报、技术指标、风险和研报信息。</p>
+            <h1 className="page-title">Stock Detail</h1>
+            <p className="helper">
+              The first screen loads critical quote and score data first. K line,
+              financials, research, and charts are deferred until the page is
+              ready.
+            </p>
           </div>
           <form className="toolbar" onSubmit={handleSubmit}>
             <input
@@ -225,13 +240,18 @@ export default function StockPage({ symbol }: Props) {
               type="text"
               value={currentSymbol}
               onChange={(event) => setCurrentSymbol(event.target.value)}
-              placeholder="输入股票代码，例如 600000、000001.SZ、00700.HK"
+              placeholder="Enter symbol, e.g. 600000, 000001.SZ, 0700.HK"
             />
             <button type="submit" className="primary-button">
-              打开详情
+              Open
             </button>
-            <button type="button" className="primary-button" onClick={handleAddWatchTarget} disabled={isWatched}>
-              {isWatched ? "已被观察" : "加入观察"}
+            <button
+              type="button"
+              className="primary-button"
+              onClick={handleAddWatchTarget}
+              disabled={isWatched}
+            >
+              {isWatched ? "Already watched" : "Add to watchlist"}
             </button>
           </form>
           {watchMessage ? <div className="helper">{watchMessage}</div> : null}
@@ -249,16 +269,22 @@ export default function StockPage({ symbol }: Props) {
           </section>
 
           <section>
-            <StockKlinePanel symbol={activeSymbol} />
+            <DeferredSection
+              resetKey={activeSymbol}
+              minHeight={320}
+              placeholder={<div className="card helper">Preparing K line...</div>}
+            >
+              <StockKlinePanel symbol={activeSymbol} />
+            </DeferredSection>
           </section>
 
           <section className="split-grid">
             <div>
-              <h2 className="section-title">技术指标</h2>
+              <h2 className="section-title">Indicators</h2>
               <DeferredSection
                 resetKey={activeSymbol}
                 minHeight={320}
-                placeholder={<div className="card helper">技术指标准备中...</div>}
+                placeholder={<div className="card helper">Preparing indicators...</div>}
               >
                 <div className="card">
                   <StockIndicatorsChart symbol={activeSymbol} />
@@ -266,11 +292,11 @@ export default function StockPage({ symbol }: Props) {
               </DeferredSection>
             </div>
             <div>
-              <h2 className="section-title">风险分析</h2>
+              <h2 className="section-title">Risk</h2>
               <DeferredSection
                 resetKey={activeSymbol}
                 minHeight={320}
-                placeholder={<div className="card helper">风险分析准备中...</div>}
+                placeholder={<div className="card helper">Preparing risk view...</div>}
               >
                 <div className="card">
                   <StockRiskChart symbol={activeSymbol} />
@@ -280,11 +306,11 @@ export default function StockPage({ symbol }: Props) {
           </section>
 
           <section>
-            <h2 className="section-title">财务报表</h2>
+            <h2 className="section-title">Financials</h2>
             <DeferredSection
               resetKey={activeSymbol}
               minHeight={320}
-              placeholder={<div className="card helper">财务报表准备中...</div>}
+              placeholder={<div className="card helper">Preparing financials...</div>}
             >
               <div className="card">
                 <StockFinancialTable symbol={activeSymbol} />
@@ -293,11 +319,11 @@ export default function StockPage({ symbol }: Props) {
           </section>
 
           <section>
-            <h2 className="section-title">研报与业绩预告</h2>
+            <h2 className="section-title">Research</h2>
             <DeferredSection
               resetKey={activeSymbol}
               minHeight={320}
-              placeholder={<div className="card helper">研报与业绩预告准备中...</div>}
+              placeholder={<div className="card helper">Preparing research...</div>}
             >
               <div className="card">
                 <StockResearchPanel symbol={activeSymbol} />
@@ -307,7 +333,7 @@ export default function StockPage({ symbol }: Props) {
         </>
       ) : (
         <section>
-          <div className="card helper">正在读取股票代码...</div>
+          <div className="card helper">Loading symbol...</div>
         </section>
       )}
     </div>

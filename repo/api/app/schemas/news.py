@@ -19,6 +19,13 @@ class NewsOut(BaseModel):
     time_bucket: str | None = None
     related_symbols: list[str] = Field(default_factory=list)
     related_sectors: list[str] = Field(default_factory=list)
+    event_type: str | None = None
+    event_tags: list[str] = Field(default_factory=list)
+    themes: list[str] = Field(default_factory=list)
+    impact_direction: str | None = None
+    nlp_confidence: float | None = None
+    nlp_version: str | None = None
+    keywords: list[str] = Field(default_factory=list)
 
     class Config:
         from_attributes = True
@@ -37,6 +44,13 @@ class NewsCreate(BaseModel):
     time_bucket: str | None = None
     related_symbols: list[str] | str | None = None
     related_sectors: list[str] | str | None = None
+    event_type: str | None = None
+    event_tags: list[str] | str | None = None
+    themes: list[str] | str | None = None
+    impact_direction: str | None = None
+    nlp_confidence: float | None = None
+    nlp_version: str | None = None
+    keywords: list[str] | str | None = None
 
 
 class NewsUpdate(BaseModel):
@@ -51,3 +65,10 @@ class NewsUpdate(BaseModel):
     time_bucket: str | None = None
     related_symbols: list[str] | str | None = None
     related_sectors: list[str] | str | None = None
+    event_type: str | None = None
+    event_tags: list[str] | str | None = None
+    themes: list[str] | str | None = None
+    impact_direction: str | None = None
+    nlp_confidence: float | None = None
+    nlp_version: str | None = None
+    keywords: list[str] | str | None = None

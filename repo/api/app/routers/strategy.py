@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.schemas.strategy import (
+    SmokeButtBacktestOut,
     SmokeButtDetailOut,
     SmokeButtPageOut,
     SmokeButtTrainIn,
@@ -13,6 +14,7 @@ from app.schemas.strategy import (
 from app.services.smoke_butt_strategy_service import (
     AutoGluonUnavailableError,
     SmokeButtDataError,
+    get_smoke_butt_backtest,
     get_smoke_butt_detail,
     list_smoke_butt_candidates,
     train_smoke_butt_strategy,
@@ -37,6 +39,20 @@ def list_smoke_butt_strategy(
         offset=paging["offset"],
     )
     return {"items": items, "total": total, "limit": paging["limit"], "offset": paging["offset"], "run": run}
+
+
+@router.get("/strategy/smoke-butt/backtest", response_model=SmokeButtBacktestOut | None)
+def get_smoke_butt_backtest_route(
+    market: str | None = Query(None, pattern="^(A|HK|US)$"),
+    bucket_count: int = Query(5, ge=3, le=10),
+    db: Session = Depends(get_db),
+):
+    try:
+        return get_smoke_butt_backtest(db, market=market, bucket_count=bucket_count)
+    except AutoGluonUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except SmokeButtDataError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/strategy/smoke-butt/{symbol}", response_model=SmokeButtDetailOut | None)

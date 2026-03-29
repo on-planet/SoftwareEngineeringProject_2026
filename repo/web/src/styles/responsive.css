@@ -1,0 +1,25 @@
+@media (max-width: 768px) {
+  .page {
+    padding: 24px 16px 36px;
+  }
+
+  .app-header {
+    padding: 14px 16px;
+  }
+
+  .index-market-switch {
+    width: 100%;
+  }
+
+  .index-market-button {
+    flex: 1;
+  }
+
+  .data-table {
+    min-width: 640px;
+  }
+
+  .sticky-filter-bar {
+    top: 72px;
+  }
+}

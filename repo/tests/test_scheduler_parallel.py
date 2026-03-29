@@ -43,10 +43,10 @@ class SchedulerParallelTests(unittest.TestCase):
             patch.object(scheduler, "delete_insider_trade_before") as delete_insider_trade_mock,
             patch.object(scheduler, "delete_index_constituents_before") as delete_index_constituents_mock,
         ):
-            scheduler._cleanup_retention(date(2026, 3, 16), days=7)
+            scheduler._cleanup_retention(date(2026, 3, 16), news_event_days=30, retention_days=7)
 
-        delete_news_mock.assert_called_once_with(date(2026, 3, 10))
-        delete_events_mock.assert_called_once_with(date(2026, 3, 10))
+        delete_news_mock.assert_called_once_with(date(2026, 2, 15))
+        delete_events_mock.assert_called_once_with(date(2026, 2, 15))
         delete_buyback_mock.assert_called_once_with(date(2026, 3, 10))
         delete_insider_trade_mock.assert_called_once_with(date(2026, 3, 10))
         delete_index_constituents_mock.assert_called_once_with(date(2026, 3, 10))
@@ -64,6 +64,8 @@ class SchedulerParallelTests(unittest.TestCase):
                 "etl": {
                     "parallel_workers": 2,
                     "incremental_lookback_days": 0,
+                    "retention_days": 7,
+                    "news_event_retention_days": 30,
                     "schedules": {},
                 }
             }
@@ -82,7 +84,7 @@ class SchedulerParallelTests(unittest.TestCase):
             patch.object(scheduler, "to_t1", return_value=date(2026, 3, 16)),
             patch.object(scheduler, "_should_skip_job", return_value=False),
             patch.object(scheduler, "_run_job_stage", side_effect=fake_run_job_stage),
-            patch.object(scheduler, "_cleanup_retention"),
+            patch.object(scheduler, "_cleanup_retention") as cleanup_mock,
             patch.object(scheduler, "list_updated_symbols", return_value=[]),
         ):
             scheduler.run_once(as_of=date(2026, 3, 17))
@@ -92,6 +94,7 @@ class SchedulerParallelTests(unittest.TestCase):
         self.assertIn("macro_job", source_jobs)
         self.assertNotIn("worldbank_macro_job", source_jobs)
         self.assertNotIn("worldbank_macro_job", background_jobs)
+        cleanup_mock.assert_called_once_with(date(2026, 3, 16), news_event_days=30, retention_days=7)
 
     def test_should_not_skip_macro_job_when_full_snapshot_incomplete(self) -> None:
         with (

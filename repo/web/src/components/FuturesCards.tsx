@@ -25,6 +25,10 @@ type FuturesPage = {
   offset: number;
 };
 
+type FuturesCardsProps = {
+  initialItems?: FuturesItem[];
+};
+
 const FUTURES_CARDS_CACHE_TTL_MS = 10 * 60 * 1000;
 
 function buildFuturesCardsCacheKey() {
@@ -45,7 +49,7 @@ function toLatestBySymbol(items: FuturesItem[]): FuturesItem[] {
   return sortPreferredFutures(Array.from(map.values()));
 }
 
-export function FuturesCards() {
+export function FuturesCards({ initialItems }: FuturesCardsProps) {
   const [items, setItems] = useState<FuturesItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -53,6 +57,16 @@ export function FuturesCards() {
   useEffect(() => {
     let active = true;
     const cacheKey = buildFuturesCardsCacheKey();
+    if (initialItems !== undefined) {
+      const latest = toLatestBySymbol(initialItems);
+      setItems(latest);
+      setLoading(false);
+      setError(null);
+      writePersistentCache(cacheKey, latest);
+      return () => {
+        active = false;
+      };
+    }
     const cachedItems = readPersistentCache<FuturesItem[]>(cacheKey, FUTURES_CARDS_CACHE_TTL_MS);
     if (cachedItems?.length) {
       setItems(cachedItems);
@@ -85,7 +99,7 @@ export function FuturesCards() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [initialItems]);
 
   const rows = useMemo(() => items.slice(0, 8), [items]);
 

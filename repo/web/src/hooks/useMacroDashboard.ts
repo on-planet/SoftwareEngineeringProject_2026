@@ -7,6 +7,8 @@ import {
   FxPairQuoteItem,
   FxSpotQuoteItem,
   FxSwapQuoteItem,
+  buildMacroSeriesQueryKey,
+  buildMacroSnapshotQueryKey,
   getBondMarketQuotes,
   getBondMarketTrades,
   getFxPairQuotes,
@@ -14,15 +16,13 @@ import {
   getFxSwapQuotes,
   getMacroSeries,
   getMacroSnapshot,
+  getMacroSeriesQueryOptions,
+  getMacroSnapshotQueryOptions,
 } from "../services/api";
-import { readPersistentCache, writePersistentCache } from "../utils/persistentCache";
+import { useApiQuery } from "./useApiQuery";
 import {
-  buildMacroSeriesCacheKey,
   buildMacroSeriesChartOption,
-  buildMacroSnapshotCacheKey,
   buildSnapshotCard,
-  MACRO_SERIES_CACHE_TTL_MS,
-  MACRO_SNAPSHOT_CACHE_TTL_MS,
   MacroItem,
   MacroSeries,
   paginate,
@@ -31,6 +31,8 @@ import {
   SnapshotCard,
   SortOrder,
 } from "../components/macro/macroUtils";
+
+const REFERENCE_PANEL_LIMIT = 60;
 
 async function loadLatestMacroSnapshotItems(): Promise<MacroItem[]> {
   const merged: MacroItem[] = [];
@@ -110,12 +112,7 @@ function resolveReferencePanel<T>(result: PromiseSettledResult<ApiPage<T>>): Mac
 export type MacroDashboardModel = ReturnType<typeof useMacroDashboard>;
 
 export function useMacroDashboard() {
-  const [snapshotItems, setSnapshotItems] = useState<MacroItem[]>([]);
   const [selectedKey, setSelectedKey] = useState("");
-  const [series, setSeries] = useState<MacroSeries | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [seriesLoading, setSeriesLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
   const [search, setSearch] = useState("");
@@ -125,47 +122,24 @@ export function useMacroDashboard() {
   const [sort, setSort] = useState<SortOrder>("desc");
   const [referencePanels, setReferencePanels] = useState<MacroReferencePanels>(createReferencePanels);
 
-  useEffect(() => {
-    let active = true;
-    const cachedItems = readPersistentCache<MacroItem[]>(buildMacroSnapshotCacheKey(), MACRO_SNAPSHOT_CACHE_TTL_MS);
-    if (cachedItems?.length) {
-      setSnapshotItems(cachedItems);
-      setLoading(false);
-    } else {
-      setLoading(true);
-    }
-
-    loadLatestMacroSnapshotItems()
-      .then((items) => {
-        if (!active) return;
-        setSnapshotItems(items);
-        writePersistentCache(buildMacroSnapshotCacheKey(), items);
-        setError(null);
-      })
-      .catch((err: Error) => {
-        if (!active) return;
-        setSnapshotItems([]);
-        setError(err.message || "宏观快照加载失败");
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-
-    return () => {
-      active = false;
-    };
-  }, []);
+  const snapshotCacheKey = useMemo(() => buildMacroSnapshotQueryKey(), []);
+  const snapshotQuery = useApiQuery<MacroItem[]>(
+    snapshotCacheKey,
+    loadLatestMacroSnapshotItems,
+    getMacroSnapshotQueryOptions(snapshotCacheKey),
+  );
+  const snapshotItems = snapshotQuery.data ?? [];
 
   useEffect(() => {
     let active = true;
     setReferencePanels(createReferencePanels());
 
     Promise.allSettled([
-      getBondMarketQuotes({ limit: 6, sort: "asc" }),
-      getBondMarketTrades({ limit: 6, sort: "asc" }),
-      getFxSpotQuotes({ limit: 8, sort: "asc" }),
-      getFxSwapQuotes({ limit: 8, sort: "asc" }),
-      getFxPairQuotes({ limit: 8, sort: "asc" }),
+      getBondMarketQuotes({ limit: REFERENCE_PANEL_LIMIT, sort: "asc" }),
+      getBondMarketTrades({ limit: REFERENCE_PANEL_LIMIT, sort: "asc" }),
+      getFxSpotQuotes({ limit: REFERENCE_PANEL_LIMIT, sort: "asc" }),
+      getFxSwapQuotes({ limit: REFERENCE_PANEL_LIMIT, sort: "asc" }),
+      getFxPairQuotes({ limit: REFERENCE_PANEL_LIMIT, sort: "asc" }),
     ]).then((results) => {
       if (!active) {
         return;
@@ -206,7 +180,9 @@ export function useMacroDashboard() {
 
   useEffect(() => {
     if (!visibleCards.length) {
-      if (selectedKey) setSelectedKey("");
+      if (selectedKey) {
+        setSelectedKey("");
+      }
       return;
     }
     if (!visibleCards.some((item) => item.key === selectedKey)) {
@@ -218,46 +194,20 @@ export function useMacroDashboard() {
     setSnapshotPage(1);
   }, [country, family, search, sort]);
 
-  useEffect(() => {
-    if (!selectedKey) {
-      setSeries(null);
-      setSeriesLoading(false);
-      return;
-    }
-
-    let active = true;
-    const cacheKey = buildMacroSeriesCacheKey(selectedKey, start, end);
-    const cachedSeries = readPersistentCache<MacroSeries>(cacheKey, MACRO_SERIES_CACHE_TTL_MS);
-    if (cachedSeries?.items?.length) {
-      setSeries(cachedSeries);
-      setSeriesLoading(false);
-    } else {
-      setSeriesLoading(true);
-    }
-
-    getMacroSeries(selectedKey, {
-      start: start || undefined,
-      end: end || undefined,
-    })
-      .then((payload) => {
-        if (!active) return;
-        setSeries(payload as MacroSeries);
-        writePersistentCache(cacheKey, payload as MacroSeries);
-        setError(null);
-      })
-      .catch((err: Error) => {
-        if (!active) return;
-        setSeries(null);
-        setError(err.message || "宏观序列加载失败");
-      })
-      .finally(() => {
-        if (active) setSeriesLoading(false);
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [end, selectedKey, start]);
+  const seriesCacheKey = useMemo(
+    () => (selectedKey ? buildMacroSeriesQueryKey(selectedKey, start, end) : null),
+    [end, selectedKey, start],
+  );
+  const seriesQuery = useApiQuery<MacroSeries>(
+    seriesCacheKey,
+    () =>
+      getMacroSeries(selectedKey, {
+        start: start || undefined,
+        end: end || undefined,
+      }) as Promise<MacroSeries>,
+    seriesCacheKey ? getMacroSeriesQueryOptions(seriesCacheKey) : undefined,
+  );
+  const series = seriesQuery.data ?? null;
 
   const countryOptions = useMemo(
     () => Array.from(new Set(cards.map((item) => item.country))).sort((left, right) => left.localeCompare(right)),
@@ -286,11 +236,16 @@ export function useMacroDashboard() {
   );
 
   const chartOption = useMemo(() => {
-    if (!series || !series.items.length || !selectedCard) return null;
+    if (!series || !series.items.length || !selectedCard) {
+      return null;
+    }
     return buildMacroSeriesChartOption(selectedCard, series);
   }, [selectedCard, series]);
 
   const latestPoint = series?.items?.[series.items.length - 1] ?? null;
+  const loading = snapshotQuery.isLoading && snapshotItems.length === 0;
+  const seriesLoading = Boolean(selectedKey) && seriesQuery.isLoading && !series;
+  const error = snapshotQuery.error?.message ?? seriesQuery.error?.message ?? null;
 
   return {
     loading,

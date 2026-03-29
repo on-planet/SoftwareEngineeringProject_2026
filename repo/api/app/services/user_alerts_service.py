@@ -129,6 +129,73 @@ def _build_base_rule_out(item: UserAlertRule) -> AlertRuleOut:
     )
 
 
+def _build_inactive_explanation() -> str:
+    return "This rule is paused, so it is not evaluating fresh market, event, or research data."
+
+
+def _build_price_explanation(
+    item: UserAlertRule,
+    *,
+    current: float,
+    threshold: float,
+    triggered: bool,
+) -> str:
+    symbol = normalize_symbol(item.symbol)
+    operator_text = ">=" if item.price_operator == "gte" else "<="
+    if triggered:
+        return (
+            f"{symbol} last traded at {current:.2f}, which crossed the threshold "
+            f"{operator_text} {threshold:.2f}, so the price alert is active."
+        )
+    gap = (threshold - current) if item.price_operator == "gte" else (current - threshold)
+    return (
+        f"{symbol} last traded at {current:.2f} and has not crossed the threshold "
+        f"{operator_text} {threshold:.2f} yet; the remaining gap is {abs(gap):.2f}."
+    )
+
+
+def _build_event_explanation(item: UserAlertRule, latest) -> str:
+    symbol = normalize_symbol(item.symbol)
+    event_type = str(item.event_type or "event").strip() or "event"
+    if latest is None:
+        return f"No {event_type} was found for {symbol} in the last {int(item.lookback_days or 0)} days."
+    context = str(latest.title or latest.type or event_type).strip() or event_type
+    return (
+        f"{symbol} posted a matching {latest.type or event_type} item on {latest.date.isoformat()} "
+        f"({context}), so the event alert is triggered."
+    )
+
+
+def _earnings_label(research_kind: str) -> str:
+    if research_kind == "report":
+        return "research report"
+    if research_kind == "earning_forecast":
+        return "earnings forecast"
+    return "research update"
+
+
+def _build_earnings_explanation(
+    item: UserAlertRule,
+    *,
+    research_kind: str,
+    latest_kind: str | None = None,
+    latest_raw: dict | None = None,
+    latest_published_at: datetime | None = None,
+) -> str:
+    symbol = normalize_symbol(item.symbol)
+    if latest_kind is None or latest_published_at is None or latest_raw is None:
+        return (
+            f"No new {_earnings_label(research_kind)} for {symbol} was published in the last "
+            f"{int(item.lookback_days or 0)} days."
+        )
+    label = _earnings_label(latest_kind)
+    title = str(latest_raw.get("title") or label).strip()
+    return (
+        f"{symbol} received a new {label} on {latest_published_at.date().isoformat()} "
+        f"({title}), so the earnings alert is triggered."
+    )
+
+
 def _evaluate_price_rule(item: UserAlertRule, price_payload: dict | None) -> AlertRuleEvaluationOut:
     rule = _build_base_rule_out(item)
     if not item.is_active:
@@ -136,7 +203,8 @@ def _evaluate_price_rule(item: UserAlertRule, price_payload: dict | None) -> Ale
             **rule.model_dump(),
             triggered=False,
             status="inactive",
-            status_message="规则已停用",
+            status_message="Rule paused",
+            explanation=_build_inactive_explanation(),
         )
     current = None
     if isinstance(price_payload, dict):
@@ -150,7 +218,8 @@ def _evaluate_price_rule(item: UserAlertRule, price_payload: dict | None) -> Ale
             **rule.model_dump(),
             triggered=False,
             status="unavailable",
-            status_message="缺少最新价格，暂时无法评估",
+            status_message="Latest price unavailable",
+            explanation="The latest price snapshot is unavailable, so this price alert cannot be evaluated yet.",
         )
     threshold = float(item.threshold or 0)
     triggered = current >= threshold if item.price_operator == "gte" else current <= threshold
@@ -159,7 +228,8 @@ def _evaluate_price_rule(item: UserAlertRule, price_payload: dict | None) -> Ale
         **rule.model_dump(),
         triggered=triggered,
         status="triggered" if triggered else "watching",
-        status_message=f"最新价 {current:.2f} {operator_text} {threshold:.2f}",
+        status_message=f"Last price {current:.2f} {operator_text} {threshold:.2f}",
+        explanation=_build_price_explanation(item, current=current, threshold=threshold, triggered=triggered),
         latest_value=current,
         matched_at=datetime.now(UTC).isoformat() if triggered else None,
     )
@@ -172,7 +242,8 @@ def _evaluate_event_rule(db: Session, item: UserAlertRule) -> AlertRuleEvaluatio
             **rule.model_dump(),
             triggered=False,
             status="inactive",
-            status_message="规则已停用",
+            status_message="Rule paused",
+            explanation=_build_inactive_explanation(),
         )
     end = date.today()
     start = end - timedelta(days=max(int(item.lookback_days or 1) - 1, 0))
@@ -192,13 +263,15 @@ def _evaluate_event_rule(db: Session, item: UserAlertRule) -> AlertRuleEvaluatio
             **rule.model_dump(),
             triggered=False,
             status="watching",
-            status_message=f"最近 {item.lookback_days} 天未发现目标事件",
+            status_message=f"No matching event in {item.lookback_days}d",
+            explanation=_build_event_explanation(item, latest=None),
         )
     return AlertRuleEvaluationOut(
         **rule.model_dump(),
         triggered=True,
         status="triggered",
-        status_message=f"最近 {item.lookback_days} 天出现 {latest.type} 事件",
+        status_message=f"Matched event {latest.type}",
+        explanation=_build_event_explanation(item, latest=latest),
         matched_at=latest.date.isoformat(),
         context_title=latest.title,
     )
@@ -211,7 +284,8 @@ def _evaluate_earnings_rule(item: UserAlertRule) -> AlertRuleEvaluationOut:
             **rule.model_dump(),
             triggered=False,
             status="inactive",
-            status_message="规则已停用",
+            status_message="Rule paused",
+            explanation=_build_inactive_explanation(),
         )
     payload = get_stock_research(normalize_symbol(item.symbol), report_limit=10, forecast_limit=10) or {}
     research_kind = str(item.research_kind or "all")
@@ -229,22 +303,28 @@ def _evaluate_earnings_rule(item: UserAlertRule) -> AlertRuleEvaluationOut:
             candidates.append((kind, raw, published_at))
     candidates.sort(key=lambda item_tuple: item_tuple[2], reverse=True)
     if not candidates:
-        label = "财报或盈利预测" if research_kind == "all" else ("财报" if research_kind == "report" else "盈利预测")
         return AlertRuleEvaluationOut(
             **rule.model_dump(),
             triggered=False,
             status="watching",
-            status_message=f"最近 {item.lookback_days} 天未出现新的{label}",
+            status_message=f"No new {_earnings_label(research_kind)} in {item.lookback_days}d",
+            explanation=_build_earnings_explanation(item, research_kind=research_kind),
         )
     latest_kind, latest_raw, latest_published_at = candidates[0]
-    label = "财报" if latest_kind == "report" else "盈利预测"
     return AlertRuleEvaluationOut(
         **rule.model_dump(),
         triggered=True,
         status="triggered",
-        status_message=f"最近 {item.lookback_days} 天出现新的{label}",
+        status_message=f"New {_earnings_label(latest_kind)} detected",
+        explanation=_build_earnings_explanation(
+            item,
+            research_kind=research_kind,
+            latest_kind=latest_kind,
+            latest_raw=latest_raw,
+            latest_published_at=latest_published_at,
+        ),
         matched_at=latest_published_at.isoformat(),
-        context_title=str(latest_raw.get("title") or label),
+        context_title=str(latest_raw.get("title") or _earnings_label(latest_kind)),
     )
 
 

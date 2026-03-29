@@ -8,7 +8,6 @@ import os
 from pathlib import Path
 from typing import Callable
 
-from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from etl.config.loader import load_config
@@ -37,9 +36,12 @@ from etl.utils.dates import to_t1
 from etl.utils.logging import get_logger
 from etl.utils.alerting import notify_error, notify_batch
 from etl.utils.state import get_job_state, update_job_state
+from etl.utils.db_pool import create_session
 
 LOGGER = get_logger(__name__)
 LOCK_PATH = Path(__file__).resolve().parents[1] / "state" / "etl.lock"
+DEFAULT_RETENTION_DAYS = 7
+DEFAULT_NEWS_EVENT_RETENTION_DAYS = 30
 
 
 @dataclass
@@ -57,11 +59,37 @@ class PlannedJob:
     end: date
 
 
-def _get_db_session(database_url: str | None) -> Session:
+def _get_db_session(
+    database_url: str | None,
+    *,
+    pool_size: int = 5,
+    max_overflow: int = 5,
+    pool_timeout: int = 30,
+    pool_recycle: int = 1800,
+) -> Session:
+    """
+    创建数据库 Session，使用共享的连接池。
+    
+    Args:
+        database_url: 数据库连接字符串
+        pool_size: 连接池大小
+        max_overflow: 最大溢出连接数
+        pool_timeout: 连接超时时间（秒）
+        pool_recycle: 连接回收时间（秒）
+    
+    Returns:
+        Session: SQLAlchemy Session 实例
+    """
     if not database_url:
         raise ValueError("postgres_url 未配置")
-    engine = create_engine(database_url, pool_pre_ping=True)
-    return Session(bind=engine)
+    
+    return create_session(
+        database_url,
+        pool_size=pool_size,
+        max_overflow=max_overflow,
+        pool_timeout=pool_timeout,
+        pool_recycle=pool_recycle,
+    )
 
 
 def _parse_time(value: str) -> time:
@@ -155,13 +183,19 @@ def _should_skip_job(
     return state.last_success_date is not None and state.last_success_date >= job_end
 
 
-def _cleanup_retention(target_date: date, *, days: int = 7) -> None:
-    cutoff = target_date - timedelta(days=days - 1)
-    delete_news_before(cutoff)
-    delete_events_before(cutoff)
-    delete_buyback_before(cutoff)
-    delete_insider_trade_before(cutoff)
-    delete_index_constituents_before(cutoff)
+def _cleanup_retention(
+    target_date: date,
+    *,
+    news_event_days: int = DEFAULT_NEWS_EVENT_RETENTION_DAYS,
+    retention_days: int = DEFAULT_RETENTION_DAYS,
+) -> None:
+    news_event_cutoff = target_date - timedelta(days=news_event_days - 1)
+    general_cutoff = target_date - timedelta(days=retention_days - 1)
+    delete_news_before(news_event_cutoff)
+    delete_events_before(news_event_cutoff)
+    delete_buyback_before(general_cutoff)
+    delete_insider_trade_before(general_cutoff)
+    delete_index_constituents_before(general_cutoff)
 
 
 def _plan_jobs(
@@ -246,10 +280,25 @@ def run_once(
         return
     try:
         config = load_config(Path(__file__).parent / "config" / "settings.yml")
-        db_session = _get_db_session(config.postgres_url)
+        
+        # 优化：根据并行工作线程数动态调整连接池大小
+        parallel_workers = max(1, int(config.raw.get("etl", {}).get("parallel_workers", 4)))
+        pool_size = max(parallel_workers + 2, config.postgres_pool_size)
+        max_overflow = max(parallel_workers, config.postgres_max_overflow)
+        
+        db_session = _get_db_session(
+            config.postgres_url,
+            pool_size=pool_size,
+            max_overflow=max_overflow,
+        )
         try:
             target_date = to_t1(as_of or date.today(), config.t1_offset_days)
             lookback_days = int(config.raw.get("etl", {}).get("incremental_lookback_days", 0))
+            retention_days = max(1, int(config.raw.get("etl", {}).get("retention_days", DEFAULT_RETENTION_DAYS)))
+            news_event_retention_days = max(
+                1,
+                int(config.raw.get("etl", {}).get("news_event_retention_days", DEFAULT_NEWS_EVENT_RETENTION_DAYS)),
+            )
             parallel_workers = max(1, int(config.raw.get("etl", {}).get("parallel_workers", 4)))
             jobs = [
                 JobConfig("index_job", config.raw.get("etl", {}).get("schedules", {}).get("index_job", "00:30"), run_index_job, stage="source"),
@@ -281,7 +330,11 @@ def run_once(
                 any_job_ran = any_job_ran or stage_ran
             if errors:
                 notify_batch(errors)
-            _cleanup_retention(target_date, days=7)
+            _cleanup_retention(
+                target_date,
+                news_event_days=news_event_retention_days,
+                retention_days=retention_days,
+            )
             try:
                 metrics_target_date = end_date or target_date
                 if any_job_ran or not _should_skip_job(
@@ -317,6 +370,8 @@ def run_once(
             db_session.close()
     finally:
         _release_lock()
+        # 注意：不在这里 dispose 引擎，因为可能有其他地方在使用
+        # 引擎会在进程结束时自动清理
 
 
 if __name__ == "__main__":

@@ -5,10 +5,12 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useApiQuery } from "../hooks/useApiQuery";
 import { useAuth } from "../providers/AuthProvider";
 import {
+  buildMyWorkspaceQueryKey,
   createMyStockFilter,
   createMyStockPool,
   deleteMyStockFilter,
   deleteMyStockPool,
+  getUserScopedQueryOptions,
   getCompareStocks,
   getMyWorkspace,
   getStocks,
@@ -474,14 +476,13 @@ export function StockPoolMarketPage({ market }: { market: MarketCode }) {
     }, SEARCH_DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
   }, [sector]);
+  const workspaceQueryKey =
+    isAuthenticated && token ? buildMyWorkspaceQueryKey(token) : null;
 
   const workspaceQuery = useApiQuery(
-    isAuthenticated && token ? ["user-workspace", market, token] : null,
+    workspaceQueryKey,
     () => getMyWorkspace(token as string),
-    {
-      staleTimeMs: 30_000,
-      cacheTimeMs: 5 * 60_000,
-    },
+    getUserScopedQueryOptions("workspace"),
   );
 
   const savedPools = useMemo(

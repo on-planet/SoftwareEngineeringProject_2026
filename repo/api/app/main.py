@@ -1,4 +1,10 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
+import sys
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from etl.utils.env import load_project_env
 
@@ -17,7 +23,7 @@ async def lifespan(_: FastAPI):
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="KiloQuant API", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="QuantPulse API", version="0.1.0", lifespan=lifespan)
 
     app.add_exception_handler(Exception, http_error_handler)
     app.add_exception_handler(HTTPException, http_exception_handler)

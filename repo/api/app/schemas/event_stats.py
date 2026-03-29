@@ -24,3 +24,6 @@ class EventStatsOut(BaseModel):
     by_date: list[CountByDateItem]
     by_type: list[CountByTypeItem]
     by_symbol: list[CountBySymbolItem]
+    cache_hit: bool | None = None
+    as_of: str | None = None
+    refresh_queued: bool | None = None

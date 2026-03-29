@@ -202,10 +202,12 @@ export function IndexKlinePanel({ symbol, activeMarket, onMarketChange, onSymbol
           ))}
         </div>
       </div>
-      {loading ? <div className="helper">指数 K 线加载中...</div> : null}
-      {!loading && error ? <div className="helper">指数 K 线加载失败：{error}</div> : null}
-      {!loading && !error && option ? <ReactECharts option={option} style={{ height: 360 }} /> : null}
-      {!loading && !error && !option ? <div className="helper">暂无指数 K 线数据。</div> : null}
+      <div key={`${activeMarket}:${symbol}:${period}`} className="motion-tab-panel">
+        {loading ? <div className="helper">指数 K 线加载中...</div> : null}
+        {!loading && error ? <div className="helper">{`指数 K 线加载失败：${error}`}</div> : null}
+        {!loading && !error && option ? <ReactECharts option={option} style={{ height: 360 }} /> : null}
+        {!loading && !error && !option ? <div className="helper">暂无指数 K 线数据。</div> : null}
+      </div>
     </div>
   );
 }

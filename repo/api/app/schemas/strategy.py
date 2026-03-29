@@ -61,6 +61,7 @@ class SmokeButtCandidateOut(BaseModel):
     expected_return: float | None = None
     signal: str
     summary: str | None = None
+    signal_explanation: str | None = None
 
 
 class SmokeButtDetailOut(SmokeButtCandidateOut):
@@ -88,3 +89,65 @@ class SmokeButtTrainIn(BaseModel):
 class SmokeButtTrainOut(BaseModel):
     run: StrategyRunOut
     items: list[SmokeButtCandidateOut] = Field(default_factory=list)
+
+
+class StrategyBacktestCurvePointOut(BaseModel):
+    date: date
+    period_return: float | None = None
+    cumulative_return: float | None = None
+
+
+class StrategyBacktestBucketOut(BaseModel):
+    bucket: str
+    label: str
+    bucket_index: int
+    avg_return: float | None = None
+    win_rate: float | None = None
+    max_drawdown: float | None = None
+    avg_predicted_return: float | None = None
+    sample_count: int = 0
+    period_count: int = 0
+    curve: list[StrategyBacktestCurvePointOut] = Field(default_factory=list)
+
+
+class StrategyBacktestWindowSummaryOut(BaseModel):
+    top_bucket_return: float | None = None
+    top_bucket_win_rate: float | None = None
+    top_bucket_max_drawdown: float | None = None
+    spread_return: float | None = None
+    spread_win_rate: float | None = None
+    spread_hit_rate: float | None = None
+    monotonicity: float | None = None
+    sample_count: int = 0
+    period_count: int = 0
+
+
+class StrategyBacktestWindowOut(BaseModel):
+    horizon_days: int
+    rebalance_step: int
+    buckets: list[StrategyBacktestBucketOut] = Field(default_factory=list)
+    summary: StrategyBacktestWindowSummaryOut
+
+
+class SmokeButtBacktestConfidenceOut(BaseModel):
+    validation_rank_ic: float | None = None
+    validation_mae: float | None = None
+    validation_rmse: float | None = None
+    spread_return_20d: float | None = None
+    spread_return_60d: float | None = None
+    monotonicity_20d: float | None = None
+    monotonicity_60d: float | None = None
+    top_bucket_win_rate_20d: float | None = None
+    top_bucket_win_rate_60d: float | None = None
+    period_count_20d: int = 0
+    period_count_60d: int = 0
+    sample_count_20d: int = 0
+    sample_count_60d: int = 0
+
+
+class SmokeButtBacktestOut(BaseModel):
+    run: StrategyRunOut
+    market: str | None = None
+    bucket_count: int
+    windows: list[StrategyBacktestWindowOut] = Field(default_factory=list)
+    confidence: SmokeButtBacktestConfidenceOut

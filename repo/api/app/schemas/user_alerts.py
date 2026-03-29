@@ -74,6 +74,7 @@ class AlertRuleEvaluationOut(AlertRuleOut):
     triggered: bool
     status: str
     status_message: str
+    explanation: str | None = None
     latest_value: float | None = None
     matched_at: str | None = None
     context_title: str | None = None

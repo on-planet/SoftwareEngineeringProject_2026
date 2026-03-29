@@ -20,7 +20,7 @@ LIVE_INDEX_CACHE_VERSION = "v6"
 def list_live_indices(*, as_of: date | None = None, sort: str = "desc") -> list[dict]:
     cache_key = build_cache_key("live:index:list", version=LIVE_INDEX_CACHE_VERSION, as_of=as_of, sort=sort)
     cached = get_json(cache_key)
-    if isinstance(cached, list):
+    if isinstance(cached, list) and cached:
         return cached
 
     rows = {
@@ -45,7 +45,8 @@ def list_live_indices(*, as_of: date | None = None, sort: str = "desc") -> list[
             }
         )
     items.sort(key=lambda item: str(item.get("symbol") or ""), reverse=sort == "desc")
-    set_json(cache_key, items, ttl=LIVE_INDEX_CACHE_TTL)
+    if items:
+        set_json(cache_key, items, ttl=LIVE_INDEX_CACHE_TTL)
     return items
 
 
@@ -88,6 +89,8 @@ def list_live_index_constituents(
                         row["name"] = basic["name"]
                     if basic.get("market"):
                         row["market"] = basic["market"]
+                    if basic.get("sector"):
+                        row["sector"] = basic["sector"]
                     row.setdefault("rank", rank)
                     row.setdefault("source", "Snowball")
         if rows:

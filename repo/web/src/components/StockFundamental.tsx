@@ -1,7 +1,16 @@
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useApiQuery } from "../hooks/useApiQuery";
-import { getStockProfilePanel, StockProfileResponse } from "../services/api";
+import {
+  buildStockExtrasQueryKey,
+  buildStockOverviewQueryKey,
+  getStockExtras,
+  getStockExtrasQueryOptions,
+  getStockOverview,
+  getStockOverviewQueryOptions,
+  StockExtrasResponse,
+  StockOverviewResponse,
+} from "../services/api";
 import {
   formatLoosePercent,
   formatNullableNumber,
@@ -12,13 +21,11 @@ import {
 } from "../utils/format";
 import { getPrimaryStockName, getSecondaryStockName } from "../utils/stockNames";
 
-const FALLBACK_SECTOR_LABEL = "未分类";
-const STOCK_PROFILE_STALE_TIME_MS = 2 * 60 * 1000;
-const STOCK_PROFILE_CACHE_TIME_MS = 10 * 60 * 1000;
+const FALLBACK_SECTOR_LABEL = "Unclassified";
 
 const normalizeSector = (value?: string | null) => {
   const text = String(value ?? "").trim();
-  if (!text || text.toLowerCase() === "unknown" || text === "未知") {
+  if (!text || text.toLowerCase() === "unknown") {
     return FALLBACK_SECTOR_LABEL;
   }
   return text;
@@ -49,22 +56,29 @@ function DepthTable({ title, prefix, items }: { title: string; prefix: string; i
     <div className="depth-card">
       <div className="card-title">{title}</div>
       {!items.length ? (
-        <div className="helper">暂无盘口数据</div>
+        <div className="helper">No depth data</div>
       ) : (
         <table className="depth-table">
           <thead>
             <tr>
-              <th>档位</th>
-              <th>价格</th>
-              <th>数量</th>
+              <th>Level</th>
+              <th>Price</th>
+              <th>Volume</th>
             </tr>
           </thead>
           <tbody>
             {items.map((item) => (
               <tr key={`${prefix}-${item.level}`}>
-                <td>{prefix}{item.level}</td>
+                <td>
+                  {prefix}
+                  {item.level}
+                </td>
                 <td>{formatNullableNumber(item.price)}</td>
-                <td>{item.volume !== null && item.volume !== undefined ? formatNumber(item.volume) : "--"}</td>
+                <td>
+                  {item.volume !== null && item.volume !== undefined
+                    ? formatNumber(item.volume)
+                    : "--"}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -77,36 +91,96 @@ function DepthTable({ title, prefix, items }: { title: string; prefix: string; i
 export function StockFundamental({ symbol }: Props) {
   const normalizedSymbol = useMemo(() => String(symbol || "").trim().toUpperCase(), [symbol]);
   const [liveRefreshing, setLiveRefreshing] = useState(false);
+  const [shouldLoadExtras, setShouldLoadExtras] = useState(false);
 
-  const profileQuery = useApiQuery<StockProfileResponse>(
-    normalizedSymbol ? ["stock-profile", normalizedSymbol] : null,
-    () => getStockProfilePanel(normalizedSymbol, undefined, { cache: false }),
-    {
-      staleTimeMs: STOCK_PROFILE_STALE_TIME_MS,
-      cacheTimeMs: STOCK_PROFILE_CACHE_TIME_MS,
-      retry: 1,
-    },
+  const overviewCacheKey = useMemo(
+    () => (normalizedSymbol ? buildStockOverviewQueryKey(normalizedSymbol) : null),
+    [normalizedSymbol],
+  );
+  const extrasCacheKey = useMemo(
+    () => (normalizedSymbol ? buildStockExtrasQueryKey(normalizedSymbol) : null),
+    [normalizedSymbol],
   );
 
-  const profile = profileQuery.data ?? null;
+  useEffect(() => {
+    if (!normalizedSymbol || typeof window === "undefined") {
+      setShouldLoadExtras(false);
+      return;
+    }
+    setShouldLoadExtras(false);
+
+    let timeoutId: number | null = null;
+    let idleId: number | null = null;
+    const loadExtras = () => setShouldLoadExtras(true);
+    const windowWithIdle = window as Window & {
+      requestIdleCallback?: (
+        callback: IdleRequestCallback,
+        options?: IdleRequestOptions,
+      ) => number;
+      cancelIdleCallback?: (handle: number) => void;
+    };
+
+    if (typeof windowWithIdle.requestIdleCallback === "function") {
+      idleId = windowWithIdle.requestIdleCallback(() => loadExtras(), { timeout: 500 });
+    } else {
+      timeoutId = window.setTimeout(loadExtras, 180);
+    }
+
+    return () => {
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
+      if (idleId !== null && typeof windowWithIdle.cancelIdleCallback === "function") {
+        windowWithIdle.cancelIdleCallback(idleId);
+      }
+    };
+  }, [normalizedSymbol]);
+
+  const overviewQuery = useApiQuery<StockOverviewResponse>(
+    overviewCacheKey,
+    () => getStockOverview(normalizedSymbol),
+    overviewCacheKey ? getStockOverviewQueryOptions(overviewCacheKey) : undefined,
+  );
+  const extrasQuery = useApiQuery<StockExtrasResponse>(
+    shouldLoadExtras ? extrasCacheKey : null,
+    () => getStockExtras(normalizedSymbol),
+    extrasCacheKey ? getStockExtrasQueryOptions(extrasCacheKey) : undefined,
+  );
+
+  const profile = overviewQuery.data ?? null;
+  const extras = extrasQuery.data ?? null;
 
   const handleRefreshLiveQuote = useCallback(async () => {
     if (!normalizedSymbol) {
       return;
     }
     setLiveRefreshing(true);
+    setShouldLoadExtras(true);
     try {
-      await profileQuery.refetch(() =>
-        getStockProfilePanel(
-          normalizedSymbol,
-          { prefer_live: true, refresh_key: Date.now() },
-          { cache: false, retry: 1 },
+      const refreshKey = Date.now();
+      const tasks: Array<Promise<unknown>> = [
+        overviewQuery.refetch(() =>
+          getStockOverview(normalizedSymbol, {
+            prefer_live: true,
+            refresh_key: refreshKey,
+          }),
         ),
-      );
+      ];
+      if (shouldLoadExtras) {
+        tasks.push(
+          extrasQuery.refetch(() =>
+            getStockExtras(normalizedSymbol, {
+              prefer_live: true,
+              refresh_key: refreshKey,
+            }),
+          ),
+        );
+      }
+      await Promise.all(tasks);
     } finally {
       setLiveRefreshing(false);
     }
-  }, [normalizedSymbol, profileQuery]);
+  }, [extrasQuery, normalizedSymbol, overviewQuery, shouldLoadExtras]);
 
   const priceChange = useMemo(() => {
     const change = profile?.quote?.change;
@@ -136,26 +210,33 @@ export function StockFundamental({ symbol }: Props) {
   }, [priceChange, profile]);
 
   if (!normalizedSymbol) {
-    return <div className="card helper">正在读取股票代码...</div>;
+    return <div className="card helper">Loading symbol...</div>;
   }
 
-  if (profileQuery.isLoading) {
-    return <div className="card helper">个股概览加载中...</div>;
+  if (overviewQuery.isLoading && !profile) {
+    return <div className="card helper">Loading stock overview...</div>;
   }
 
-  if (profileQuery.error && !profile) {
-    return <div className="card helper">{`个股概览加载失败：${profileQuery.error.message}`}</div>;
+  if (overviewQuery.error && !profile) {
+    return (
+      <div className="card helper">
+        {`Failed to load stock overview: ${overviewQuery.error.message}`}
+      </div>
+    );
   }
 
   if (!profile) {
-    return <div className="card helper">暂无个股概览数据。</div>;
+    return <div className="card helper">No stock overview data.</div>;
   }
 
   const quote = profile.quote ?? null;
-  const detail = profile.quote_detail ?? null;
-  const pankou = profile.pankou ?? null;
+  const detail = extras?.quote_detail ?? null;
+  const pankou = extras?.pankou ?? null;
   const fundamental = profile.fundamental ?? null;
-  const extrasLoading = profileQuery.isFetching && (!detail || !pankou);
+  const extrasLoading =
+    shouldLoadExtras &&
+    (extrasQuery.isLoading || extrasQuery.isFetching) &&
+    (!detail || !pankou);
   const primaryName = getPrimaryStockName(profile.symbol, profile.name);
   const secondaryName = getSecondaryStockName(profile.symbol, profile.name);
 
@@ -170,11 +251,11 @@ export function StockFundamental({ symbol }: Props) {
             </div>
           ) : null}
           <div className="helper" style={{ marginTop: 6 }}>
-            {profile.symbol} · {profile.market} · {normalizeSector(profile.sector)}
+            {profile.symbol} | {profile.market} | {normalizeSector(profile.sector)}
           </div>
           {quote?.timestamp ? (
             <div className="helper" style={{ marginTop: 6 }}>
-              行情时间：{new Date(quote.timestamp).toLocaleString("zh-CN")}
+              Quote time: {new Date(quote.timestamp).toLocaleString("zh-CN")}
             </div>
           ) : null}
           <div style={{ marginTop: 12 }}>
@@ -186,7 +267,7 @@ export function StockFundamental({ symbol }: Props) {
               }}
               disabled={liveRefreshing}
             >
-              {liveRefreshing ? "实时行情刷新中..." : "获取实时行情"}
+              {liveRefreshing ? "Refreshing live quote..." : "Refresh live quote"}
             </button>
           </div>
         </div>
@@ -194,62 +275,130 @@ export function StockFundamental({ symbol }: Props) {
           <div className="quote-current">{formatNullableNumber(quote?.current)}</div>
           <div className="quote-change" style={{ color: changeColor }}>
             {priceChange !== null ? formatSigned(priceChange) : "--"}
-            <span style={{ marginLeft: 8 }}>{percentRatio !== null ? formatPercent(percentRatio) : "--"}</span>
+            <span style={{ marginLeft: 8 }}>
+              {percentRatio !== null ? formatPercent(percentRatio) : "--"}
+            </span>
           </div>
         </div>
       </div>
 
       <div className="metric-grid" style={{ marginTop: 18 }}>
-        <MetricCard title="今开" value={formatNullableNumber(quote?.open)} />
-        <MetricCard title="最高" value={formatNullableNumber(quote?.high)} />
-        <MetricCard title="最低" value={formatNullableNumber(quote?.low)} />
-        <MetricCard title="昨收" value={formatNullableNumber(quote?.last_close)} />
-        <MetricCard title="成交量" value={quote?.volume !== null && quote?.volume !== undefined ? formatNumber(quote.volume) : "--"} />
-        <MetricCard title="成交额" value={quote?.amount !== null && quote?.amount !== undefined ? formatNumber(quote.amount) : "--"} />
-        <MetricCard title="换手率" value={formatLoosePercent(quote?.turnover_rate)} />
-        <MetricCard title="振幅" value={formatLoosePercent(quote?.amplitude)} />
-        <MetricCard title="市盈率 TTM" value={formatNullableNumber(detail?.pe_ttm)} helper={extrasLoading && !detail ? "补充中" : undefined} />
-        <MetricCard title="市净率" value={formatNullableNumber(detail?.pb)} helper={extrasLoading && !detail ? "补充中" : undefined} />
-        <MetricCard title="市销率 TTM" value={formatNullableNumber(detail?.ps_ttm)} helper={extrasLoading && !detail ? "补充中" : undefined} />
-        <MetricCard title="市现率" value={formatNullableNumber(detail?.pcf)} helper={extrasLoading && !detail ? "补充中" : undefined} />
-        <MetricCard title="总市值" value={detail?.market_cap !== null && detail?.market_cap !== undefined ? formatNumber(detail.market_cap) : "--"} helper={extrasLoading && !detail ? "补充中" : undefined} />
-        <MetricCard title="流通市值" value={detail?.float_market_cap !== null && detail?.float_market_cap !== undefined ? formatNumber(detail.float_market_cap) : "--"} helper={extrasLoading && !detail ? "补充中" : undefined} />
-        <MetricCard title="股息率" value={formatLoosePercent(detail?.dividend_yield)} helper={extrasLoading && !detail ? "补充中" : undefined} />
-        <MetricCard title="量比" value={formatNullableNumber(detail?.volume_ratio)} helper={extrasLoading && !detail ? "补充中" : undefined} />
+        <MetricCard title="Open" value={formatNullableNumber(quote?.open)} />
+        <MetricCard title="High" value={formatNullableNumber(quote?.high)} />
+        <MetricCard title="Low" value={formatNullableNumber(quote?.low)} />
+        <MetricCard title="Prev close" value={formatNullableNumber(quote?.last_close)} />
+        <MetricCard
+          title="Volume"
+          value={
+            quote?.volume !== null && quote?.volume !== undefined
+              ? formatNumber(quote.volume)
+              : "--"
+          }
+        />
+        <MetricCard
+          title="Turnover"
+          value={
+            quote?.amount !== null && quote?.amount !== undefined
+              ? formatNumber(quote.amount)
+              : "--"
+          }
+        />
+        <MetricCard title="Turnover rate" value={formatLoosePercent(quote?.turnover_rate)} />
+        <MetricCard title="Amplitude" value={formatLoosePercent(quote?.amplitude)} />
+        <MetricCard
+          title="PE TTM"
+          value={formatNullableNumber(detail?.pe_ttm)}
+          helper={extrasLoading && !detail ? "Loading..." : undefined}
+        />
+        <MetricCard
+          title="PB"
+          value={formatNullableNumber(detail?.pb)}
+          helper={extrasLoading && !detail ? "Loading..." : undefined}
+        />
+        <MetricCard
+          title="PS TTM"
+          value={formatNullableNumber(detail?.ps_ttm)}
+          helper={extrasLoading && !detail ? "Loading..." : undefined}
+        />
+        <MetricCard
+          title="PCF"
+          value={formatNullableNumber(detail?.pcf)}
+          helper={extrasLoading && !detail ? "Loading..." : undefined}
+        />
+        <MetricCard
+          title="Market cap"
+          value={
+            detail?.market_cap !== null && detail?.market_cap !== undefined
+              ? formatNumber(detail.market_cap)
+              : "--"
+          }
+          helper={extrasLoading && !detail ? "Loading..." : undefined}
+        />
+        <MetricCard
+          title="Float cap"
+          value={
+            detail?.float_market_cap !== null && detail?.float_market_cap !== undefined
+              ? formatNumber(detail.float_market_cap)
+              : "--"
+          }
+          helper={extrasLoading && !detail ? "Loading..." : undefined}
+        />
+        <MetricCard
+          title="Dividend yield"
+          value={formatLoosePercent(detail?.dividend_yield)}
+          helper={extrasLoading && !detail ? "Loading..." : undefined}
+        />
+        <MetricCard
+          title="Volume ratio"
+          value={formatNullableNumber(detail?.volume_ratio)}
+          helper={extrasLoading && !detail ? "Loading..." : undefined}
+        />
       </div>
 
       <div className="summary-grid">
         <div className="summary-card">
-          <div className="helper">基本面得分</div>
-          <div className="stock-score-value">{fundamental ? formatNullableNumber(fundamental.score, 1) : "--"}</div>
-          <div className="stock-summary">{fundamental?.summary ?? "暂无基本面摘要。"}</div>
+          <div className="helper">Fundamental score</div>
+          <div className="stock-score-value">
+            {fundamental ? formatNullableNumber(fundamental.score, 1) : "--"}
+          </div>
+          <div className="stock-summary">
+            {fundamental?.summary ?? "No fundamental summary."}
+          </div>
           {fundamental?.updated_at ? (
             <div className="helper" style={{ marginTop: 12 }}>
-              更新时间：{new Date(fundamental.updated_at).toLocaleString("zh-CN")}
+              Updated: {new Date(fundamental.updated_at).toLocaleString("zh-CN")}
             </div>
           ) : null}
         </div>
         <div className="summary-card">
-          <div className="card-title">盘口概览</div>
+          <div className="card-title">Order book</div>
           <div className="metric-grid compact-grid">
-            <MetricCard title="委差" value={formatNullableNumber(pankou?.diff)} />
-            <MetricCard title="委比" value={formatLoosePercent(pankou?.ratio)} />
+            <MetricCard title="Diff" value={formatNullableNumber(pankou?.diff)} />
+            <MetricCard title="Ratio" value={formatLoosePercent(pankou?.ratio)} />
             <MetricCard
-              title="盘口时间"
-              value={pankou?.timestamp ? new Date(pankou.timestamp).toLocaleTimeString("zh-CN", { hour12: false }) : "--"}
+              title="Book time"
+              value={
+                pankou?.timestamp
+                  ? new Date(pankou.timestamp).toLocaleTimeString("zh-CN", { hour12: false })
+                  : "--"
+              }
             />
             <MetricCard
-              title="最小交易单位"
-              value={detail?.lot_size !== null && detail?.lot_size !== undefined ? formatNumber(detail.lot_size) : "--"}
-              helper={extrasLoading && !detail ? "补充中" : undefined}
+              title="Lot size"
+              value={
+                detail?.lot_size !== null && detail?.lot_size !== undefined
+                  ? formatNumber(detail.lot_size)
+                  : "--"
+              }
+              helper={extrasLoading && !detail ? "Loading..." : undefined}
             />
           </div>
         </div>
       </div>
 
       <div className="depth-grid">
-        <DepthTable title="卖盘五档" prefix="卖" items={pankou?.asks ?? []} />
-        <DepthTable title="买盘五档" prefix="买" items={pankou?.bids ?? []} />
+        <DepthTable title="Ask depth" prefix="Ask " items={pankou?.asks ?? []} />
+        <DepthTable title="Bid depth" prefix="Bid " items={pankou?.bids ?? []} />
       </div>
     </div>
   );

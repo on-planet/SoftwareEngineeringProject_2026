@@ -46,6 +46,27 @@ def apply_news_relations(
     return item
 
 
+def apply_news_nlp_metadata(
+    item: News,
+    *,
+    event_type: str | None = None,
+    event_tags: list[str] | tuple[str, ...] | set[str] | str | None = None,
+    themes: list[str] | tuple[str, ...] | set[str] | str | None = None,
+    impact_direction: str | None = None,
+    nlp_confidence: float | None = None,
+    nlp_version: str | None = None,
+    keywords: list[str] | tuple[str, ...] | set[str] | str | None = None,
+) -> News:
+    item.event_type = str(event_type or "").strip() or None
+    item.event_tags_csv = join_news_relation_values(event_tags)
+    item.themes_csv = join_news_relation_values(themes)
+    item.impact_direction = str(impact_direction or "").strip() or None
+    item.nlp_confidence = float(nlp_confidence) if nlp_confidence is not None else None
+    item.nlp_version = str(nlp_version or "").strip() or None
+    item.keywords_csv = join_news_relation_values(keywords)
+    return item
+
+
 def with_news_relations(query: Query) -> Query:
     return query.options(
         selectinload(News.related_symbol_rows),

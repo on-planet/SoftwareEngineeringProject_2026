@@ -12,3 +12,9 @@ class Page(BaseModel, Generic[T]):
     total: int
     limit: int
     offset: int
+
+
+class CachedPage(Page[T], Generic[T]):
+    cache_hit: bool | None = None
+    as_of: str | None = None
+    refresh_queued: bool | None = None

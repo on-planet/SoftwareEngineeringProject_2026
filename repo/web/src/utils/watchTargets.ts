@@ -1,7 +1,9 @@
 import { getAuthUserId } from "./auth";
 
-const WATCH_TARGETS_KEY = "kiloquant_watch_targets";
-const WATCH_TARGETS_KEY_BY_USER_PREFIX = "kiloquant_watch_targets_by_user";
+const WATCH_TARGETS_KEY = "quantpulse_watch_targets";
+const WATCH_TARGETS_KEY_BY_USER_PREFIX = "quantpulse_watch_targets_by_user";
+const LEGACY_WATCH_TARGETS_KEY = "kiloquant_watch_targets";
+const LEGACY_WATCH_TARGETS_KEY_BY_USER_PREFIX = "kiloquant_watch_targets_by_user";
 const MAX_WATCH_TARGETS = 50;
 
 function canUseStorage() {
@@ -22,6 +24,10 @@ function normalizeUserId(value?: number | null): number | null {
 
 function getScopedKeyByUserId(userId: number) {
   return `${WATCH_TARGETS_KEY_BY_USER_PREFIX}:${userId}`;
+}
+
+function getLegacyScopedKeyByUserId(userId: number) {
+  return `${LEGACY_WATCH_TARGETS_KEY_BY_USER_PREFIX}:${userId}`;
 }
 
 function resolveScopedKey(explicitUserId?: number | null) {
@@ -76,11 +82,20 @@ function migrateLegacyWatchTargetsIfNeeded(userId: number) {
     if (window.localStorage.getItem(scopedKey)) {
       return;
     }
-    const legacy = readWatchTargetsByKey(WATCH_TARGETS_KEY);
-    if (legacy.length === 0) {
+    const legacyScoped = readWatchTargetsByKey(getLegacyScopedKeyByUserId(userId));
+    if (legacyScoped.length > 0) {
+      window.localStorage.setItem(scopedKey, JSON.stringify(legacyScoped));
       return;
     }
-    window.localStorage.setItem(scopedKey, JSON.stringify(legacy));
+    const currentGlobal = readWatchTargetsByKey(WATCH_TARGETS_KEY);
+    if (currentGlobal.length > 0) {
+      window.localStorage.setItem(scopedKey, JSON.stringify(currentGlobal));
+      return;
+    }
+    const legacyGlobal = readWatchTargetsByKey(LEGACY_WATCH_TARGETS_KEY);
+    if (legacyGlobal.length > 0) {
+      window.localStorage.setItem(scopedKey, JSON.stringify(legacyGlobal));
+    }
   } catch {
     // Ignore localStorage failures.
   }
@@ -90,8 +105,17 @@ export function readWatchTargets(): string[] {
   const { key, userId } = resolveScopedKey();
   if (userId) {
     migrateLegacyWatchTargetsIfNeeded(userId);
+    return readWatchTargetsByKey(key);
   }
-  return readWatchTargetsByKey(key);
+  const current = readWatchTargetsByKey(key);
+  if (current.length > 0) {
+    return current;
+  }
+  const legacy = readWatchTargetsByKey(LEGACY_WATCH_TARGETS_KEY);
+  if (legacy.length > 0 && canUseStorage()) {
+    window.localStorage.setItem(WATCH_TARGETS_KEY, JSON.stringify(legacy));
+  }
+  return legacy;
 }
 
 function writeWatchTargets(list: string[], explicitUserId?: number | null) {

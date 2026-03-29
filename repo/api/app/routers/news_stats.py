@@ -35,7 +35,7 @@ def get_news_stats_route(
     """获取新闻统计（按日/情绪/标的）。"""
     symbols_filter = symbols or ([symbol] if symbol else None)
     sentiments_filter = sentiments or ([sentiment] if sentiment else None)
-    by_date, by_sentiment, by_symbol = fetch_news_stats(
+    by_date, by_sentiment, by_symbol, cache_meta = fetch_news_stats(
         db,
         symbols=symbols_filter,
         sentiments=sentiments_filter,
@@ -45,5 +45,6 @@ def get_news_stats_route(
         top_date=top_date,
         top_sentiment=top_sentiment,
         top_symbol=top_symbol,
+        return_meta=True,
     )
-    return {"by_date": by_date, "by_sentiment": by_sentiment, "by_symbol": by_symbol}
+    return {"by_date": by_date, "by_sentiment": by_sentiment, "by_symbol": by_symbol, **cache_meta}

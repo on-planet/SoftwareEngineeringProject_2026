@@ -6,6 +6,7 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.core.cache import get_json, set_json
+from app.core.typed_cache import cached_call
 from app.models.news import News
 from app.services.cache_utils import build_cache_key
 from app.services.news_relation_utils import (
@@ -35,6 +36,7 @@ def list_news_aggregate(
     limit: int = 100,
     offset: int = 0,
     sort: str = "desc",
+    return_meta: bool = False,
 ):
     cache_key = build_cache_key(
         "news:aggregate",
@@ -54,81 +56,104 @@ def list_news_aggregate(
         offset=offset,
         sort=sort,
     )
-    cached = get_json(cache_key)
-    if isinstance(cached, dict) and isinstance(cached.get("items"), list) and isinstance(cached.get("total"), int):
-        return cached.get("items"), cached.get("total")
+    def _infer_as_of(payload: dict) -> str | None:
+        items = payload.get("items")
+        if not isinstance(items, list):
+            return None
+        values = [
+            str(item.get("published_at"))
+            for item in items
+            if isinstance(item, dict) and item.get("published_at")
+        ]
+        return max(values) if values else None
 
-    base_query = with_news_relations(db.query(News))
-    if symbols:
-        base_query = base_query.filter(News.symbol.in_(symbols))
-    if sentiments:
-        base_query = base_query.filter(News.sentiment.in_(sentiments))
-    if source_sites:
-        base_query = base_query.filter(News.source_site.in_(source_sites))
-    if source_categories:
-        base_query = base_query.filter(News.source_category.in_(source_categories))
-    if topic_categories:
-        base_query = base_query.filter(News.topic_category.in_(topic_categories))
-    if time_buckets:
-        base_query = base_query.filter(News.time_bucket.in_(time_buckets))
-    if related_symbols:
-        base_query = filter_news_by_related_symbols(base_query, related_symbols)
-    if related_sectors:
-        base_query = filter_news_by_related_sectors(base_query, related_sectors)
-    if keyword:
-        keyword_like = f"%{keyword}%"
-        base_query = base_query.filter(
-            or_(News.title.ilike(keyword_like), News.symbol.ilike(keyword_like))
-        )
-    if start is not None:
-        base_query = base_query.filter(News.published_at >= start)
-    if end is not None:
-        base_query = base_query.filter(News.published_at <= end)
+    def _load_payload() -> dict:
+        base_query = with_news_relations(db.query(News))
+        if symbols:
+            base_query = base_query.filter(News.symbol.in_(symbols))
+        if sentiments:
+            base_query = base_query.filter(News.sentiment.in_(sentiments))
+        if source_sites:
+            base_query = base_query.filter(News.source_site.in_(source_sites))
+        if source_categories:
+            base_query = base_query.filter(News.source_category.in_(source_categories))
+        if topic_categories:
+            base_query = base_query.filter(News.topic_category.in_(topic_categories))
+        if time_buckets:
+            base_query = base_query.filter(News.time_bucket.in_(time_buckets))
+        if related_symbols:
+            base_query = filter_news_by_related_symbols(base_query, related_symbols)
+        if related_sectors:
+            base_query = filter_news_by_related_sectors(base_query, related_sectors)
+        if keyword:
+            keyword_like = f"%{keyword}%"
+            base_query = base_query.filter(
+                or_(News.title.ilike(keyword_like), News.symbol.ilike(keyword_like))
+            )
+        if start is not None:
+            base_query = base_query.filter(News.published_at >= start)
+        if end is not None:
+            base_query = base_query.filter(News.published_at <= end)
 
-    deduped = (
-        base_query.with_entities(func.max(News.id).label("id"))
-        .group_by(
-            News.symbol,
-            News.title,
-            News.sentiment,
-            News.published_at,
-            News.link,
-            News.source,
+        deduped = (
+            base_query.with_entities(func.max(News.id).label("id"))
+            .group_by(
+                News.symbol,
+                News.title,
+                News.sentiment,
+                News.published_at,
+                News.link,
+                News.source,
+            )
+            .subquery()
         )
-        .subquery()
-    )
-    query = db.query(News).join(deduped, News.id == deduped.c.id)
-    query = with_news_relations(query)
-    total = db.query(func.count()).select_from(deduped).scalar() or 0
-    sort_fields = {
-        "published_at": News.published_at,
-        "title": News.title,
-        "symbol": News.symbol,
-        "sentiment": News.sentiment,
-        "source_site": News.source_site,
-        "source_category": News.source_category,
-        "topic_category": News.topic_category,
-        "time_bucket": News.time_bucket,
-        "related_symbols": News.related_symbols_csv,
-        "related_sectors": News.related_sectors_csv,
-    }
-    sort_keys = [key for key in (sort_by or ["published_at"]) if key in sort_fields]
-    if not sort_keys:
-        sort_keys = ["published_at"]
-    ordering = [
-        (sort_fields[key].asc() if sort == "asc" else sort_fields[key].desc())
-        for key in sort_keys
-    ]
-    rows = (
-        query.order_by(*ordering)
-        .offset(offset)
-        .limit(limit)
-        .all()
-    )
-    items = serialize_news_items(rows)
-    set_json(
+        query = db.query(News).join(deduped, News.id == deduped.c.id)
+        query = with_news_relations(query)
+        total = db.query(func.count()).select_from(deduped).scalar() or 0
+        sort_fields = {
+            "published_at": News.published_at,
+            "title": News.title,
+            "symbol": News.symbol,
+            "sentiment": News.sentiment,
+            "source_site": News.source_site,
+            "source_category": News.source_category,
+            "topic_category": News.topic_category,
+            "time_bucket": News.time_bucket,
+            "related_symbols": News.related_symbols_csv,
+            "related_sectors": News.related_sectors_csv,
+            "event_type": News.event_type,
+            "impact_direction": News.impact_direction,
+            "nlp_confidence": News.nlp_confidence,
+        }
+        sort_keys = [key for key in (sort_by or ["published_at"]) if key in sort_fields]
+        if not sort_keys:
+            sort_keys = ["published_at"]
+        ordering = [
+            (sort_fields[key].asc() if sort == "asc" else sort_fields[key].desc())
+            for key in sort_keys
+        ]
+        rows = (
+            query.order_by(*ordering)
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
+        return {
+            "items": serialize_news_items(rows),
+            "total": total,
+        }
+
+    payload, cache_meta = cached_call(
+        "news_list",
         cache_key,
-        {"items": items, "total": total},
+        _load_payload,
         ttl=NEWS_AGG_CACHE_TTL,
+        as_of=_infer_as_of,
+        getter=get_json,
+        setter=set_json,
     )
+    items = payload.get("items") if isinstance(payload, dict) else []
+    total = payload.get("total") if isinstance(payload, dict) else 0
+    if return_meta:
+        return items, total, cache_meta
     return items, total

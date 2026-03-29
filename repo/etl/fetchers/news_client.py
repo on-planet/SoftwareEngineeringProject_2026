@@ -14,7 +14,7 @@ import time
 import xml.etree.ElementTree as ET
 
 from etl.utils.logging import get_logger
-from etl.utils.news_relevance import infer_news_relevance
+from etl.utils.news_nlp import extract_news_nlp
 from etl.utils.news_sentiment import infer_news_sentiment
 from etl.utils.news_taxonomy import classify_news_metadata
 from etl.utils.normalize import ensure_required
@@ -257,11 +257,17 @@ def _append_rows(rows: List[dict], symbol: str, items: list[dict], as_of: date, 
             link=item.get("link") or "",
             published_at=published_at,
         )
-        relevance = infer_news_relevance(title, symbol=symbol)
         sentiment = infer_news_sentiment(
             title,
             source=source,
             topic_category=metadata.get("topic_category"),
+        )
+        nlp = extract_news_nlp(
+            title,
+            symbol=symbol,
+            source=source,
+            topic_category=metadata.get("topic_category"),
+            sentiment=sentiment,
         )
         rows.append(
             {
@@ -275,8 +281,15 @@ def _append_rows(rows: List[dict], symbol: str, items: list[dict], as_of: date, 
                 "source_category": metadata.get("source_category"),
                 "topic_category": metadata.get("topic_category"),
                 "time_bucket": metadata.get("time_bucket"),
-                "related_symbols": relevance.get("related_symbols"),
-                "related_sectors": relevance.get("related_sectors"),
+                "related_symbols": nlp.related_symbols,
+                "related_sectors": nlp.related_sectors,
+                "event_type": nlp.event_type,
+                "event_tags": nlp.event_tags,
+                "themes": nlp.themes,
+                "impact_direction": nlp.impact_direction,
+                "nlp_confidence": nlp.confidence,
+                "nlp_version": nlp.version,
+                "keywords": nlp.keywords,
             }
         )
 

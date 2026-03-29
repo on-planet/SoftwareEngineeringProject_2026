@@ -1,7 +1,7 @@
 postgres:
-  url: "postgresql+psycopg2://postgres:123456@localhost:5432/kiloquant"
-  pool_size: 10
-  max_overflow: 5
+  url: "postgresql+psycopg2://postgres:123456@localhost:5432/quantpulse"
+  pool_size: 10  # 连接池大小，建议设置为 parallel_workers + 2 以上
+  max_overflow: 5  # 最大溢出连接数，建议设置为 parallel_workers 以上
 redis:
   url: "redis://localhost:6379/0"
 market:
@@ -9,7 +9,9 @@ market:
   t1_offset_days: 1
 etl:
   incremental_lookback_days: 7
-  parallel_workers: 4
+  retention_days: 7
+  news_event_retention_days: 30
+  parallel_workers: 4  # 并行工作线程数，注意：pool_size 应该 >= parallel_workers + 2
   schedules:
     index_job: "00:30"
     financial_job: "01:00"

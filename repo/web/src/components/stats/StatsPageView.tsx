@@ -1,13 +1,22 @@
 import React from "react";
 
-import { PortfolioAnalysisPanel } from "../PortfolioAnalysisPanel";
-import { PerformanceComparisonPanel } from "../PerformanceComparisonPanel";
-import { StatsDashboard } from "../StatsDashboard";
 import { UseStatsTargetsResult } from "../../hooks/useStatsTargets";
+import { AnimatedNumber } from "../motion/AnimatedNumber";
+import { PerformanceComparisonPanel } from "../PerformanceComparisonPanel";
+import { PersonalWorkspaceAlertsPanel } from "./PersonalWorkspaceAlertsPanel";
+import { PersonalWorkspaceNewsGraphPanel } from "./PersonalWorkspaceNewsGraphPanel";
+import { PortfolioAnalysisPanel } from "../PortfolioAnalysisPanel";
+import { PortfolioDiagnosticReport } from "../PortfolioDiagnosticReport";
+import { PortfolioStressTestPanel } from "../PortfolioStressTestPanel";
+import { StatsDashboard } from "../StatsDashboard";
 
 import styles from "./StatsPageView.module.css";
 
-export type StatsViewTab = "portfolio" | "performance" | "events" | "news";
+function buildMotionStyle(index: number): React.CSSProperties {
+  return { ["--motion-index" as "--motion-index"]: index } as React.CSSProperties;
+}
+
+export type StatsViewTab = "portfolio" | "performance" | "workspace" | "events" | "news";
 export type PortfolioViewTab = "watch" | "bought";
 export type StatsTargetTab = "watch" | "bought";
 
@@ -20,6 +29,7 @@ type StatsPageViewProps = {
   statsViewTab: StatsViewTab;
   portfolioViewTab: PortfolioViewTab;
   statsTargetTab: StatsTargetTab;
+  groupedStatsSymbols: string[];
   filteredStatsSymbols: string[];
   targets: UseStatsTargetsResult;
   onSymbolChange: (value: string) => void;
@@ -51,7 +61,7 @@ function EmptyAccessState() {
       <section className="card market-panel">
         <div className="surface-empty">
           <strong>账户统计面板</strong>
-          <div className="helper">请先登录后查看自选、持仓、收益对比与事件/新闻统计。</div>
+          <div className="helper">请先登录后查看自选、已买、收益对比以及个人告警/图谱服务。</div>
         </div>
       </section>
     </div>
@@ -67,6 +77,7 @@ export function StatsPageView({
   statsViewTab,
   portfolioViewTab,
   statsTargetTab,
+  groupedStatsSymbols,
   filteredStatsSymbols,
   targets,
   onSymbolChange,
@@ -86,6 +97,11 @@ export function StatsPageView({
   }
 
   const focusLabel = symbol || "全部组合";
+  const workspaceScopeLabel = statsTargetTab === "watch" ? "自选" : "已买";
+  const portfolioSymbols =
+    portfolioViewTab === "watch"
+      ? targets.watchTargets
+      : targets.boughtTargets.map((item) => item.symbol);
 
   return (
     <div className="page">
@@ -95,25 +111,29 @@ export function StatsPageView({
             <span className="kicker">Portfolio Lab</span>
             <h1 className="page-title">账户统计面板</h1>
             <p className={styles.heroDescription}>
-              把自选、持仓、组合收益、事件与新闻统计放在同一张工作台里，筛选状态和移动端交互也统一下来。
+              把自选、持仓、组合表现、事件/新闻统计，以及个人告警和关系图谱放到同一个工作台里。
             </p>
           </div>
         </div>
-        <div className={styles.heroMetrics}>
-          <div className={styles.heroMetric}>
+        <div className={`${styles.heroMetrics} motion-stagger-group`}>
+          <div className={styles.heroMetric} style={buildMotionStyle(0)}>
             <div className={styles.heroMetricLabel}>观察标的</div>
-            <div className={styles.heroMetricValue}>{targets.watchTargets.length}</div>
+            <div className={styles.heroMetricValue}>
+              <AnimatedNumber value={targets.watchTargets.length} />
+            </div>
             <div className={styles.heroMetricHelper}>{`${targets.selectedWatchSymbols.length} 个已选中`}</div>
           </div>
-          <div className={styles.heroMetric}>
+          <div className={styles.heroMetric} style={buildMotionStyle(1)}>
             <div className={styles.heroMetricLabel}>已买标的</div>
-            <div className={styles.heroMetricValue}>{targets.boughtTargets.length}</div>
-            <div className={styles.heroMetricHelper}>收益比较与组合分析共用同一持仓源</div>
+            <div className={styles.heroMetricValue}>
+              <AnimatedNumber value={targets.boughtTargets.length} />
+            </div>
+            <div className={styles.heroMetricHelper}>与收益比较、组合分析、压力测试共用同一持仓源</div>
           </div>
-          <div className={styles.heroMetric}>
+          <div className={styles.heroMetric} style={buildMotionStyle(2)}>
             <div className={styles.heroMetricLabel}>当前聚焦</div>
             <div className={styles.heroMetricValue}>{focusLabel}</div>
-            <div className={styles.heroMetricHelper}>事件和新闻统计跟随当前筛选</div>
+            <div className={styles.heroMetricHelper}>统计、告警和图谱都会跟随当前过滤条件</div>
           </div>
         </div>
       </section>
@@ -136,7 +156,7 @@ export function StatsPageView({
                   type="text"
                   value={targets.watchInput}
                   onChange={(event) => targets.setWatchInput(event.target.value)}
-                  placeholder="输入标的代码后加入观察列表"
+                  placeholder="输入股票代码后加入观察列表"
                 />
                 <button type="button" className="primary-button" onClick={targets.handleQuickAddWatchTarget}>
                   加入观察
@@ -220,10 +240,11 @@ export function StatsPageView({
             <div className={styles.panelHeader}>
               <div className={styles.panelHeaderText}>
                 <div className="card-title">已买标的</div>
-                <div className="helper">持仓信息将直接驱动收益对比和组合分析。</div>
+                <div className="helper">持仓信息会直接驱动收益比较、组合分析和压力测试。</div>
               </div>
               <span className="kicker">Positions</span>
             </div>
+
             {targets.boughtTargets.length === 0 ? (
               <div className="surface-empty">
                 <strong>暂无持仓记录</strong>
@@ -277,6 +298,14 @@ export function StatsPageView({
           <button
             type="button"
             className="stock-page-button"
+            data-active={statsViewTab === "workspace"}
+            onClick={() => onStatsViewTabChange("workspace")}
+          >
+            个人服务
+          </button>
+          <button
+            type="button"
+            className="stock-page-button"
             data-active={statsViewTab === "events"}
             onClick={() => onStatsViewTabChange("events")}
           >
@@ -293,7 +322,7 @@ export function StatsPageView({
         </div>
 
         {statsViewTab === "portfolio" ? (
-          <div className={styles.sectionStack}>
+          <div key={`portfolio-${portfolioViewTab}`} className={`${styles.sectionStack} motion-tab-panel`}>
             <div className={`toolbar ${styles.filterBar}`}>
               <button
                 type="button"
@@ -312,8 +341,9 @@ export function StatsPageView({
                 已买标的
               </button>
             </div>
+
             <PortfolioAnalysisPanel
-              symbols={portfolioViewTab === "watch" ? targets.watchTargets : targets.boughtTargets.map((item) => item.symbol)}
+              symbols={portfolioSymbols}
               title={portfolioViewTab === "watch" ? "观察标的行业暴露与组合分析" : "已买标的行业暴露与组合分析"}
               emptyText={portfolioViewTab === "watch" ? "先添加观察标的后再查看分析。" : "先记录持仓后再查看分析。"}
               pageSize={10}
@@ -321,12 +351,105 @@ export function StatsPageView({
           </div>
         ) : null}
 
+        {statsViewTab === "portfolio" ? (
+          <section className="card market-panel motion-tab-panel" data-tone="neutral">
+            <div className="page-header" style={{ marginBottom: 12 }}>
+              <div>
+                <div className="card-title">{portfolioViewTab === "watch" ? "观察标的诊断报告" : "组合诊断报告"}</div>
+                <div className="helper">
+                  {portfolioViewTab === "watch"
+                    ? "按等权观察篮子生成画像、风格暴露和宏观敏感度，先看结构和风险，再决定是否转入持仓。"
+                    : "自动生成组合画像、风格暴露和宏观敏感度，不再只看收益率。"}
+                </div>
+              </div>
+            </div>
+            <PortfolioDiagnosticReport targetType={portfolioViewTab} />
+          </section>
+        ) : null}
+
+        {statsViewTab === "portfolio" && portfolioViewTab === "bought" ? (
+          <section className="card market-panel motion-tab-panel">
+            <div className="page-header" style={{ marginBottom: 12 }}>
+              <div>
+                <div className="card-title">组合压力测试</div>
+                <div className="helper">预设场景和自定义规则会估算组合潜在损失、受影响权重和重点风险暴露。</div>
+              </div>
+            </div>
+            <PortfolioStressTestPanel targetType="bought" />
+          </section>
+        ) : null}
+
         {statsViewTab === "performance" ? (
-          <PerformanceComparisonPanel watchSymbols={targets.watchTargets} boughtTargets={targets.boughtTargets} />
+          <div key="performance" className="motion-tab-panel">
+            <PerformanceComparisonPanel watchSymbols={targets.watchTargets} boughtTargets={targets.boughtTargets} />
+          </div>
+        ) : null}
+
+        {statsViewTab === "workspace" ? (
+          <div key={`workspace-${statsTargetTab}`} className={`${styles.sectionStack} motion-tab-panel`}>
+            <div className={`toolbar ${styles.filterBar}`}>
+              <button
+                type="button"
+                className="stock-page-button"
+                data-active={statsTargetTab === "watch"}
+                onClick={() => onStatsTargetTabChange("watch")}
+              >
+                自选服务
+              </button>
+              <button
+                type="button"
+                className="stock-page-button"
+                data-active={statsTargetTab === "bought"}
+                onClick={() => onStatsTargetTabChange("bought")}
+              >
+                已买服务
+              </button>
+            </div>
+
+            <div className={`toolbar sticky-filter-bar ${styles.stickyBar}`}>
+              <label className={styles.filterField}>
+                <span className={styles.filterLabel}>聚焦标的</span>
+                <input
+                  className="input"
+                  type="text"
+                  value={symbol}
+                  onChange={(event) => onSymbolChange(event.target.value.trim().toUpperCase())}
+                  placeholder="可选，聚焦单个自选/已买标的"
+                />
+              </label>
+            </div>
+
+            {groupedStatsSymbols.length === 0 ? (
+              <div className="surface-empty">
+                <strong>{statsTargetTab === "watch" ? "暂无自选标的" : "暂无已买标的"}</strong>
+                <div className="helper">
+                  {statsTargetTab === "watch"
+                    ? "先添加观察标的后，再使用告警中心和新闻关系图谱。"
+                    : "先录入持仓后，再使用告警中心和新闻关系图谱。"}
+                </div>
+              </div>
+            ) : (
+              <>
+                <PersonalWorkspaceAlertsPanel
+                  scopeLabel={workspaceScopeLabel}
+                  symbols={groupedStatsSymbols}
+                  activeSymbol={symbol}
+                  onFocusSymbolChange={onSymbolChange}
+                />
+
+                <PersonalWorkspaceNewsGraphPanel
+                  scopeLabel={workspaceScopeLabel}
+                  symbols={groupedStatsSymbols}
+                  activeSymbol={symbol}
+                  onFocusSymbolChange={onSymbolChange}
+                />
+              </>
+            )}
+          </div>
         ) : null}
 
         {statsViewTab === "events" || statsViewTab === "news" ? (
-          <div className={styles.sectionStack}>
+          <div key={`${statsViewTab}-${statsTargetTab}`} className={`${styles.sectionStack} motion-tab-panel`}>
             <div className={`toolbar ${styles.filterBar}`}>
               <button
                 type="button"

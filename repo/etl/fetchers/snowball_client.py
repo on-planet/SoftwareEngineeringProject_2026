@@ -72,6 +72,15 @@ _SYMBOL_RE = re.compile(r"^[A-Z]{2}\d{6}$")
 _BJ_SYMBOL_RE = re.compile(r"^BJ\d{6}$")
 _HK_SYMBOL_RE = re.compile(r"^HK\d{1,5}$")
 _US_SYMBOL_RE = re.compile(r"^US[A-Z.]+$")
+_TOKEN_ENV_KEYS = {
+    "XUEQIUTOKEN",
+    "SNOWBALL_TOKEN",
+    "XQ_A_TOKEN",
+    "SNOWBALL_A_TOKEN",
+    "XUEQIU_U",
+    "XUEQIU_UID",
+    "SNOWBALL_U",
+}
 _DEFAULT_INDEX_SPECS = (
     {"symbol": "000001.SH", "snowball_symbol": "SH000001", "name": "\u4e0a\u8bc1\u6307\u6570", "market": "A"},
     {"symbol": "399001.SZ", "snowball_symbol": "SZ399001", "name": "\u6df1\u8bc1\u6210\u6307", "market": "A"},
@@ -485,6 +494,7 @@ def _call_with_token_retry(request_fn, *, context: str, ref: str):
 
 
 def _token_candidates() -> list[str]:
+    load_project_env(override=True, keys=_TOKEN_ENV_KEYS)
     raw_env = (
         os.getenv("XUEQIUTOKEN", "").strip()
         or os.getenv("SNOWBALL_TOKEN", "").strip()
@@ -1723,6 +1733,41 @@ def get_stock_basics(symbols: Iterable[str] | None = None) -> List[dict]:
             }
         )
     return ensure_required(rows, ["symbol", "name", "market", "sector"], "snowball.stock_basic")
+
+
+def get_stock_quotes(symbols: Iterable[str] | None = None) -> List[dict]:
+    requested: list[str] = []
+    seen: set[str] = set()
+    for symbol in symbols or []:
+        normalized = normalize_symbol(str(symbol))
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        requested.append(normalized)
+
+    if not requested:
+        return []
+
+    raw_rows = _call_quotec(requested)
+    by_symbol: dict[str, dict] = {}
+    for item in raw_rows:
+        raw_symbol = item.get("symbol") or item.get("code") or item.get("ticker")
+        if raw_symbol in (None, ""):
+            continue
+        normalized = normalize_symbol(str(raw_symbol))
+        by_symbol[normalized] = _quote_from_record(normalized, item)
+
+    rows: list[dict] = []
+    for symbol in requested:
+        row = by_symbol.get(symbol)
+        if row:
+            rows.append(row)
+            continue
+        if symbol.endswith(".HK"):
+            hk_quote = _get_ak_hk_spot_quote(symbol, allow_refresh=False)
+            if hk_quote:
+                rows.append(_quote_from_record(symbol, hk_quote))
+    return rows
 
 
 def _quote_from_record(symbol: str, record: dict) -> dict:

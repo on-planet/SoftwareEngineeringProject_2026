@@ -6,19 +6,20 @@ import {
   AlertPriceOperator,
   AlertResearchKind,
   AlertRuleType,
-  createMyAlert,
-  deleteMyAlert,
-  getMyAlertCenter,
-  updateMyAlert,
 } from "../../services/api";
+import {
+  DEFAULT_ALERT_LOOKBACK_DAYS,
+  buildAlertCenterDomainQueryKey,
+  buildAlertDefaultThreshold,
+  buildAlertReadableExplanation,
+  createAlertRule,
+  getAlertCenterDomainQueryOptions,
+  loadAlertCenter,
+  removeAlertRule,
+  setAlertRuleEnabled,
+} from "../../domain/alerts";
 
 import styles from "./AlertsCenterPage.module.css";
-
-const DEFAULT_LOOKBACK_DAYS = 7;
-
-function buildDefaultThreshold(type: AlertRuleType) {
-  return type === "price" ? "10" : "";
-}
 
 export function AlertsCenterPage() {
   const { isAuthenticated, isLoading: authLoading, token } = useAuth();
@@ -26,20 +27,19 @@ export function AlertsCenterPage() {
   const [name, setName] = useState("");
   const [symbol, setSymbol] = useState("");
   const [priceOperator, setPriceOperator] = useState<AlertPriceOperator>("gte");
-  const [threshold, setThreshold] = useState(buildDefaultThreshold("price"));
+  const [threshold, setThreshold] = useState(buildAlertDefaultThreshold("price"));
   const [eventType, setEventType] = useState("buyback");
   const [researchKind, setResearchKind] = useState<AlertResearchKind>("all");
-  const [lookbackDays, setLookbackDays] = useState(DEFAULT_LOOKBACK_DAYS);
+  const [lookbackDays, setLookbackDays] = useState(DEFAULT_ALERT_LOOKBACK_DAYS);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyRuleId, setBusyRuleId] = useState<number | null>(null);
+  const alertCenterQueryKey =
+    isAuthenticated && token ? buildAlertCenterDomainQueryKey(token) : null;
 
   const centerQuery = useApiQuery(
-    isAuthenticated && token ? ["alerts-center", token] : null,
-    () => getMyAlertCenter(token as string),
-    {
-      staleTimeMs: 30_000,
-      cacheTimeMs: 5 * 60_000,
-    },
+    alertCenterQueryKey,
+    () => loadAlertCenter(token as string),
+    getAlertCenterDomainQueryOptions(),
   );
 
   const handleCreateRule = async () => {
@@ -62,19 +62,19 @@ export function AlertsCenterPage() {
       return;
     }
     try {
-      await createMyAlert(token, {
+      await createAlertRule(token, {
         name: normalizedName,
-        rule_type: ruleType,
         symbol: normalizedSymbol,
-        price_operator: ruleType === "price" ? priceOperator : undefined,
-        threshold: ruleType === "price" ? Number(threshold) : undefined,
-        event_type: ruleType === "event" ? eventType.trim() : undefined,
-        research_kind: ruleType === "earnings" ? researchKind : undefined,
-        lookback_days: lookbackDays,
+        ruleType,
+        priceOperator,
+        threshold,
+        eventType,
+        researchKind,
+        lookbackDays,
       });
       setName("");
       setSymbol("");
-      setThreshold(buildDefaultThreshold(ruleType));
+      setThreshold(buildAlertDefaultThreshold(ruleType));
       setActionError(null);
       await centerQuery.refetch();
     } catch (error) {
@@ -88,7 +88,7 @@ export function AlertsCenterPage() {
     }
     setBusyRuleId(ruleId);
     try {
-      await updateMyAlert(token, ruleId, { is_active: !current });
+      await setAlertRuleEnabled(token, ruleId, !current);
       await centerQuery.refetch();
       setActionError(null);
     } catch (error) {
@@ -104,7 +104,7 @@ export function AlertsCenterPage() {
     }
     setBusyRuleId(ruleId);
     try {
-      await deleteMyAlert(token, ruleId);
+      await removeAlertRule(token, ruleId);
       await centerQuery.refetch();
       setActionError(null);
     } catch (error) {
@@ -190,7 +190,7 @@ export function AlertsCenterPage() {
                 onChange={(event) => {
                   const nextType = event.target.value as AlertRuleType;
                   setRuleType(nextType);
-                  setThreshold(buildDefaultThreshold(nextType));
+                  setThreshold(buildAlertDefaultThreshold(nextType));
                 }}
               >
                 <option value="price">价格提醒</option>
@@ -237,7 +237,7 @@ export function AlertsCenterPage() {
                 min={1}
                 max={30}
                 value={lookbackDays}
-                onChange={(event) => setLookbackDays(Math.max(1, Math.min(30, Number(event.target.value) || DEFAULT_LOOKBACK_DAYS)))}
+                onChange={(event) => setLookbackDays(Math.max(1, Math.min(30, Number(event.target.value) || DEFAULT_ALERT_LOOKBACK_DAYS)))}
               />
             </label>
             {actionError ? (
@@ -291,6 +291,7 @@ export function AlertsCenterPage() {
                   </div>
                 </div>
                 <div className="helper">{item.status_message}</div>
+                <div className="helper">{buildAlertReadableExplanation(item)}</div>
                 {item.context_title ? <div style={{ fontSize: 13 }}>{item.context_title}</div> : null}
                 {item.matched_at ? <div className="helper">{`命中时间：${item.matched_at}`}</div> : null}
                 <div className={styles.ruleActions}>

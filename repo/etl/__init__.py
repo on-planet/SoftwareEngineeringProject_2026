@@ -1,1 +1,1 @@
-"""ETL package for KiloQuant."""
+"""ETL package for QuantPulse."""

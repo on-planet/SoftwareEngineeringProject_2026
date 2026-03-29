@@ -35,7 +35,7 @@ def get_events_stats(
     """获取事件统计（按日/类型/标的）。"""
     symbols_filter = symbols or ([symbol] if symbol else None)
     types_filter = event_types or ([event_type] if event_type else None)
-    by_date, by_type, by_symbol = get_event_stats(
+    by_date, by_type, by_symbol, cache_meta = get_event_stats(
         db,
         symbols=symbols_filter,
         event_types=types_filter,
@@ -45,5 +45,6 @@ def get_events_stats(
         top_date=top_date,
         top_type=top_type,
         top_symbol=top_symbol,
+        return_meta=True,
     )
-    return {"by_date": by_date, "by_type": by_type, "by_symbol": by_symbol}
+    return {"by_date": by_date, "by_type": by_type, "by_symbol": by_symbol, **cache_meta}

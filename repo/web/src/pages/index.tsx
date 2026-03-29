@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/router";
 
 import { FuturesCards } from "../components/FuturesCards";
@@ -6,6 +6,17 @@ import { Heatmap } from "../components/Heatmap";
 import { IndexCards } from "../components/IndexCards";
 import { IndexKlinePanel } from "../components/IndexKlinePanel";
 import { INDEX_OPTIONS, inferIndexMarket } from "../constants/indices";
+import {
+  buildIndicesQueryKey,
+  DashboardOverviewResponse,
+  getDashboardOverview,
+  getIndicesQueryOptions,
+  primeApiQuery,
+} from "../services/api";
+
+function buildMotionStyle(index: number): React.CSSProperties {
+  return { ["--motion-index" as "--motion-index"]: index } as React.CSSProperties;
+}
 
 const heroCards = [
   { label: "市场覆盖", value: "A股 + 港股", hint: "默认覆盖实时股票池，支持直接进入个股详情页" },
@@ -44,11 +55,32 @@ export default function HomePage() {
   const router = useRouter();
   const [selectedIndexSymbol, setSelectedIndexSymbol] = useState<string>(INDEX_OPTIONS[0]?.symbol ?? "000001.SH");
   const [heatmapMarket, setHeatmapMarket] = useState<"A" | "HK">("A");
+  const [overview, setOverview] = useState<DashboardOverviewResponse | null | undefined>(undefined);
   const selectedIndex = useMemo(
     () => INDEX_OPTIONS.find((item) => item.symbol === selectedIndexSymbol) ?? null,
     [selectedIndexSymbol],
   );
   const activeIndexMarket = selectedIndex?.market ?? inferIndexMarket(selectedIndexSymbol);
+
+  useEffect(() => {
+    let active = true;
+    getDashboardOverview()
+      .then((payload) => {
+        if (active) {
+          const indexCacheKey = buildIndicesQueryKey();
+          primeApiQuery(indexCacheKey, payload.indices, getIndicesQueryOptions(indexCacheKey));
+          setOverview(payload);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setOverview(null);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const handleIndexSymbolChange = (symbol: string) => {
     setSelectedIndexSymbol(symbol);
@@ -66,25 +98,26 @@ export default function HomePage() {
       <section className="card hero-card">
         <div className="page-header">
           <div>
-            <h1 className="page-title">KiloQuant 市场总览</h1>
+            <h1 className="page-title">QuantPulse 市场总览</h1>
             <p className="helper">聚合指数、个股、期货、行业热力图与多周期 K 线的实时看板。</p>
           </div>
         </div>
-        <div className="hero-grid">
-          {heroCards.map((card) => (
-            <div key={card.label} className="hero-metric">
+        <div className="hero-grid motion-stagger-group">
+          {heroCards.map((card, index) => (
+            <div key={card.label} className="hero-metric" style={buildMotionStyle(index)}>
               <div className="card-title">{card.label}</div>
               <div className="hero-metric-value">{card.value}</div>
               <div className="helper">{card.hint}</div>
             </div>
           ))}
         </div>
-        <div className="action-card-grid">
-          {actionCards.map((card) => (
+        <div className="action-card-grid motion-stagger-group">
+          {actionCards.map((card, index) => (
             <button
               key={card.href}
               type="button"
               className={`action-card action-card-${card.tone}`}
+              style={buildMotionStyle(index + heroCards.length)}
               onClick={() => {
                 void router.push(card.href);
               }}
@@ -100,12 +133,17 @@ export default function HomePage() {
       <section>
         <h2 className="section-title">指数快照</h2>
         <div className="card">
-          <IndexCards
-            activeMarket={activeIndexMarket}
-            selectedSymbol={selectedIndexSymbol}
-            onMarketChange={handleIndexMarketChange}
-            onSymbolChange={handleIndexSymbolChange}
-          />
+          {overview === undefined ? (
+            <div className="helper">甯傚満鎬昏鍔犺浇涓?..</div>
+          ) : (
+            <IndexCards
+              activeMarket={activeIndexMarket}
+              selectedSymbol={selectedIndexSymbol}
+              onMarketChange={handleIndexMarketChange}
+              onSymbolChange={handleIndexSymbolChange}
+              initialPage={overview?.indices}
+            />
+          )}
         </div>
       </section>
 
@@ -122,7 +160,11 @@ export default function HomePage() {
       <section>
         <h2 className="section-title">期货快照</h2>
         <div className="card">
-          <FuturesCards />
+          {overview === undefined ? (
+            <div className="helper">甯傚満鎬昏鍔犺浇涓?..</div>
+          ) : (
+            <FuturesCards initialItems={overview?.futures.items} />
+          )}
         </div>
       </section>
 
@@ -147,7 +189,22 @@ export default function HomePage() {
               港股
             </button>
           </div>
-          <Heatmap market={heatmapMarket} showMarketSelector={false} />
+          {overview === undefined ? (
+            <div className="helper">甯傚満鎬昏鍔犺浇涓?..</div>
+          ) : (
+            <Heatmap
+              market={heatmapMarket}
+              showMarketSelector={false}
+              preloadedPages={
+                overview
+                  ? {
+                      A: overview.heatmap.a,
+                      HK: overview.heatmap.hk,
+                    }
+                  : undefined
+              }
+            />
+          )}
         </div>
       </section>
     </div>

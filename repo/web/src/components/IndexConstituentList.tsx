@@ -2,9 +2,10 @@ import Link from "next/link";
 import React, { useEffect, useMemo, useState } from "react";
 
 import { INDEX_CONSTITUENT_OPTIONS } from "../constants/indices";
-import { getIndexConstituents } from "../services/api";
+import { ApiPage, getIndexConstituents } from "../services/api";
 import { formatNumber, formatSigned } from "../utils/format";
 import { readPersistentCache, writePersistentCache } from "../utils/persistentCache";
+import { VirtualTable } from "./virtual/VirtualTable";
 
 const TEXT = {
   loadError: "\u6307\u6570\u6210\u5206\u80a1\u52a0\u8f7d\u5931\u8d25",
@@ -42,12 +43,7 @@ type ConstituentItem = {
   source?: string | null;
 };
 
-type ConstituentPage = {
-  items: ConstituentItem[];
-  total: number;
-  limit: number;
-  offset: number;
-};
+type ConstituentPage = ApiPage<ConstituentItem>;
 
 const INDEX_CONSTITUENTS_CACHE_TTL_MS = 10 * 60 * 1000;
 
@@ -57,7 +53,7 @@ function buildIndexConstituentsCacheKey(indexSymbol: string, limit: number, offs
 
 export function IndexConstituentList() {
   const [indexSymbol, setIndexSymbol] = useState(DEFAULT_INDEX);
-  const [limit, setLimit] = useState(20);
+  const [limit, setLimit] = useState(100);
   const [page, setPage] = useState(1);
   const [items, setItems] = useState<ConstituentItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -136,9 +132,9 @@ export function IndexConstituentList() {
             setPage(1);
           }}
         >
-          <option value={10}>{`10 ${TEXT.pageUnit}`}</option>
-          <option value={20}>{`20 ${TEXT.pageUnit}`}</option>
           <option value={50}>{`50 ${TEXT.pageUnit}`}</option>
+          <option value={100}>{`100 ${TEXT.pageUnit}`}</option>
+          <option value={200}>{`200 ${TEXT.pageUnit}`}</option>
         </select>
       </div>
 
@@ -154,36 +150,67 @@ export function IndexConstituentList() {
 
       {!loading && !error && items.length > 0 ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          {items.map((item) => (
-            <Link
-              key={`${item.index_symbol}-${item.symbol}-${item.rank ?? 0}`}
-              href={`/stock/${encodeURIComponent(item.symbol)}`}
-              className="card"
-            >
-              <div className="card-title">
-                {item.rank ? `${item.rank}. ` : ""}
-                {item.name || item.symbol}
-              </div>
-              <div className="helper" style={{ marginTop: 6 }}>
-                {item.symbol}
-                {item.market ? ` | ${item.market}` : ""}
-                {item.date ? ` | ${String(item.date).slice(0, 10)}` : ""}
-              </div>
-              <div className="helper" style={{ marginTop: 6 }}>
-                {item.weight !== null && item.weight !== undefined
-                  ? `${TEXT.weight} ${formatNumber(item.weight)}`
-                  : TEXT.weightUnknown}
-                {item.contribution_change !== null && item.contribution_change !== undefined
-                  ? ` | ${TEXT.contribution} ${formatSigned(item.contribution_change)}`
-                  : ""}
-              </div>
-              {item.source ? (
-                <div className="helper" style={{ marginTop: 6 }}>
-                  {`${TEXT.source}: ${item.source}`}
-                </div>
-              ) : null}
-            </Link>
-          ))}
+          <VirtualTable
+            rows={items}
+            rowKey={(item) => `${item.index_symbol}-${item.symbol}-${item.rank ?? 0}`}
+            height={520}
+            rowHeight={52}
+            columns={[
+              {
+                key: "name",
+                header: TEXT.listTitle,
+                width: "1.6fr",
+                cell: (item) => (
+                  <Link href={`/stock/${encodeURIComponent(item.symbol)}`} className="subtle-link">
+                    {item.rank ? `${item.rank}. ` : ""}
+                    {item.name || item.symbol}
+                  </Link>
+                ),
+              },
+              {
+                key: "symbol",
+                header: "Symbol",
+                width: "1fr",
+                cell: (item) => item.symbol,
+              },
+              {
+                key: "market",
+                header: "Market",
+                width: 90,
+                cell: (item) => item.market || "--",
+              },
+              {
+                key: "date",
+                header: "Date",
+                width: 120,
+                cell: (item) => (item.date ? String(item.date).slice(0, 10) : "--"),
+              },
+              {
+                key: "weight",
+                header: TEXT.weight,
+                width: 110,
+                align: "right",
+                cell: (item) =>
+                  item.weight !== null && item.weight !== undefined ? formatNumber(item.weight) : TEXT.weightUnknown,
+              },
+              {
+                key: "contribution_change",
+                header: TEXT.contribution,
+                width: 120,
+                align: "right",
+                cell: (item) =>
+                  item.contribution_change !== null && item.contribution_change !== undefined
+                    ? formatSigned(item.contribution_change)
+                    : "--",
+              },
+              {
+                key: "source",
+                header: TEXT.source,
+                width: "1.2fr",
+                cell: (item) => item.source || "--",
+              },
+            ]}
+          />
 
           <div className="helper" style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <button
