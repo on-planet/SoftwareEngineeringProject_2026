@@ -21,7 +21,7 @@ import {
 } from "../utils/format";
 import { getPrimaryStockName, getSecondaryStockName } from "../utils/stockNames";
 
-const FALLBACK_SECTOR_LABEL = "Unclassified";
+const FALLBACK_SECTOR_LABEL = "未分类";
 
 const normalizeSector = (value?: string | null) => {
   const text = String(value ?? "").trim();
@@ -56,14 +56,14 @@ function DepthTable({ title, prefix, items }: { title: string; prefix: string; i
     <div className="depth-card">
       <div className="card-title">{title}</div>
       {!items.length ? (
-        <div className="helper">No depth data</div>
+        <div className="helper">暂无盘口数据</div>
       ) : (
         <table className="depth-table">
           <thead>
             <tr>
-              <th>Level</th>
-              <th>Price</th>
-              <th>Volume</th>
+              <th>档位</th>
+              <th>价格</th>
+              <th>数量</th>
             </tr>
           </thead>
           <tbody>
@@ -210,23 +210,23 @@ export function StockFundamental({ symbol }: Props) {
   }, [priceChange, profile]);
 
   if (!normalizedSymbol) {
-    return <div className="card helper">Loading symbol...</div>;
+    return <div className="card helper">加载代码中...</div>;
   }
 
   if (overviewQuery.isLoading && !profile) {
-    return <div className="card helper">Loading stock overview...</div>;
+    return <div className="card helper">加载股票概览中...</div>;
   }
 
   if (overviewQuery.error && !profile) {
     return (
       <div className="card helper">
-        {`Failed to load stock overview: ${overviewQuery.error.message}`}
+        {`加载股票概览失败：${overviewQuery.error.message}`}
       </div>
     );
   }
 
   if (!profile) {
-    return <div className="card helper">No stock overview data.</div>;
+    return <div className="card helper">暂无股票概览数据。</div>;
   }
 
   const quote = profile.quote ?? null;
@@ -255,7 +255,7 @@ export function StockFundamental({ symbol }: Props) {
           </div>
           {quote?.timestamp ? (
             <div className="helper" style={{ marginTop: 6 }}>
-              Quote time: {new Date(quote.timestamp).toLocaleString("zh-CN")}
+              行情时间：{new Date(quote.timestamp).toLocaleString("zh-CN")}
             </div>
           ) : null}
           <div style={{ marginTop: 12 }}>
@@ -267,7 +267,7 @@ export function StockFundamental({ symbol }: Props) {
               }}
               disabled={liveRefreshing}
             >
-              {liveRefreshing ? "Refreshing live quote..." : "Refresh live quote"}
+              {liveRefreshing ? "刷新实时行情中..." : "刷新实时行情"}
             </button>
           </div>
         </div>
@@ -283,12 +283,12 @@ export function StockFundamental({ symbol }: Props) {
       </div>
 
       <div className="metric-grid" style={{ marginTop: 18 }}>
-        <MetricCard title="Open" value={formatNullableNumber(quote?.open)} />
-        <MetricCard title="High" value={formatNullableNumber(quote?.high)} />
-        <MetricCard title="Low" value={formatNullableNumber(quote?.low)} />
-        <MetricCard title="Prev close" value={formatNullableNumber(quote?.last_close)} />
+        <MetricCard title="开盘价" value={formatNullableNumber(quote?.open)} />
+        <MetricCard title="最高价" value={formatNullableNumber(quote?.high)} />
+        <MetricCard title="最低价" value={formatNullableNumber(quote?.low)} />
+        <MetricCard title="昨收" value={formatNullableNumber(quote?.last_close)} />
         <MetricCard
-          title="Volume"
+          title="成交量"
           value={
             quote?.volume !== null && quote?.volume !== undefined
               ? formatNumber(quote.volume)
@@ -296,87 +296,87 @@ export function StockFundamental({ symbol }: Props) {
           }
         />
         <MetricCard
-          title="Turnover"
+          title="成交额"
           value={
             quote?.amount !== null && quote?.amount !== undefined
               ? formatNumber(quote.amount)
               : "--"
           }
         />
-        <MetricCard title="Turnover rate" value={formatLoosePercent(quote?.turnover_rate)} />
-        <MetricCard title="Amplitude" value={formatLoosePercent(quote?.amplitude)} />
+        <MetricCard title="换手率" value={formatLoosePercent(quote?.turnover_rate)} />
+        <MetricCard title="振幅" value={formatLoosePercent(quote?.amplitude)} />
         <MetricCard
-          title="PE TTM"
+          title="市盈率 TTM"
           value={formatNullableNumber(detail?.pe_ttm)}
-          helper={extrasLoading && !detail ? "Loading..." : undefined}
+          helper={extrasLoading && !detail ? "加载中..." : undefined}
         />
         <MetricCard
-          title="PB"
+          title="市净率"
           value={formatNullableNumber(detail?.pb)}
-          helper={extrasLoading && !detail ? "Loading..." : undefined}
+          helper={extrasLoading && !detail ? "加载中..." : undefined}
         />
         <MetricCard
-          title="PS TTM"
+          title="市销率 TTM"
           value={formatNullableNumber(detail?.ps_ttm)}
-          helper={extrasLoading && !detail ? "Loading..." : undefined}
+          helper={extrasLoading && !detail ? "加载中..." : undefined}
         />
         <MetricCard
-          title="PCF"
+          title="市现率"
           value={formatNullableNumber(detail?.pcf)}
-          helper={extrasLoading && !detail ? "Loading..." : undefined}
+          helper={extrasLoading && !detail ? "加载中..." : undefined}
         />
         <MetricCard
-          title="Market cap"
+          title="总市值"
           value={
             detail?.market_cap !== null && detail?.market_cap !== undefined
               ? formatNumber(detail.market_cap)
               : "--"
           }
-          helper={extrasLoading && !detail ? "Loading..." : undefined}
+          helper={extrasLoading && !detail ? "加载中..." : undefined}
         />
         <MetricCard
-          title="Float cap"
+          title="流通市值"
           value={
             detail?.float_market_cap !== null && detail?.float_market_cap !== undefined
               ? formatNumber(detail.float_market_cap)
               : "--"
           }
-          helper={extrasLoading && !detail ? "Loading..." : undefined}
+          helper={extrasLoading && !detail ? "加载中..." : undefined}
         />
         <MetricCard
-          title="Dividend yield"
+          title="股息率"
           value={formatLoosePercent(detail?.dividend_yield)}
-          helper={extrasLoading && !detail ? "Loading..." : undefined}
+          helper={extrasLoading && !detail ? "加载中..." : undefined}
         />
         <MetricCard
-          title="Volume ratio"
+          title="量比"
           value={formatNullableNumber(detail?.volume_ratio)}
-          helper={extrasLoading && !detail ? "Loading..." : undefined}
+          helper={extrasLoading && !detail ? "加载中..." : undefined}
         />
       </div>
 
       <div className="summary-grid">
         <div className="summary-card">
-          <div className="helper">Fundamental score</div>
+          <div className="helper">基本面评分</div>
           <div className="stock-score-value">
             {fundamental ? formatNullableNumber(fundamental.score, 1) : "--"}
           </div>
           <div className="stock-summary">
-            {fundamental?.summary ?? "No fundamental summary."}
+            {fundamental?.summary ?? "暂无基本面摘要。"}
           </div>
           {fundamental?.updated_at ? (
             <div className="helper" style={{ marginTop: 12 }}>
-              Updated: {new Date(fundamental.updated_at).toLocaleString("zh-CN")}
+              更新于：{new Date(fundamental.updated_at).toLocaleString("zh-CN")}
             </div>
           ) : null}
         </div>
         <div className="summary-card">
-          <div className="card-title">Order book</div>
+          <div className="card-title">盘口</div>
           <div className="metric-grid compact-grid">
-            <MetricCard title="Diff" value={formatNullableNumber(pankou?.diff)} />
-            <MetricCard title="Ratio" value={formatLoosePercent(pankou?.ratio)} />
+            <MetricCard title="委差" value={formatNullableNumber(pankou?.diff)} />
+            <MetricCard title="委比" value={formatLoosePercent(pankou?.ratio)} />
             <MetricCard
-              title="Book time"
+              title="盘口时间"
               value={
                 pankou?.timestamp
                   ? new Date(pankou.timestamp).toLocaleTimeString("zh-CN", { hour12: false })
@@ -384,7 +384,7 @@ export function StockFundamental({ symbol }: Props) {
               }
             />
             <MetricCard
-              title="Lot size"
+              title="每手股数"
               value={
                 detail?.lot_size !== null && detail?.lot_size !== undefined
                   ? formatNumber(detail.lot_size)
@@ -397,8 +397,8 @@ export function StockFundamental({ symbol }: Props) {
       </div>
 
       <div className="depth-grid">
-        <DepthTable title="Ask depth" prefix="Ask " items={pankou?.asks ?? []} />
-        <DepthTable title="Bid depth" prefix="Bid " items={pankou?.bids ?? []} />
+        <DepthTable title="卖盘" prefix="卖" items={pankou?.asks ?? []} />
+        <DepthTable title="买盘" prefix="买" items={pankou?.bids ?? []} />
       </div>
     </div>
   );

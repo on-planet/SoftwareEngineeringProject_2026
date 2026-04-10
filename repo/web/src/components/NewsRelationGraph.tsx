@@ -88,7 +88,7 @@ function renderChainList(title: string, chains: NewsGraphChain[], emptyText: str
                   </div>
                 ) : null}
                 <div className="helper" style={{ marginTop: 6 }}>
-                  {`strength ${chain.strength.toFixed(2)}`}
+                  {`强度 ${chain.strength.toFixed(2)}`}
                 </div>
                 <div className="stack-sm" style={{ marginTop: 10 }}>
                   {chain.steps.map((step, index) => (
@@ -172,10 +172,9 @@ export function NewsRelationGraph() {
       <section className="card surface-panel">
         <div className="section-headline">
           <div>
-            <div className="card-title">News Graph Plus</div>
+            <div className="card-title">新闻关系图谱</div>
             <div className="helper">
-              The graph now shows both propagation chains and impact chains, so news can be traced from coverage into
-              sectors, stocks, and downstream spillover.
+              本图谱同时展示传播链和影响链，可追踪新闻从报道到板块、个股及下游溢出的完整路径。
             </div>
           </div>
           {mode === "news" ? (
@@ -187,7 +186,7 @@ export function NewsRelationGraph() {
                 setFocusNewsId(null);
               }}
             >
-              Back to stock graph
+              返回个股图谱
             </button>
           ) : null}
         </div>
@@ -196,61 +195,61 @@ export function NewsRelationGraph() {
             className="input"
             value={draftSymbol}
             onChange={(event) => setDraftSymbol(event.target.value)}
-            placeholder="Enter a stock symbol, for example 000001.SH"
+            placeholder="输入股票代码，例如 000001.SH"
           />
           <label className="field-stack">
-            <span>Window</span>
+            <span>时间窗口</span>
             <select className="select" value={days} onChange={(event) => setDays(Number(event.target.value) || 7)}>
-              <option value={3}>3 days</option>
-              <option value={7}>7 days</option>
-              <option value={14}>14 days</option>
+              <option value={3}>3 天</option>
+              <option value={7}>7 天</option>
+              <option value={14}>14 天</option>
             </select>
           </label>
           <label className="field-stack">
-            <span>News Count</span>
+            <span>新闻数量</span>
             <select className="select" value={limit} onChange={(event) => setLimit(Number(event.target.value) || 18)}>
-              <option value={12}>12 news</option>
-              <option value={18}>18 news</option>
-              <option value={24}>24 news</option>
+              <option value={12}>12 条</option>
+              <option value={18}>18 条</option>
+              <option value={24}>24 条</option>
             </select>
           </label>
           <button type="submit" className="primary-button">
-            Build graph
+            构建图谱
           </button>
         </form>
       </section>
 
-      {loading ? <div className="card surface-panel helper">Loading graph...</div> : null}
-      {error ? <div className="card surface-panel helper">{`Failed to load graph: ${error.message}`}</div> : null}
+      {loading ? <div className="card surface-panel helper">图谱加载中...</div> : null}
+      {error ? <div className="card surface-panel helper">{`图谱加载失败：${error.message}`}</div> : null}
 
       {!loading && !error && graphData ? (
         <>
           <div className="metric-grid">
             <div className="metric-panel">
-              <div className="metric-panel__label">Center</div>
+              <div className="metric-panel__label">中心节点</div>
               <div className="metric-panel__value">{graphData.center_label}</div>
               <div className="metric-panel__helper">{formatNewsGraphCenterSummary(graphData)}</div>
             </div>
             <div className="metric-panel">
-              <div className="metric-panel__label">Propagation Chains</div>
+              <div className="metric-panel__label">传播链</div>
               <div className="metric-panel__value">{graphData.propagation_chains.length}</div>
-              <div className="metric-panel__helper">{`${graphData.related_news.length} related news items`}</div>
+              <div className="metric-panel__helper">{`${graphData.related_news.length} 条相关新闻`}</div>
             </div>
             <div className="metric-panel">
-              <div className="metric-panel__label">Impact Chains</div>
+              <div className="metric-panel__label">影响链</div>
               <div className="metric-panel__value">{graphData.impact_chains.length}</div>
-              <div className="metric-panel__helper">{`${graphData.impact_summary.affected_symbols.length} impacted symbols`}</div>
+              <div className="metric-panel__helper">{`${graphData.impact_summary.affected_symbols.length} 个受影响标的`}</div>
             </div>
             <div className="metric-panel">
-              <div className="metric-panel__label">Sentiment</div>
+              <div className="metric-panel__label">情绪</div>
               <div className="metric-panel__value">{graphData.impact_summary.dominant_sentiment || "--"}</div>
-              <div className="metric-panel__helper">{graphData.impact_summary.dominant_direction || "no direction tag"}</div>
+              <div className="metric-panel__helper">{graphData.impact_summary.dominant_direction || "无方向标签"}</div>
             </div>
           </div>
 
           <section className="layout-two-col">
             <div className="card surface-panel">
-              <div className="card-title">Graph View</div>
+              <div className="card-title">图谱视图</div>
               <div className="helper">{formatNewsGraphCenterSummary(graphData)}</div>
               {chartOption ? (
                 <ReactECharts
@@ -269,10 +268,10 @@ export function NewsRelationGraph() {
 
             <div className="stack-md">
               <div className="card surface-panel">
-                <div className="card-title">Graph Explanation</div>
+                <div className="card-title">图谱解释</div>
                 <div className="stack-md" style={{ marginTop: 12 }}>
                   <div style={{ fontWeight: 600 }}>{graphData.explanation.headline}</div>
-                  <div className="helper">{`Generated by ${graphData.explanation.generated_by}`}</div>
+                  <div className="helper">{`生成者：${graphData.explanation.generated_by}`}</div>
                   {graphData.explanation.evidence.map((item) => (
                     <div key={item} className="helper">
                       {item}
@@ -285,29 +284,29 @@ export function NewsRelationGraph() {
               </div>
 
               <div className="card surface-panel">
-                <div className="card-title">Impact Summary</div>
+                <div className="card-title">影响摘要</div>
                 <div className="stack-md" style={{ marginTop: 12 }}>
                   <div className="helper">
-                    {`${graphData.impact_summary.related_news_count} related news | ${graphData.impact_summary.related_event_count} events | ${graphData.impact_summary.propagation_chain_count} propagation chains | ${graphData.impact_summary.impact_chain_count} impact chains`}
+                    {`${graphData.impact_summary.related_news_count} 条相关新闻 | ${graphData.impact_summary.related_event_count} 个事件 | ${graphData.impact_summary.propagation_chain_count} 条传播链 | ${graphData.impact_summary.impact_chain_count} 条影响链`}
                   </div>
                   {renderEntityGroup(
-                    "Affected Sectors",
+                    "受影响板块",
                     graphData.impact_summary.affected_sectors,
-                    "No sectors are attached to the current impact summary.",
+                    "当前影响摘要未关联板块。",
                   )}
                   {renderEntityGroup(
-                    "Affected Stocks",
+                    "受影响个股",
                     graphData.impact_summary.affected_symbols,
-                    "No stocks are attached to the current impact summary.",
+                    "当前影响摘要未关联个股。",
                   )}
                 </div>
               </div>
 
               <div className="card surface-panel">
-                <div className="card-title">Node Details</div>
+                <div className="card-title">节点详情</div>
                 {!selectedNode ? (
                   <div className="helper" style={{ marginTop: 12 }}>
-                    Click a node in the graph to inspect its metadata.
+                    点击图谱中的节点查看其元数据。
                   </div>
                 ) : (
                   <div className="stack-md" style={{ marginTop: 12 }}>
@@ -331,23 +330,23 @@ export function NewsRelationGraph() {
 
           <section className="layout-two-col">
             {renderChainList(
-              "Propagation Chains",
+              "传播链",
               graphData.propagation_chains,
-              "No propagation chain was generated for the selected window.",
+              "所选时间窗口未生成传播链。",
             )}
             {renderChainList(
-              "Impact Chains",
+              "影响链",
               graphData.impact_chains,
-              "No downstream impact chain was generated for the selected window.",
+              "所选时间窗口未生成下游影响链。",
             )}
           </section>
 
           <section className="layout-two-col">
             <div className="card surface-panel">
-              <div className="card-title">Related Events</div>
+              <div className="card-title">相关事件</div>
               <div className="stack-md" style={{ marginTop: 12 }}>
                 {graphData.related_events.length === 0 ? (
-                  <div className="helper">No related events were found in the selected window.</div>
+                  <div className="helper">所选时间窗口未找到相关事件。</div>
                 ) : (
                   graphData.related_events.map((item) => (
                     <div key={item.id} className="helper">
@@ -358,8 +357,8 @@ export function NewsRelationGraph() {
               </div>
             </div>
             <div className="card surface-panel">
-              <div className="card-title">Drill Into News</div>
-              <div className="helper">Open a related article and pivot the graph around that news item.</div>
+              <div className="card-title">深入新闻</div>
+              <div className="helper">打开相关文章并以该新闻为中心重建图谱。</div>
               <div className="stack-md" style={{ marginTop: 10, maxHeight: 320, overflowY: "auto" }}>
                 {drillNews.length === 0 ? <div className="helper">No additional related article is available.</div> : null}
                 {drillNews.map((item) => {

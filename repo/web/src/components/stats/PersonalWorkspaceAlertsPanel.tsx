@@ -305,7 +305,7 @@ export function PersonalWorkspaceAlertsPanel({
                   className="input"
                   value={eventType}
                   onChange={(event) => setEventType(event.target.value)}
-                  placeholder="buyback / earnings / insider"
+                  placeholder="回购 / 财报 / 内幕"
                 />
               </label>
             ) : null}
@@ -410,7 +410,7 @@ export function PersonalWorkspaceAlertsPanel({
                     <span className={styles.statusChip} data-status={item.status}>
                       {item.status}
                     </span>
-                    {!item.is_active ? <span className="kicker">Paused</span> : null}
+                    {!item.is_active ? <span className="kicker">已暂停</span> : null}
                   </div>
                 </div>
 

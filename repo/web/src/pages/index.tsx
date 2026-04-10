@@ -134,7 +134,7 @@ export default function HomePage() {
         <h2 className="section-title">指数快照</h2>
         <div className="card">
           {overview === undefined ? (
-            <div className="helper">甯傚満鎬昏鍔犺浇涓?..</div>
+            <div className="helper">市场总览加载中...</div>
           ) : (
             <IndexCards
               activeMarket={activeIndexMarket}
@@ -161,7 +161,7 @@ export default function HomePage() {
         <h2 className="section-title">期货快照</h2>
         <div className="card">
           {overview === undefined ? (
-            <div className="helper">甯傚満鎬昏鍔犺浇涓?..</div>
+            <div className="helper">市场总览加载中...</div>
           ) : (
             <FuturesCards initialItems={overview?.futures.items} />
           )}
@@ -190,7 +190,7 @@ export default function HomePage() {
             </button>
           </div>
           {overview === undefined ? (
-            <div className="helper">甯傚満鎬昏鍔犺浇涓?..</div>
+            <div className="helper">市场总览加载中...</div>
           ) : (
             <Heatmap
               market={heatmapMarket}

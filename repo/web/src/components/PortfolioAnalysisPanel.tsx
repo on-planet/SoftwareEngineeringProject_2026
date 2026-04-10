@@ -173,20 +173,50 @@ export function PortfolioAnalysisPanel({
     if (sectorExposure.length === 0) {
       return null;
     }
+    // 限制显示前10个行业，其余归入"其他"
+    const maxDisplay = 10;
+    let data = sectorExposure.map((item) => ({
+      name: item.sector,
+      value: item.count,
+    }));
+    if (data.length > maxDisplay) {
+      const topItems = data.slice(0, maxDisplay);
+      const otherCount = data.slice(maxDisplay).reduce((sum, item) => sum + item.value, 0);
+      data = [...topItems, { name: "其他", value: otherCount }];
+    }
     return {
-      tooltip: { trigger: "item" },
-      legend: { bottom: 0 },
+      tooltip: { 
+        trigger: "item",
+        formatter: "{b}: {c} ({d}%)",
+      },
+      legend: { 
+        type: "scroll",
+        orient: "horizontal",
+        bottom: 0,
+        height: 24,
+        pageIconSize: 10,
+        pageTextStyle: { fontSize: 10 },
+      },
       series: [
         {
           name: "行业分布",
           type: "pie",
-          radius: ["35%", "68%"],
-          data: sectorExposure.map((item) => ({
-            name: item.sector,
-            value: item.count,
-          })),
+          radius: ["40%", "70%"],
+          center: ["50%", "45%"],
+          data,
+          label: {
+            show: true,
+            formatter: "{b}\n{c}",
+            fontSize: 10,
+          },
+          labelLine: {
+            show: true,
+            length: 10,
+            length2: 5,
+          },
         },
       ],
+      grid: { top: 10, bottom: 40 },
     };
   }, [sectorExposure]);
 
@@ -194,26 +224,50 @@ export function PortfolioAnalysisPanel({
     if (topMovers.length === 0) {
       return null;
     }
+    // 当标的数量超过6个时，旋转标签避免重叠
+    const shouldRotate = topMovers.length > 6;
     return {
-      tooltip: { trigger: "axis" },
-      xAxis: { type: "category", data: topMovers.map((item) => item.symbol) },
+      tooltip: { 
+        trigger: "axis",
+        formatter: (params: any[]) => {
+          const item = params[0];
+          return `${item.name}<br/>涨跌幅: ${item.value?.toFixed(2)}%`;
+        },
+      },
+      xAxis: { 
+        type: "category", 
+        data: topMovers.map((item) => item.symbol),
+        axisLabel: {
+          rotate: shouldRotate ? 45 : 0,
+          fontSize: 10,
+          interval: 0,
+        },
+      },
       yAxis: {
         type: "value",
         axisLabel: {
           formatter: "{value}%",
+          fontSize: 10,
+        },
+        splitLine: {
+          lineStyle: { type: "dashed" },
         },
       },
       series: [
         {
           type: "bar",
           data: topMovers.map((item) => Number(item.percent || 0)),
-          barMaxWidth: 36,
+          barMaxWidth: 24,
           itemStyle: {
-            borderRadius: [8, 8, 0, 0],
+            borderRadius: [4, 4, 0, 0],
+            color: (params: any) => {
+              const value = params.value as number;
+              return value >= 0 ? "#ef4444" : "#22c55e";
+            },
           },
         },
       ],
-      grid: { left: 40, right: 20, top: 30, bottom: 40 },
+      grid: { left: 40, right: 20, top: 30, bottom: shouldRotate ? 60 : 40 },
     };
   }, [topMovers]);
 
@@ -302,11 +356,22 @@ export function PortfolioAnalysisPanel({
               {sectorExposure.length === 0 ? (
                 <div className="helper">暂无行业数据</div>
               ) : (
-                <div style={{ display: "grid", gap: 8 }}>
+                <div 
+                  style={{ 
+                    display: "grid", 
+                    gap: 8, 
+                    maxHeight: 200, 
+                    overflowY: "auto",
+                    overflowX: "hidden",
+                    paddingRight: 4,
+                  }}
+                >
                   {sectorExposure.map((item) => (
-                    <div key={item.sector} style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
-                      <span>{item.sector}</span>
-                      <span style={{ fontWeight: 600 }}>
+                    <div key={item.sector} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, gap: 12 }}>
+                      <span style={{ flex: 1, minWidth: 0, wordBreak: "break-all" }}>
+                        {item.sector}
+                      </span>
+                      <span style={{ fontWeight: 600, flexShrink: 0, whiteSpace: "nowrap" }}>
                         {item.count} / {formatPercent(item.weight)}
                       </span>
                     </div>

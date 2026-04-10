@@ -76,10 +76,14 @@ export function buildMyWorkspaceQueryKey(token: string) {
   return buildUserScopedKey(token, "workspace");
 }
 
+export function getMyWorkspaceQueryOptions(cacheKey: string): ApiQueryOptions {
+  return buildPersistedQueryOptions(cacheKey, "workspace", TWO_MINUTES_MS, TEN_MINUTES_MS);
+}
+
 export function getUserScopedQueryOptions(label: string): ApiQueryOptions {
   return {
-    staleTimeMs: THIRTY_SECONDS_MS,
-    cacheTimeMs: FIVE_MINUTES_MS,
+    staleTimeMs: TWO_MINUTES_MS,  // 30秒 -> 2分钟
+    cacheTimeMs: TEN_MINUTES_MS,  // 5分钟 -> 10分钟
     label,
   };
 }

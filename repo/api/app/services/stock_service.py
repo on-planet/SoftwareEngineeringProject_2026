@@ -4,9 +4,11 @@ from datetime import date
 
 from sqlalchemy.orm import Session
 
+from app.core.cache import get_json, set_json
 from app.models.stock_live_snapshot import StockLiveSnapshot
 from app.models.stocks import Stock
 from app.schemas.stock import StockCreate, StockUpdate
+from app.services.cache_utils import build_cache_key
 from app.services.profile_service import (
     get_stock_overview_payload,
     get_stock_profile_extras_payload,
@@ -16,6 +18,9 @@ from app.services.live_market_service import (
     get_live_stock_daily,
     list_live_stocks,
 )
+
+# 股票批量对比缓存 TTL（秒）
+STOCK_COMPARE_BATCH_CACHE_TTL = 20
 
 
 def list_stocks(
@@ -130,6 +135,35 @@ def get_stock_compare_batch(db: Session, symbols: list[str], *, prefer_live: boo
     normalized_symbols = _normalize_symbols(symbols)
     if not normalized_symbols:
         return []
+
+    # 构建缓存键（基于 symbols 和 prefer_live）
+    cache_key = build_cache_key(
+        "stock:compare:batch",
+        symbols=normalized_symbols,
+        prefer_live=prefer_live,
+    )
+
+    # 尝试从缓存获取
+    try:
+        cached = get_json(cache_key)
+        if isinstance(cached, list):
+            return cached
+    except Exception:
+        pass  # 缓存失败继续执行主逻辑
+
+    # 执行查询
+    result = _fetch_stock_compare_batch(db, normalized_symbols, prefer_live=prefer_live)
+
+    # 写入缓存（短期内存缓存）
+    try:
+        set_json(cache_key, result, ttl=STOCK_COMPARE_BATCH_CACHE_TTL)
+    except Exception:
+        pass  # 缓存失败不影响主逻辑
+
+    return result
+
+
+def _fetch_stock_compare_batch(db: Session, normalized_symbols: list[str], *, prefer_live: bool = False) -> list[dict]:
 
     rows = (
         db.query(Stock, StockLiveSnapshot)

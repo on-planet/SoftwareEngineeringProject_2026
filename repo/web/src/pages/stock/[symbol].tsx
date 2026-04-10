@@ -17,23 +17,23 @@ import { addWatchTarget, hasWatchTarget, readWatchTargets, replaceWatchTargets }
 
 const StockKlinePanel = dynamic(
   () => import("../../components/StockKlinePanel").then((mod) => mod.StockKlinePanel),
-  { ssr: false, loading: () => <div className="card helper">Loading K line...</div> },
+  { ssr: false, loading: () => <div className="card helper">K 线加载中...</div> },
 );
 const StockIndicatorsChart = dynamic(
   () => import("../../components/StockIndicatorsChart").then((mod) => mod.StockIndicatorsChart),
-  { ssr: false, loading: () => <div className="helper">Loading indicators...</div> },
+  { ssr: false, loading: () => <div className="helper">指标加载中...</div> },
 );
 const StockRiskChart = dynamic(
   () => import("../../components/StockRiskChart").then((mod) => mod.StockRiskChart),
-  { ssr: false, loading: () => <div className="helper">Loading risk view...</div> },
+  { ssr: false, loading: () => <div className="helper">风险视图加载中...</div> },
 );
 const StockFinancialTable = dynamic(
   () => import("../../components/StockFinancialTable").then((mod) => mod.StockFinancialTable),
-  { ssr: false, loading: () => <div className="helper">Loading financials...</div> },
+  { ssr: false, loading: () => <div className="helper">财务数据加载中...</div> },
 );
 const StockResearchPanel = dynamic(
   () => import("../../components/StockResearchPanel").then((mod) => mod.StockResearchPanel),
-  { ssr: false, loading: () => <div className="helper">Loading research...</div> },
+  { ssr: false, loading: () => <div className="helper">研报加载中...</div> },
 );
 
 type Props = {
@@ -207,7 +207,7 @@ export default function StockPage({ symbol }: Props) {
     }
     const nextTargets = addWatchTarget(targetSymbol);
     setIsWatched(true);
-    setWatchMessage(`Added to watchlist: ${targetSymbol}`);
+    setWatchMessage(`已加入自选：${targetSymbol}`);
     if (watchTargetsQueryKey) {
       primeApiQuery(
         watchTargetsQueryKey,
@@ -217,7 +217,7 @@ export default function StockPage({ symbol }: Props) {
     }
     if (authToken) {
       void upsertMyWatchTarget(authToken, targetSymbol).catch(() => {
-        setWatchMessage(`Saved locally, remote sync failed: ${targetSymbol}`);
+        setWatchMessage(`已本地保存，远程同步失败：${targetSymbol}`);
       });
     }
   };
@@ -227,11 +227,9 @@ export default function StockPage({ symbol }: Props) {
       <section className="card">
         <div className="page-header">
           <div>
-            <h1 className="page-title">Stock Detail</h1>
+            <h1 className="page-title">个股详情</h1>
             <p className="helper">
-              The first screen loads critical quote and score data first. K line,
-              financials, research, and charts are deferred until the page is
-              ready.
+              首屏优先加载关键行情和评分数据。K线、财务、研报和图表将在页面就绪后延迟加载。
             </p>
           </div>
           <form className="toolbar" onSubmit={handleSubmit}>
@@ -240,10 +238,10 @@ export default function StockPage({ symbol }: Props) {
               type="text"
               value={currentSymbol}
               onChange={(event) => setCurrentSymbol(event.target.value)}
-              placeholder="Enter symbol, e.g. 600000, 000001.SZ, 0700.HK"
+              placeholder="输入代码，例如 600000、000001.SZ、0700.HK"
             />
             <button type="submit" className="primary-button">
-              Open
+              打开
             </button>
             <button
               type="button"
@@ -251,7 +249,7 @@ export default function StockPage({ symbol }: Props) {
               onClick={handleAddWatchTarget}
               disabled={isWatched}
             >
-              {isWatched ? "Already watched" : "Add to watchlist"}
+              {isWatched ? "已在自选" : "加入自选"}
             </button>
           </form>
           {watchMessage ? <div className="helper">{watchMessage}</div> : null}
@@ -272,7 +270,7 @@ export default function StockPage({ symbol }: Props) {
             <DeferredSection
               resetKey={activeSymbol}
               minHeight={320}
-              placeholder={<div className="card helper">Preparing K line...</div>}
+              placeholder={<div className="card helper">正在准备 K 线...</div>}
             >
               <StockKlinePanel symbol={activeSymbol} />
             </DeferredSection>
@@ -280,11 +278,11 @@ export default function StockPage({ symbol }: Props) {
 
           <section className="split-grid">
             <div>
-              <h2 className="section-title">Indicators</h2>
+              <h2 className="section-title">技术指标</h2>
               <DeferredSection
                 resetKey={activeSymbol}
                 minHeight={320}
-                placeholder={<div className="card helper">Preparing indicators...</div>}
+                placeholder={<div className="card helper">正在准备指标...</div>}
               >
                 <div className="card">
                   <StockIndicatorsChart symbol={activeSymbol} />
@@ -292,11 +290,11 @@ export default function StockPage({ symbol }: Props) {
               </DeferredSection>
             </div>
             <div>
-              <h2 className="section-title">Risk</h2>
+              <h2 className="section-title">风险分析</h2>
               <DeferredSection
                 resetKey={activeSymbol}
                 minHeight={320}
-                placeholder={<div className="card helper">Preparing risk view...</div>}
+                placeholder={<div className="card helper">正在准备风险视图...</div>}
               >
                 <div className="card">
                   <StockRiskChart symbol={activeSymbol} />
@@ -306,11 +304,11 @@ export default function StockPage({ symbol }: Props) {
           </section>
 
           <section>
-            <h2 className="section-title">Financials</h2>
+            <h2 className="section-title">财务数据</h2>
             <DeferredSection
               resetKey={activeSymbol}
               minHeight={320}
-              placeholder={<div className="card helper">Preparing financials...</div>}
+              placeholder={<div className="card helper">正在准备财务数据...</div>}
             >
               <div className="card">
                 <StockFinancialTable symbol={activeSymbol} />
@@ -319,11 +317,11 @@ export default function StockPage({ symbol }: Props) {
           </section>
 
           <section>
-            <h2 className="section-title">Research</h2>
+            <h2 className="section-title">研究报告</h2>
             <DeferredSection
               resetKey={activeSymbol}
               minHeight={320}
-              placeholder={<div className="card helper">Preparing research...</div>}
+              placeholder={<div className="card helper">正在准备研报...</div>}
             >
               <div className="card">
                 <StockResearchPanel symbol={activeSymbol} />
@@ -333,7 +331,7 @@ export default function StockPage({ symbol }: Props) {
         </>
       ) : (
         <section>
-          <div className="card helper">Loading symbol...</div>
+          <div className="card helper">加载代码中...</div>
         </section>
       )}
     </div>

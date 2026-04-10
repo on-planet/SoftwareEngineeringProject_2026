@@ -89,7 +89,7 @@ export function FuturesCards({ initialItems }: FuturesCardsProps) {
         if (!active) {
           return;
         }
-        setError(err.message || "Failed to load futures data");
+        setError(err.message || "期货数据加载失败");
       })
       .finally(() => {
         if (active) {

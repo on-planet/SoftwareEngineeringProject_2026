@@ -18,7 +18,7 @@ const SmokeButtBacktestWindows = dynamic(
   () => import("./SmokeButtBacktestWindows").then((module) => module.SmokeButtBacktestWindows),
   {
     ssr: false,
-    loading: () => <div className="helper">Preparing backtest charts...</div>,
+    loading: () => <div className="helper">准备回测图表...</div>,
   },
 );
 
@@ -152,7 +152,7 @@ export function SmokeButtBacktestPanel({ market = "" }: Props) {
         <SmokeButtBacktestWindows payload={payload} />
       ) : (
         <div className="card surface-panel helper">
-          Backtest summary is ready. Detailed curves and bucket tables are loading in the background.
+          回测摘要已就绪。详细曲线和分组表正在后台加载。
         </div>
       )}
     </div>

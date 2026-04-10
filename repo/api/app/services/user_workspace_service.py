@@ -37,9 +37,17 @@ def _build_pool_symbol_rows(symbols: list[str]) -> list[UserStockPoolItem]:
     return [UserStockPoolItem(symbol=symbol, position=index) for index, symbol in enumerate(symbols)]
 
 
+# 模块级缓存，避免重复检查表是否存在
+_table_checked = False
+
 def _ensure_stock_pool_item_table(db: Session) -> None:
+    global _table_checked
+    if _table_checked:
+        return
+    
     bind = db.get_bind()
     if inspect(bind).has_table(UserStockPoolItem.__tablename__):
+        _table_checked = True
         return
 
     UserStockPoolItem.__table__.create(bind=bind, checkfirst=True)
@@ -54,6 +62,7 @@ def _ensure_stock_pool_item_table(db: Session) -> None:
     if legacy_rows:
         db.bulk_save_objects(legacy_rows)
     db.commit()
+    _table_checked = True
 
 
 def _pool_to_out(item: UserStockPool) -> StockPoolOut:

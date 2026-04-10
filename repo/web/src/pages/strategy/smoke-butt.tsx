@@ -22,16 +22,16 @@ const SmokeButtBacktestPanel = dynamic(
   () => import("../../components/SmokeButtBacktestPanel").then((module) => module.SmokeButtBacktestPanel),
   {
     ssr: false,
-    loading: () => <div className="helper">Preparing backtest panel...</div>,
+    loading: () => <div className="helper">准备回测面板...</div>,
   },
 );
 
 const SIGNAL_OPTIONS: Array<{ value: "" | StrategySignal; label: string }> = [
-  { value: "", label: "All Signals" },
-  { value: "strong_buy", label: "Strong Buy" },
-  { value: "buy", label: "Buy" },
-  { value: "watch", label: "Watch" },
-  { value: "avoid", label: "Avoid" },
+  { value: "", label: "全部信号" },
+  { value: "strong_buy", label: "强烈买入" },
+  { value: "buy", label: "买入" },
+  { value: "watch", label: "观望" },
+  { value: "avoid", label: "回避" },
 ];
 
 function signalTone(signal?: string | null) {
@@ -140,32 +140,32 @@ export default function SmokeButtStrategyPage() {
       <section className="card hero-card">
         <div className="page-header">
           <div>
-            <h1 className="page-title">AutoGluon Smoke Butt Strategy</h1>
+            <h1 className="page-title">AutoGluon 烟头策略</h1>
             <p className="helper">
-              Historical prices, fundamentals, events, buybacks, and research are ranked into a cross-sectional idea board.
+              历史价格、基本面、事件、回购和研报等数据被整合为跨截面选股看板。
             </p>
           </div>
           <div className="toolbar">
             <button type="button" className="primary-button" onClick={() => void handleTrain()} disabled={isTraining}>
-              {isTraining ? "Training..." : "Retrain"}
+              {isTraining ? "训练中..." : "重新训练"}
             </button>
           </div>
         </div>
         <div className="hero-grid">
           <div className="hero-metric">
-            <div className="card-title">Status</div>
-            <div className="hero-metric-value">{run ? "Ready" : "Not Trained"}</div>
-            <div className="helper">{run ? `Latest run: ${run.as_of}` : "Run the model to generate the board."}</div>
+            <div className="card-title">状态</div>
+            <div className="hero-metric-value">{run ? "就绪" : "未训练"}</div>
+            <div className="helper">{run ? `最新运行：${run.as_of}` : "运行模型以生成看板。"}</div>
           </div>
           <div className="hero-metric">
-            <div className="card-title">Train Rows</div>
+            <div className="card-title">训练行数</div>
             <div className="hero-metric-value">{run ? formatNullableNumber(run.train_rows, 0) : "--"}</div>
-            <div className="helper">Rows used for model fitting</div>
+            <div className="helper">用于模型拟合的行数</div>
           </div>
           <div className="hero-metric">
-            <div className="card-title">Scored Symbols</div>
+            <div className="card-title">已评分标的</div>
             <div className="hero-metric-value">{run ? formatNullableNumber(run.scored_rows, 0) : "--"}</div>
-            <div className="helper">Symbols with fresh signals</div>
+            <div className="helper">带有新信号的标的数量</div>
           </div>
         </div>
         {notice ? <div className="helper">{notice}</div> : null}
@@ -181,10 +181,10 @@ export default function SmokeButtStrategyPage() {
               setPage(1);
             }}
           >
-            <option value="">All Markets</option>
-            <option value="A">A-share</option>
-            <option value="HK">HK</option>
-            <option value="US">US</option>
+            <option value="">全部市场</option>
+            <option value="A">A股</option>
+            <option value="HK">港股</option>
+            <option value="US">美股</option>
           </select>
           <select
             className="select"
@@ -205,7 +205,7 @@ export default function SmokeButtStrategyPage() {
         {run ? (
           <div className="strategy-board-meta">
             <div className="helper">
-              {`Trained at ${new Date(run.trained_at).toLocaleString("zh-CN")} | horizon ${run.label_horizon} trading days`}
+              {`训练于 ${new Date(run.trained_at).toLocaleString("zh-CN")} | 持有周期 ${run.label_horizon} 个交易日`}
             </div>
             <div className="strategy-pill-row">
               {run.feature_importance.slice(0, 5).map((item) => (
@@ -221,11 +221,11 @@ export default function SmokeButtStrategyPage() {
         ) : null}
 
         {listQuery.isLoading ? (
-          <div className="helper">Loading strategy board...</div>
+          <div className="helper">策略看板加载中...</div>
         ) : !run ? (
           <div className="surface-empty">
-            <strong>No strategy output yet</strong>
-            <div className="helper">Run a training pass first. The leaderboard and diagnostics will appear here.</div>
+            <strong>暂无策略输出</strong>
+            <div className="helper">请先运行一次训练。排行榜和诊断信息将在此显示。</div>
           </div>
         ) : (
           <>
@@ -236,10 +236,10 @@ export default function SmokeButtStrategyPage() {
                 height={560}
                 rowHeight={52}
                 columns={[
-                  { key: "rank", header: "Rank", width: 72, align: "right", cell: (item) => item.rank },
+                  { key: "rank", header: "排名", width: 72, align: "right", cell: (item) => item.rank },
                   {
                     key: "symbol",
-                    header: "Stock",
+                    header: "股票",
                     width: "1.3fr",
                     cell: (item) => (
                       <Link href={`/stock/${encodeURIComponent(item.symbol)}`} className="subtle-link">
@@ -247,18 +247,18 @@ export default function SmokeButtStrategyPage() {
                       </Link>
                     ),
                   },
-                  { key: "market", header: "Market", width: 96, cell: (item) => item.market },
-                  { key: "sector", header: "Sector", width: "1fr", cell: (item) => item.sector || "--" },
+                  { key: "market", header: "市场", width: 96, cell: (item) => item.market },
+                  { key: "sector", header: "板块", width: "1fr", cell: (item) => item.sector || "--" },
                   {
                     key: "score",
-                    header: "Score",
+                    header: "得分",
                     width: 100,
                     align: "right",
                     cell: (item) => formatNullableNumber(item.score, 1),
                   },
                   {
                     key: "expected_return",
-                    header: "Expected",
+                    header: "预期收益",
                     width: 116,
                     align: "right",
                     cell: (item) =>
@@ -268,7 +268,7 @@ export default function SmokeButtStrategyPage() {
                   },
                   {
                     key: "signal",
-                    header: "Signal",
+                    header: "信号",
                     width: 120,
                     cell: (item) => (
                       <span className="strategy-pill" data-tone={signalTone(item.signal)}>
@@ -278,7 +278,7 @@ export default function SmokeButtStrategyPage() {
                   },
                   {
                     key: "summary",
-                    header: "Summary",
+                    header: "摘要",
                     width: "1.6fr",
                     cell: (item) => buildStrategySignalExplanation(item),
                   },
@@ -287,7 +287,7 @@ export default function SmokeButtStrategyPage() {
             </div>
 
             <div className="stock-pagination">
-              <div className="helper">{`${total} rows | page ${page}/${totalPages}`}</div>
+              <div className="helper">{`${total} 行 | 第 ${page}/${totalPages} 页`}</div>
               <div className="stock-pagination-actions">
                 <button
                   type="button"
@@ -295,7 +295,7 @@ export default function SmokeButtStrategyPage() {
                   disabled={page <= 1}
                   onClick={() => setPage((value) => Math.max(1, value - 1))}
                 >
-                  Prev
+                  上一页
                 </button>
                 <button
                   type="button"
@@ -303,7 +303,7 @@ export default function SmokeButtStrategyPage() {
                   disabled={page >= totalPages}
                   onClick={() => setPage((value) => Math.min(totalPages, value + 1))}
                 >
-                  Next
+                  下一页
                 </button>
               </div>
             </div>
@@ -315,16 +315,16 @@ export default function SmokeButtStrategyPage() {
         <div className="page-header">
           <div>
             <h2 className="section-title" style={{ marginBottom: 4 }}>
-              Backtest Confidence
+              回测置信度
             </h2>
             <p className="helper">
-              Review 20d and 60d bucket behavior, spread return, win rate, and drawdown on the latest model run.
+              查看最新模型运行的 20 日和 60 日分组表现、利差收益、胜率和回撤。
             </p>
           </div>
         </div>
         <DeferredSection
           resetKey={market || "all"}
-          placeholder={<div className="helper">Backtest panel will load when this section is in view.</div>}
+          placeholder={<div className="helper">回测面板将在滚动到此处时加载。</div>}
         >
           <SmokeButtBacktestPanel market={market} />
         </DeferredSection>

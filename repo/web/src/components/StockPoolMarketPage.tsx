@@ -11,6 +11,7 @@ import {
   deleteMyStockFilter,
   deleteMyStockPool,
   getUserScopedQueryOptions,
+  getMyWorkspaceQueryOptions,
   getCompareStocks,
   getMyWorkspace,
   getStocks,
@@ -20,6 +21,7 @@ import {
   UserStockPoolItem,
 } from "../services/api";
 import { getPrimaryStockName, getSecondaryStockName } from "../utils/stockNames";
+import { addWatchTarget, readWatchTargets } from "../utils/watchTargets";
 import { PortfolioAnalysisPanel } from "./PortfolioAnalysisPanel";
 
 import styles from "./StockPoolMarketPage.module.css";
@@ -197,12 +199,16 @@ function ActivePoolSection({
   loading,
   error,
   onClose,
+  onAddToWatch,
+  addedCount,
 }: {
   pool: UserStockPoolItem;
   compareItems: StockCompareItem[];
   loading: boolean;
   error: string | null;
   onClose: () => void;
+  onAddToWatch: () => void;
+  addedCount: number;
 }) {
   return (
     <section className={`card market-panel ${styles.activePoolPanel}`} data-tone="cool">
@@ -212,6 +218,9 @@ function ActivePoolSection({
           <div className="helper">{`${pool.market} 市场 · ${pool.symbols.length} 个标的`}</div>
         </div>
         <div className={styles.workspaceItemActions}>
+          <button type="button" className="primary-button" onClick={onAddToWatch}>
+            {addedCount > 0 ? `已添加 ${addedCount} 个` : "添加到观察"}
+          </button>
           <button type="button" className="stock-page-button" onClick={onClose}>
             关闭
           </button>
@@ -461,6 +470,7 @@ export function StockPoolMarketPage({ market }: { market: MarketCode }) {
   const [filterName, setFilterName] = useState("");
   const [workspaceMessage, setWorkspaceMessage] = useState<string | null>(null);
   const [activePoolId, setActivePoolId] = useState<number | null>(null);
+  const [addedToWatchCount, setAddedToWatchCount] = useState(0);
   const { isAuthenticated, token, isLoading: authLoading } = useAuth();
 
   useEffect(() => {
@@ -476,13 +486,15 @@ export function StockPoolMarketPage({ market }: { market: MarketCode }) {
     }, SEARCH_DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
   }, [sector]);
-  const workspaceQueryKey =
-    isAuthenticated && token ? buildMyWorkspaceQueryKey(token) : null;
+  const workspaceQueryKey = useMemo(
+    () => (isAuthenticated && token ? buildMyWorkspaceQueryKey(token) : null),
+    [isAuthenticated, token],
+  );
 
   const workspaceQuery = useApiQuery(
     workspaceQueryKey,
     () => getMyWorkspace(token as string),
-    getUserScopedQueryOptions("workspace"),
+    workspaceQueryKey ? getMyWorkspaceQueryOptions(workspaceQueryKey) : getUserScopedQueryOptions("workspace"),
   );
 
   const savedPools = useMemo(
@@ -631,12 +643,27 @@ export function StockPoolMarketPage({ market }: { market: MarketCode }) {
 
   const activePoolError = activePoolQuery.error?.message || null;
 
+  const handleAddPoolToWatch = (symbols: string[]) => {
+    const currentWatch = readWatchTargets();
+    let added = 0;
+    for (const symbol of symbols) {
+      const normalized = symbol.trim().toUpperCase();
+      if (normalized && !currentWatch.includes(normalized)) {
+        addWatchTarget(normalized);
+        added += 1;
+      }
+    }
+    setAddedToWatchCount(added);
+    setWorkspaceMessage(`已成功添加 ${added} 个标的到观察列表`);
+    setTimeout(() => setAddedToWatchCount(0), 3000);
+  };
+
   return (
     <div className="page">
       <section className="card stock-pool-hero">
         <div className="page-header">
           <div>
-            <span className="kicker">Market Screener</span>
+            <span className="kicker">市场筛选器</span>
             <h1 className="page-title">{marketTitle}</h1>
             <p className="helper" style={{ marginTop: 8, maxWidth: 760 }}>
               股票池按市场拆分，支持保存筛选器和自定义股票池；组合分析与股票池详情共用同一套批量股票概览接口。
@@ -699,7 +726,7 @@ export function StockPoolMarketPage({ market }: { market: MarketCode }) {
         <WorkspaceCard
           title="自定义股票池"
           helper="从当前列表批量选择标的，保存成自己的分析池。"
-          kicker="Pools"
+          kicker="股票池"
           tone="cool"
         >
           <div className={styles.workspaceMetrics}>
@@ -753,6 +780,9 @@ export function StockPoolMarketPage({ market }: { market: MarketCode }) {
                     <div className="helper">{`${item.symbols.length} 个标的 · ${item.market} 市场`}</div>
                   </div>
                   <div className={styles.workspaceItemActions}>
+                    <button type="button" className="primary-button" onClick={() => handleAddPoolToWatch(item.symbols)}>
+                      添加到观察
+                    </button>
                     <button type="button" className="stock-page-button" onClick={() => setActivePoolId(item.id)}>
                       打开
                     </button>
@@ -769,7 +799,7 @@ export function StockPoolMarketPage({ market }: { market: MarketCode }) {
         <WorkspaceCard
           title="保存筛选器"
           helper="把关键词和行业筛选条件保存为可复用的 preset。"
-          kicker="Filters"
+          kicker="筛选器"
           tone="warm"
         >
           <div className={styles.workspaceMetrics}>
@@ -845,6 +875,8 @@ export function StockPoolMarketPage({ market }: { market: MarketCode }) {
           loading={activePoolQuery.isLoading && !(activePoolQuery.data?.items || []).length}
           error={activePoolError}
           onClose={() => setActivePoolId(null)}
+          onAddToWatch={() => handleAddPoolToWatch(activePool.symbols)}
+          addedCount={addedToWatchCount}
         />
       ) : null}
 

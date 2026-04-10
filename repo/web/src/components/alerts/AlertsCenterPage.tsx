@@ -146,7 +146,7 @@ export function AlertsCenterPage() {
     <div className="page">
       <section className={`card market-panel ${styles.hero}`}>
         <div>
-          <span className="kicker">Alert Center</span>
+          <span className="kicker">告警中心</span>
           <h1 className="page-title">告警中心</h1>
           <p className="helper" style={{ marginTop: 8, maxWidth: 760 }}>
             先支持规则管理和即时状态评估，不做异步推送；价格、事件和财报提醒都基于当前数据库/行情快照实时计算。
@@ -216,7 +216,7 @@ export function AlertsCenterPage() {
             {ruleType === "event" ? (
               <label className={styles.field}>
                 <span className={styles.fieldLabel}>事件类型</span>
-                <input className="input" value={eventType} onChange={(event) => setEventType(event.target.value)} placeholder="buyback / insider / earnings" />
+                <input className="input" value={eventType} onChange={(event) => setEventType(event.target.value)} placeholder="回购 / 内幕 / 财报" />
               </label>
             ) : null}
             {ruleType === "earnings" ? (
@@ -285,9 +285,9 @@ export function AlertsCenterPage() {
                   </div>
                   <div className={styles.ruleMeta}>
                     <span className={styles.statusChip} data-status={item.status}>
-                      {item.status}
+                      {item.status === "triggered" ? "已触发" : item.status === "active" ? "监控中" : item.status}
                     </span>
-                    {!item.is_active ? <span className="kicker">Paused</span> : null}
+                    {!item.is_active ? <span className="kicker">已暂停</span> : null}
                   </div>
                 </div>
                 <div className="helper">{item.status_message}</div>

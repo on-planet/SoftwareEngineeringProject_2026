@@ -29,8 +29,8 @@ type IndexPage = {
 };
 
 const MARKET_OPTIONS: Array<{ key: IndexMarket; label: string; hint: string }> = [
-  { key: "A", label: "A Share", hint: "Shanghai, Shenzhen, STAR, and Beijing benchmarks" },
-  { key: "HK", label: "Hong Kong", hint: "HSI, HSCEI, and Hang Seng Tech" },
+  { key: "A", label: "A股", hint: "上海、深圳、科创板和北京基准指数" },
+  { key: "HK", label: "港股", hint: "恒生指数、国企指数和恒生科技" },
 ];
 
 const INDEX_ORDER_MAP = new Map(INDEX_OPTIONS.map((item, index) => [item.symbol, index]));
@@ -86,25 +86,25 @@ export function IndexCards({
   const activeMarketMeta = MARKET_OPTIONS.find((item) => item.key === activeMarket) || MARKET_OPTIONS[0];
 
   if (loading) {
-    return <div className="helper">Loading index snapshot...</div>;
+    return <div className="helper">指数快照加载中...</div>;
   }
 
   if (error) {
-    return <div className="helper">{`Failed to load index snapshot: ${error}`}</div>;
+    return <div className="helper">{`指数快照加载失败：${error}`}</div>;
   }
 
   if (data.length === 0) {
-    return <div className="helper">No index snapshot data.</div>;
+    return <div className="helper">暂无指数快照数据。</div>;
   }
 
   return (
     <div className="index-snapshot">
       <div className="index-snapshot-head">
         <div>
-          <div className="card-title">Market Switch</div>
+          <div className="card-title">市场切换</div>
           <div className="helper">
             {activeMarketMeta.hint}
-            {visibleItems.length ? ` | ${visibleItems.length} indices` : ""}
+            {visibleItems.length ? ` | ${visibleItems.length} 个指数` : ""}
           </div>
         </div>
         <div className="index-market-switch" role="tablist" aria-label="Index market switch">
@@ -127,7 +127,7 @@ export function IndexCards({
       <div key={activeMarket} className="motion-tab-panel">
         {!visibleItems.length ? (
           <div className="helper">
-            No {activeMarket === "A" ? "A Share" : "Hong Kong"} index data.
+            暂无{activeMarket === "A" ? "A股" : "港股"}指数数据。
           </div>
         ) : (
           <div className="grid grid-3">

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 import sys
 import types
@@ -35,6 +35,7 @@ if "pydantic_settings" not in sys.modules:
 
 from app.models.base import Base
 from app.models.daily_prices import DailyPrice
+from app.models.stock_factor_exposure_cache import StockFactorExposureCache
 from app.models.stocks import Stock
 from app.models.user_bought_target import UserBoughtTarget
 from app.schemas.portfolio_stress import PortfolioStressPreviewIn, PortfolioStressRuleIn
@@ -155,6 +156,51 @@ class PortfolioStressServiceTests(unittest.TestCase):
         self.assertAlmostEqual(float(affected["00700.HK"]["shock_pct"]), -0.05, places=4)
         self.assertAlmostEqual(float(affected["600048.SH"]["shock_pct"]), -0.01, places=4)
         self.assertAlmostEqual(float(payload["loss_amount"]), 56.0, places=4)
+
+    def test_factor_model_propagates_symbol_shock_to_correlated_holdings(self) -> None:
+        self.db.query(DailyPrice).delete()
+        start = date(2025, 12, 1)
+        close_1 = 10.0
+        close_2 = 20.0
+        close_3 = 15.0
+        rows: list[DailyPrice] = []
+        for idx in range(95):
+            item_date = start + timedelta(days=idx)
+            r1 = 0.0015 + ((idx % 7) - 3) * 0.00018
+            r2 = 0.0012 + ((idx % 7) - 3) * 0.00016
+            r3 = 0.0004 + ((idx % 5) - 2) * 0.00008
+            close_1 *= (1.0 + r1)
+            close_2 *= (1.0 + r2)
+            close_3 *= (1.0 + r3)
+            rows.extend(
+                [
+                    DailyPrice(symbol="000001.SZ", date=item_date, open=close_1, high=close_1, low=close_1, close=close_1, volume=1000),
+                    DailyPrice(symbol="00700.HK", date=item_date, open=close_2, high=close_2, low=close_2, close=close_2, volume=1000),
+                    DailyPrice(symbol="600048.SH", date=item_date, open=close_3, high=close_3, low=close_3, close=close_3, volume=1000),
+                ]
+            )
+        self.db.add_all(rows)
+        self.db.commit()
+
+        payload = preview_custom_bought_target_stress_test(
+            self.db,
+            7,
+            PortfolioStressPreviewIn(
+                name="factor propagation",
+                description="symbol shock should spill over",
+                position_limit=5,
+                rules=[
+                    PortfolioStressRuleIn(scope_type="symbol", scope_value="000001.SZ", shock_pct=-0.10),
+                ],
+            ),
+        )
+
+        self.assertTrue(any("传播后冲击" in str(item) for item in payload.get("rules", [])))
+        affected = {item["symbol"]: item for item in payload.get("affected_positions", [])}
+        self.assertIn("000001.SZ", affected)
+        self.assertIn("00700.HK", affected)
+        self.assertLess(float(affected["00700.HK"]["shock_pct"]), 0.0)
+        self.assertGreater(self.db.query(StockFactorExposureCache).count(), 0)
 
 
 if __name__ == "__main__":

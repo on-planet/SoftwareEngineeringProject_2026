@@ -116,7 +116,7 @@ export default function FuturesPage() {
         if (!active) {
           return;
         }
-        setError(err.message || "Failed to load futures data");
+        setError(err.message || "期货数据加载失败");
       })
       .finally(() => {
         if (active) {
@@ -161,7 +161,7 @@ export default function FuturesPage() {
           return;
         }
         setSeries([]);
-        setError(err.message || "Failed to load futures series");
+        setError(err.message || "期货时间序列加载失败");
       })
       .finally(() => {
         if (active) {
@@ -183,13 +183,13 @@ export default function FuturesPage() {
 
     return {
       tooltip: { trigger: "axis" },
-      legend: { data: ["Close", "Volume"] },
+      legend: { data: ["收盘价", "成交量"] },
       grid: { left: 48, right: 48, top: 36, bottom: 40 },
       xAxis: [{ type: "category", data: labels }],
       yAxis: [{ type: "value", scale: true }, { type: "value", scale: true }],
       series: [
         {
-          name: "Close",
+          name: "收盘价",
           type: "line",
           data: closeValues,
           smooth: true,
@@ -197,7 +197,7 @@ export default function FuturesPage() {
           lineStyle: { width: 2, color: "#2563eb" },
         },
         {
-          name: "Volume",
+          name: "成交量",
           type: "bar",
           yAxisIndex: 1,
           data: volumeValues,

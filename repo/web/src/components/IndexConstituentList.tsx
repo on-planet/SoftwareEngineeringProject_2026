@@ -169,19 +169,19 @@ export function IndexConstituentList() {
               },
               {
                 key: "symbol",
-                header: "Symbol",
+                header: "代码",
                 width: "1fr",
                 cell: (item) => item.symbol,
               },
               {
                 key: "market",
-                header: "Market",
+                header: "市场",
                 width: 90,
                 cell: (item) => item.market || "--",
               },
               {
                 key: "date",
-                header: "Date",
+                header: "日期",
                 width: 120,
                 cell: (item) => (item.date ? String(item.date).slice(0, 10) : "--"),
               },

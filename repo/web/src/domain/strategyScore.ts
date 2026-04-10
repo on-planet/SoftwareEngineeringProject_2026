@@ -67,11 +67,18 @@ export function buildStrategySignalExplanation(item: Pick<SmokeButtCandidate, "s
   if (item.signal_explanation?.trim()) {
     return item.signal_explanation.trim();
   }
+  const signalMap: Record<string, string> = {
+    strong_buy: "强烈买入",
+    buy: "买入",
+    watch: "观望",
+    avoid: "回避",
+  };
+  const signalText = signalMap[item.signal] || item.signal;
   const expectedReturnText =
     item.expected_return !== null && item.expected_return !== undefined
       ? `${(item.expected_return * 100).toFixed(2)}%`
-      : "n/a";
-  return `${item.signal} signal with model-implied return ${expectedReturnText} and rank #${item.rank}. ${item.summary || ""}`.trim();
+      : "无";
+  return `${signalText}信号，模型隐含收益 ${expectedReturnText}，排名第 ${item.rank} 位。${item.summary || ""}`.trim();
 }
 
 export async function loadStrategyLeaderboard(

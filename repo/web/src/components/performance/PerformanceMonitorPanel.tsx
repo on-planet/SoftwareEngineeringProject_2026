@@ -51,7 +51,7 @@ export function PerformanceMonitorPanel() {
     <aside className={styles.panel}>
       <div className={styles.header}>
         <div className={styles.title}>
-          <span className={styles.eyebrow}>Real Monitor</span>
+          <span className={styles.eyebrow}>实时监控</span>
           <span className={styles.route}>{route}</span>
         </div>
         <button
@@ -59,7 +59,7 @@ export function PerformanceMonitorPanel() {
           className={styles.toggle}
           onClick={() => setCollapsed((value) => !value)}
         >
-          {collapsed ? "Expand" : "Collapse"}
+          {collapsed ? "展开" : "收起"}
         </button>
       </div>
 
@@ -67,41 +67,41 @@ export function PerformanceMonitorPanel() {
         <div className={styles.body}>
           <div className={styles.metrics}>
             <div className={styles.metric}>
-              <div className={styles.metricLabel}>TTFB</div>
+              <div className={styles.metricLabel}>首字节时间</div>
               <div className={styles.metricValue}>
                 {formatMs(snapshot.webVitals.TTFB?.valueMs)}
               </div>
-              <div className={styles.metricHelper}>Browser web vital</div>
+              <div className={styles.metricHelper}>浏览器 Web 指标</div>
             </div>
             <div className={styles.metric}>
-              <div className={styles.metricLabel}>FCP</div>
+              <div className={styles.metricLabel}>首次内容绘制</div>
               <div className={styles.metricValue}>
                 {formatMs(snapshot.webVitals.FCP?.valueMs)}
               </div>
               <div className={styles.metricHelper}>Browser web vital</div>
             </div>
             <div className={styles.metric}>
-              <div className={styles.metricLabel}>API Avg</div>
+              <div className={styles.metricLabel}>API 平均耗时</div>
               <div className={styles.metricValue}>
                 {formatMs(snapshot.averageRequestDurationMs)}
               </div>
               <div className={styles.metricHelper}>
-                Avg TTFB {formatMs(snapshot.averageRequestTtfbMs)}
+                平均首字节时间 {formatMs(snapshot.averageRequestTtfbMs)}
               </div>
             </div>
             <div className={styles.metric}>
-              <div className={styles.metricLabel}>Cache Hit</div>
+              <div className={styles.metricLabel}>缓存命中率</div>
               <div className={styles.metricValue}>
                 {formatPercent(snapshot.queryCacheHitRate)}
               </div>
               <div className={styles.metricHelper}>
-                Backend {formatPercent(snapshot.backendCacheHitRate)}
+                后端 {formatPercent(snapshot.backendCacheHitRate)}
               </div>
             </div>
           </div>
 
           <section className={styles.section}>
-            <div className={styles.sectionTitle}>Recent Requests</div>
+            <div className={styles.sectionTitle}>最近请求</div>
             {snapshot.recentRequests.length ? (
               <div className={styles.list}>
                 {snapshot.recentRequests.map((item) => (
@@ -111,24 +111,24 @@ export function PerformanceMonitorPanel() {
                       <div className={styles.rowMeta}>
                         {item.status}
                         {typeof item.backendCacheHit === "boolean"
-                          ? ` | backend ${item.backendCacheHit ? "hit" : "miss"}`
+                          ? ` | 后端 ${item.backendCacheHit ? "命中" : "未命中"}`
                           : ""}
                       </div>
                     </div>
                     <div className={styles.rowValue}>
                       <span>{formatMs(item.durationMs)}</span>
-                      <span>{`TTFB ${formatMs(item.ttfbMs)}`}</span>
+                      <span>{`首字节时间 ${formatMs(item.ttfbMs)}`}</span>
                     </div>
                   </div>
                 ))}
               </div>
             ) : (
-              <div className={styles.empty}>No network requests captured on this page yet.</div>
+              <div className={styles.empty}>此页面尚未捕获网络请求。</div>
             )}
           </section>
 
           <section className={styles.section}>
-            <div className={styles.sectionTitle}>Recent Query Cache</div>
+            <div className={styles.sectionTitle}>最近查询缓存</div>
             {snapshot.recentQueries.length ? (
               <div className={styles.list}>
                 {snapshot.recentQueries.map((item) => (
@@ -138,13 +138,13 @@ export function PerformanceMonitorPanel() {
                       <div className={styles.rowMeta}>{item.cacheSource}</div>
                     </div>
                     <div className={styles.rowValue}>
-                      <span>{item.cacheHit ? "hit" : "miss"}</span>
+                      <span>{item.cacheHit ? "命中" : "未命中"}</span>
                     </div>
                   </div>
                 ))}
               </div>
             ) : (
-              <div className={styles.empty}>No query cache activity captured on this page yet.</div>
+              <div className={styles.empty}>此页面尚未捕获查询缓存活动。</div>
             )}
           </section>
         </div>

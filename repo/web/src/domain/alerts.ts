@@ -52,13 +52,13 @@ export function buildAlertRuleSummary(item: AlertCenterItem) {
     return `${item.price_operator === "lte" ? "<=" : ">="} ${item.threshold ?? "--"}`;
   }
   if (item.rule_type === "event") {
-    return item.event_type || "event";
+    return item.event_type || "事件";
   }
   return item.research_kind === "report"
-    ? "report"
+    ? "财报"
     : item.research_kind === "earning_forecast"
-      ? "forecast"
-      : "all research";
+      ? "盈利预测"
+      : "全部研报";
 }
 
 export function buildAlertReadableExplanation(item: AlertCenterItem) {
@@ -66,19 +66,19 @@ export function buildAlertReadableExplanation(item: AlertCenterItem) {
     return item.explanation.trim();
   }
   if (item.rule_type === "price") {
-    const operator = item.price_operator === "lte" ? "<=" : ">=";
-    return `${item.symbol} price rule watches ${operator} ${item.threshold ?? "--"} and is currently ${item.status}.`;
+    const operator = item.price_operator === "lte" ? "小于等于" : "大于等于";
+    return `${item.symbol} 价格提醒：监控价格 ${operator} ${item.threshold ?? "--"}，当前状态：${item.status === "triggered" ? "已触发" : item.status === "active" ? "监控中" : item.status}。`;
   }
   if (item.rule_type === "event") {
-    return `${item.symbol} event rule tracks ${item.event_type || "event"} over the last ${item.lookback_days} days.`;
+    return `${item.symbol} 事件提醒：追踪 ${item.event_type || "事件"}，回看 ${item.lookback_days} 天。`;
   }
   const researchLabel =
     item.research_kind === "report"
-      ? "research reports"
+      ? "财报"
       : item.research_kind === "earning_forecast"
-        ? "earnings forecasts"
-        : "research updates";
-  return `${item.symbol} earnings rule watches new ${researchLabel} over the last ${item.lookback_days} days.`;
+        ? "盈利预测"
+        : "研报更新";
+  return `${item.symbol} 财报提醒：监控最新 ${researchLabel}，回看 ${item.lookback_days} 天。`;
 }
 
 export function buildAlertCenterDomainQueryKey(token: string) {

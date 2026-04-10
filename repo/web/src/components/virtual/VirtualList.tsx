@@ -78,7 +78,7 @@ export function VirtualList<T>({
       >
         {items.length === 0 ? (
           <div className="helper" style={{ padding: "32px 16px" }}>
-            {emptyMessage ?? "No rows"}
+            {emptyMessage ?? "暂无数据"}
           </div>
         ) : (
           <div style={{ height: totalHeight, position: "relative" }}>

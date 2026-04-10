@@ -1,4 +1,4 @@
-import React, { ReactNode, useMemo, useRef, useState } from "react";
+import React, { ReactNode, useCallback, useMemo, useRef, useState } from "react";
 
 export type VirtualTableColumn<T> = {
   key: string;
@@ -26,6 +26,9 @@ function resolveWidth(width?: string | number) {
   return width ?? "minmax(0, 1fr)";
 }
 
+// 缓存行样式对象，避免每次重新创建
+const ODD_ROW_BG = "rgba(248, 250, 252, 0.58)";
+
 export function VirtualTable<T>({
   rows,
   columns,
@@ -38,14 +41,31 @@ export function VirtualTable<T>({
 }: VirtualTableProps<T>) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [scrollTop, setScrollTop] = useState(0);
+
+  // 缓存列宽计算
   const gridTemplateColumns = useMemo(
     () => columns.map((column) => resolveWidth(column.width)).join(" "),
     [columns],
   );
-  const totalHeight = rows.length * rowHeight;
-  const visibleCount = Math.max(1, Math.ceil(height / Math.max(rowHeight, 1)));
-  const start = Math.max(0, Math.floor(scrollTop / Math.max(rowHeight, 1)) - overscan);
-  const end = Math.min(rows.length, start + visibleCount + overscan * 2);
+
+  // 缓存虚拟列表计算参数
+  const virtualParams = useMemo(() => {
+    const totalHeight = rows.length * rowHeight;
+    const visibleCount = Math.max(1, Math.ceil(height / Math.max(rowHeight, 1)));
+    const start = Math.max(0, Math.floor(scrollTop / Math.max(rowHeight, 1)) - overscan);
+    const end = Math.min(rows.length, start + visibleCount + overscan * 2);
+    return { totalHeight, visibleCount, start, end };
+  }, [rows.length, rowHeight, height, scrollTop, overscan]);
+
+  const { totalHeight, start, end } = virtualParams;
+
+  // 缓存可见行数据切片
+  const visibleRows = useMemo(() => rows.slice(start, end), [rows, start, end]);
+
+  // 缓存滚动事件处理
+  const handleScroll = useCallback((event: React.UIEvent<HTMLDivElement>) => {
+    setScrollTop(event.currentTarget.scrollTop);
+  }, []);
 
   return (
     <div
@@ -79,16 +99,16 @@ export function VirtualTable<T>({
 
       {rows.length === 0 ? (
         <div className="helper" style={{ padding: "28px 16px" }}>
-          {emptyMessage ?? "No rows"}
+          {emptyMessage ?? "暂无数据"}
         </div>
       ) : (
         <div
           ref={scrollRef}
-          onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+          onScroll={handleScroll}
           style={{ height, overflowY: "auto", overflowX: "hidden" }}
         >
           <div style={{ height: totalHeight, position: "relative" }}>
-            {rows.slice(start, end).map((row, index) => {
+            {visibleRows.map((row, index) => {
               const absoluteIndex = start + index;
               return (
                 <div
@@ -105,7 +125,7 @@ export function VirtualTable<T>({
                     alignItems: "center",
                     padding: "0 16px",
                     borderBottom: "1px solid rgba(148, 163, 184, 0.12)",
-                    background: absoluteIndex % 2 === 0 ? "transparent" : "rgba(248, 250, 252, 0.58)",
+                    background: absoluteIndex % 2 === 0 ? undefined : ODD_ROW_BG,
                     fontSize: 13,
                   }}
                 >

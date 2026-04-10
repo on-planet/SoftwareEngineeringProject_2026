@@ -22,7 +22,7 @@ function parseApiError(error: unknown): string {
   } catch {
     // Ignore parse errors.
   }
-  return text || "Request failed";
+  return text || "请求失败";
 }
 
 export default function AuthPage() {
@@ -74,7 +74,7 @@ export default function AuthPage() {
       .then((payload: any) => {
         const token = String(payload?.access_token || "");
         if (!token) {
-          throw new Error("Missing access token");
+          throw new Error("缺少访问令牌");
         }
         setAuthToken(token);
         return router.push("/");
@@ -102,7 +102,7 @@ export default function AuthPage() {
       .then((payload: any) => {
         const token = String(payload?.access_token || "");
         if (!token) {
-          throw new Error("Missing access token");
+          throw new Error("缺少访问令牌");
         }
         setAuthToken(token);
         return router.push("/");

@@ -82,6 +82,28 @@ FEATURE_VALUE_LABELS = [
     ("buyback_count_180d", "180日回购数"),
     ("research_count_180d", "180日研报数"),
 ]
+FEATURE_LABELS: dict[str, str] = {
+    "market": "市场",
+    "sector": "板块",
+    "ret_20d": "20日收益",
+    "ret_60d": "60日收益",
+    "ret_120d": "120日涨跌",
+    "volatility_20d": "20日波动",
+    "volatility_60d": "60日波动",
+    "drawdown_120d": "120日回撤",
+    "rebound_from_low_120d": "120日反弹",
+    "volume_ratio_20d": "20日量比",
+    "roe": "ROE",
+    "debt_ratio": "负债率",
+    "profit_quality": "利润现金覆盖",
+    "revenue_growth": "营收增长",
+    "net_income_growth": "净利增长",
+    "cash_flow_margin": "现金流率",
+    "financial_age_days": "财报滞后天数",
+    "event_count_90d": "90日事件数",
+    "research_count_180d": "180日研报数",
+    "buyback_count_180d": "180日回购数",
+}
 RATIO_PERCENT_COLUMNS = {
     "expected_return",
     "ret_20d",
@@ -1015,12 +1037,12 @@ def _build_summary(
 
 def _signal_label(signal: str) -> str:
     if signal == "strong_buy":
-        return "strong buy"
+        return "强烈买入"
     if signal == "buy":
-        return "buy"
+        return "买入"
     if signal == "avoid":
-        return "avoid"
-    return "watch"
+        return "回避"
+    return "观望"
 
 
 def _build_signal_explanation(
@@ -1032,15 +1054,8 @@ def _build_signal_explanation(
     drivers: Iterable[dict[str, Any]],
     horizon_days: int,
 ) -> str:
-    parts = [f"This is a {_signal_label(signal)} signal on a {horizon_days} trading-day horizon."]
-    if expected_return is not None:
-        parts.append(f"The model-implied return is {expected_return * 100:.2f}%.")
-    if total > 0 and rank > 0:
-        parts.append(f"It ranks #{rank} out of {total} scored symbols.")
-    driver_labels = [str(item.get("label") or "").strip() for item in drivers if str(item.get("label") or "").strip()]
-    if driver_labels:
-        parts.append(f"Main contributors: {', '.join(driver_labels[:2])}.")
-    return " ".join(parts)
+    # 返回空字符串，让前端使用中文 summary
+    return ""
 
 
 def _signal_from_percentile(percentile: float) -> str:
@@ -1122,9 +1137,10 @@ def _serialize_importance_frame(frame: pd.DataFrame) -> list[dict[str, Any]]:
     output: list[dict[str, Any]] = []
     normalized = frame.reset_index().rename(columns={"index": "feature"})
     for row in normalized.to_dict("records"):
+        feature_key = str(row.get("feature") or "")
         output.append(
             {
-                "feature": str(row.get("feature") or ""),
+                "feature": FEATURE_LABELS.get(feature_key, feature_key),
                 "importance": _safe_float(row.get("importance")),
                 "stddev": _safe_float(row.get("stddev")),
                 "p_value": _safe_float(row.get("p_value")),

@@ -100,7 +100,7 @@ function renderChainList(title: string, chains: NewsGraphChain[], emptyText: str
                   </div>
                 ) : null}
                 <div className="helper" style={{ marginTop: 6 }}>
-                  {`strength ${chain.strength.toFixed(2)}`}
+                  {`强度 ${chain.strength.toFixed(2)}`}
                 </div>
               </div>
             );
@@ -189,8 +189,8 @@ export function PersonalWorkspaceNewsGraphPanel({
   if (normalizedSymbols.length === 0) {
     return (
       <div className="surface-empty">
-        <strong>{`${scopeLabel} has no symbols to explore yet.`}</strong>
-        <div className="helper">Add watchlist or bought targets first, then open the workspace graph around one of those symbols.</div>
+        <strong>{`${scopeLabel} 暂无标的可探索`}</strong>
+        <div className="helper">请先添加自选或已买标的，然后以其中一个标的为中心打开工作区图谱。</div>
       </div>
     );
   }
@@ -199,38 +199,37 @@ export function PersonalWorkspaceNewsGraphPanel({
     <div className={styles.stack}>
       <div className={styles.summary}>
         <div className={styles.summaryText}>
-          <div className="card-title">{`${scopeLabel} News Graph Plus`}</div>
+          <div className="card-title">{`${scopeLabel} 新闻关系图谱`}</div>
           <div className="helper">
-            This workspace view shares the same propagation and impact chain contract as the full graph page, then adds
-            a portfolio overlap readout for the current scope.
+            本工作区视图与完整图谱页面共用相同的传播链和影响链协议，同时为当前范围添加了组合重叠读数。
           </div>
         </div>
         <div className={styles.metrics}>
           <div className={styles.metric}>
-            <div className={styles.metricLabel}>Focus</div>
+            <div className={styles.metricLabel}>聚焦</div>
             <div className={styles.metricValue}>{symbol || "--"}</div>
             <div className={styles.metricHelper}>{scopeLabel}</div>
           </div>
           <div className={styles.metric}>
-            <div className={styles.metricLabel}>Related News</div>
+            <div className={styles.metricLabel}>相关新闻</div>
             <div className={styles.metricValue}>
               <AnimatedNumber value={graphData?.related_news.length ?? 0} />
             </div>
-            <div className={styles.metricHelper}>{`${days} day window`}</div>
+            <div className={styles.metricHelper}>{`${days} 天窗口`}</div>
           </div>
           <div className={styles.metric}>
-            <div className={styles.metricLabel}>Impact Overlap</div>
+            <div className={styles.metricLabel}>影响重叠</div>
             <div className={styles.metricValue}>
               <AnimatedNumber value={scopeImpact?.overlapCount ?? 0} />
             </div>
-            <div className={styles.metricHelper}>{scopeImpact?.headline ?? "waiting for graph"}</div>
+            <div className={styles.metricHelper}>{scopeImpact?.headline ?? "等待图谱加载"}</div>
           </div>
           <div className={styles.metric}>
-            <div className={styles.metricLabel}>Impact Chains</div>
+            <div className={styles.metricLabel}>影响链</div>
             <div className={styles.metricValue}>
               <AnimatedNumber value={graphData?.impact_chains.length ?? 0} />
             </div>
-            <div className={styles.metricHelper}>{`${graphData?.impact_summary.affected_symbols.length ?? 0} symbols in range`}</div>
+            <div className={styles.metricHelper}>{`${graphData?.impact_summary.affected_symbols.length ?? 0} 个标的中`}</div>
           </div>
         </div>
       </div>
@@ -238,7 +237,7 @@ export function PersonalWorkspaceNewsGraphPanel({
       <section className="card market-panel">
         <div className="control-bar">
           <label className="field-stack">
-            <span>Symbol</span>
+            <span>标的</span>
             <select
               className="select"
               value={symbol}
@@ -258,19 +257,19 @@ export function PersonalWorkspaceNewsGraphPanel({
             </select>
           </label>
           <label className="field-stack">
-            <span>Window</span>
+            <span>时间窗口</span>
             <select className="select" value={days} onChange={(event) => setDays(Number(event.target.value) || 7)}>
-              <option value={3}>3 days</option>
-              <option value={7}>7 days</option>
-              <option value={14}>14 days</option>
+              <option value={3}>3 天</option>
+              <option value={7}>7 天</option>
+              <option value={14}>14 天</option>
             </select>
           </label>
           <label className="field-stack">
-            <span>News Count</span>
+            <span>新闻数量</span>
             <select className="select" value={limit} onChange={(event) => setLimit(Number(event.target.value) || 18)}>
-              <option value={12}>12 news</option>
-              <option value={18}>18 news</option>
-              <option value={24}>24 news</option>
+              <option value={12}>12 条</option>
+              <option value={18}>18 条</option>
+              <option value={24}>24 条</option>
             </select>
           </label>
           {mode === "news" ? (
@@ -282,20 +281,20 @@ export function PersonalWorkspaceNewsGraphPanel({
                 setFocusNewsId(null);
               }}
             >
-              Back to stock graph
+              返回个股图谱
             </button>
           ) : null}
         </div>
       </section>
 
-      {loading ? <div className="card helper">Loading graph...</div> : null}
-      {error ? <div className="card helper">{`Failed to load graph: ${error.message}`}</div> : null}
+      {loading ? <div className="card helper">图谱加载中...</div> : null}
+      {error ? <div className="card helper">{`图谱加载失败：${error.message}`}</div> : null}
 
       {!loading && !error && graphData ? (
         <>
           <section className={styles.graphGrid}>
             <div className="card market-panel">
-              <div className="card-title">Graph View</div>
+              <div className="card-title">图谱视图</div>
               <div className="helper" style={{ marginTop: 6 }}>
                 {formatNewsGraphCenterSummary(graphData)}
               </div>
@@ -316,10 +315,10 @@ export function PersonalWorkspaceNewsGraphPanel({
 
             <div className={styles.sideStack}>
               <div className="card market-panel">
-                <div className="card-title">Explanation</div>
+                <div className="card-title">图谱解释</div>
                 <div style={{ marginTop: 10, fontWeight: 600 }}>{graphData.explanation.headline}</div>
                 <div className="helper" style={{ marginTop: 8 }}>
-                  {`Generated by ${graphData.explanation.generated_by}`}
+                  {`生成者：${graphData.explanation.generated_by}`}
                 </div>
                 <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
                   {graphData.explanation.evidence.map((item) => (
@@ -336,7 +335,7 @@ export function PersonalWorkspaceNewsGraphPanel({
               </div>
 
               <div className="card market-panel">
-                <div className="card-title">Portfolio Impact</div>
+                <div className="card-title">组合影响</div>
                 <div className="helper" style={{ marginTop: 10 }}>
                   {scopeImpact?.headline}
                 </div>
@@ -344,15 +343,15 @@ export function PersonalWorkspaceNewsGraphPanel({
                   {scopeImpact?.detail}
                 </div>
                 <div className="helper" style={{ marginTop: 10 }}>
-                  {`${graphData.impact_summary.related_news_count} related news | ${graphData.impact_summary.related_event_count} events | ${graphData.impact_summary.impact_chain_count} impact chains`}
+                  {`${graphData.impact_summary.related_news_count} 条相关新闻 | ${graphData.impact_summary.related_event_count} 个事件 | ${graphData.impact_summary.impact_chain_count} 条影响链`}
                 </div>
               </div>
 
               <div className="card market-panel">
-                <div className="card-title">Node Details</div>
+                <div className="card-title">节点详情</div>
                 {!selectedNode ? (
                   <div className="helper" style={{ marginTop: 10 }}>
-                    Click a node in the graph to inspect its metadata.
+                    点击图谱中的节点查看其元数据。
                   </div>
                 ) : (
                   <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
@@ -376,41 +375,41 @@ export function PersonalWorkspaceNewsGraphPanel({
 
           <section className={styles.graphGrid}>
             {renderChainList(
-              "Propagation Chains",
+              "传播链",
               graphData.propagation_chains,
-              "No propagation chain was generated for the selected window.",
+              "所选时间窗口未生成传播链。",
             )}
             {renderChainList(
-              "Impact Chains",
+              "影响链",
               graphData.impact_chains,
-              "No downstream impact chain was generated for the selected window.",
+              "所选时间窗口未生成下游影响链。",
             )}
           </section>
 
           <section className={styles.graphGrid}>
             <div className="card market-panel">
-              <div className="card-title">Impact Map</div>
+              <div className="card-title">影响地图</div>
               <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 14 }}>
                 {renderEntityGroup(
-                  "Affected Sectors",
+                  "受影响板块",
                   graphData.impact_summary.affected_sectors,
-                  "No sectors are attached to the current impact summary.",
+                  "当前影响摘要未关联板块。",
                 )}
                 {renderEntityGroup(
-                  "Affected Stocks",
+                  "受影响个股",
                   graphData.impact_summary.affected_symbols,
-                  "No stocks are attached to the current impact summary.",
+                  "当前影响摘要未关联个股。",
                 )}
               </div>
             </div>
 
             <div className="card market-panel">
-              <div className="card-title">Drill Into News</div>
+              <div className="card-title">深入新闻</div>
               <div className="helper" style={{ marginTop: 6 }}>
-                Pivot the graph to a specific article and keep the same chain schema inside the workspace view.
+                将图谱中心切换到特定文章，并在工作区视图中保持相同的链式结构。
               </div>
               <div className={styles.newsList} style={{ marginTop: 10 }}>
-                {drillNews.length === 0 ? <div className="helper">No additional related article is available.</div> : null}
+                {drillNews.length === 0 ? <div className="helper">暂无其他相关文章。</div> : null}
                 {drillNews.map((item) => {
                   const meta = formatRelatedNewsItemMeta(item);
                   return (

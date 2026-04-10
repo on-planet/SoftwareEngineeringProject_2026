@@ -249,7 +249,7 @@ function summarizeMatchedTemplates(parse: PortfolioScenarioLabResponse["parse"])
 }
 
 const PORTFOLIO_SCENARIO_LAB_QUICK_INPUTS = [
-  "油价上升25%",
+  "油价上涨25%",
   "人民币贬值3%",
   "地产政策放松",
   "美债收益率上行50bp",
@@ -259,6 +259,8 @@ const PORTFOLIO_SCENARIO_LAB_QUICK_INPUTS = [
 type PortfolioStressTestPanelProps = {
   targetType?: PortfolioTargetScope;
 };
+
+type StressComposerMode = "lab" | "custom";
 
 export function PortfolioStressTestPanel({
   targetType = "bought",
@@ -280,6 +282,7 @@ export function PortfolioStressTestPanel({
   const [customLoading, setCustomLoading] = useState(false);
   const [customError, setCustomError] = useState<string | null>(null);
   const [selectedCode, setSelectedCode] = useState<string>("");
+  const [composerMode, setComposerMode] = useState<StressComposerMode>("lab");
 
   const stressQuery = useApiQuery<PortfolioStressResponse>(
     isAuthenticated && token ? buildPortfolioStressQueryKey(token, targetType, PORTFOLIO_STRESS_POSITION_LIMIT) : null,
@@ -306,6 +309,7 @@ export function PortfolioStressTestPanel({
     setCustomScenario(null);
     setCustomError(null);
     setSelectedCode("");
+    setComposerMode("lab");
   }, [targetType]);
 
   useEffect(() => {
@@ -432,16 +436,16 @@ export function PortfolioStressTestPanel({
     for (const rule of customRules) {
       const shockPct = Number(rule.shockPctText);
       if (!Number.isFinite(shockPct)) {
-        setCustomError("Shock must be a valid number.");
+        setCustomError("冲击值必须是有效数字。");
         return;
       }
       if (shockPct < -95 || shockPct > 95) {
-        setCustomError("Shock must stay between -95 and 95.");
+        setCustomError("冲击值必须在 -95 到 95 之间。");
         return;
       }
       const scopeValue = rule.scopeType === "all" ? null : rule.scopeValue.trim();
       if (rule.scopeType !== "all" && !scopeValue) {
-        setCustomError("Market, sector, and symbol rules require a scope value.");
+        setCustomError("市场、行业和个股规则需要填写范围值。");
         return;
       }
       parsedRules.push({
@@ -499,357 +503,375 @@ export function PortfolioStressTestPanel({
           <div>
             <div className="card-title">情景实验室</div>
             <div className="helper">
-              {`直接输入一句自然语言，比如“油价上升25%”或“人民币贬值3%”，系统会自动映射到${scopeLabel}压力测试和行业受益受损链路。`}
+              {composerMode === "lab"
+                ? `直接输入一句自然语言，比如“油价上涨25%”或“人民币贬值3%”，系统会自动映射到${scopeLabel}压力测试和行业受益受损链路。`
+                : `支持按全${isWatch ? "观察篮子" : "组合"}、市场、行业或单只股票叠加冲击，系统会即时回算损益。`}
             </div>
           </div>
-          {labResult ? (
+          {composerMode === "lab" && labResult ? (
             <button type="button" className="stock-page-button" onClick={() => setLabResult(null)}>
               清除实验室结果
             </button>
           ) : null}
-        </div>
-
-        <textarea
-          style={textareaStyle}
-          value={labInput}
-          onChange={(event) => {
-            const nextValue = event.target.value;
-            setLabInput(nextValue);
-            const matchedPreset = PORTFOLIO_SCENARIO_LAB_PRESETS.find((item) => item.prompt === nextValue.trim());
-            setSelectedLabPresetId(matchedPreset?.id ?? "");
-          }}
-          placeholder="例如：油价涨 8%，人民币贬值，地产政策放松，美债收益率上行 50bp"
-        />
-
-        <div className="helper" style={{ marginTop: 10 }}>
-          {basketHint}
-        </div>
-
-        <div className="toolbar" style={{ marginTop: 12, alignItems: "center" }}>
-          <button
-            type="button"
-            className="primary-button"
-            onClick={() => void handleRunScenarioLab()}
-            disabled={labLoading}
-          >
-            {labLoading ? "解析中..." : "运行情景实验室"}
-          </button>
-          {labInput.trim() ? (
-            <button
-              type="button"
-              className="stock-page-button"
-              onClick={() => {
-                setLabInput("");
-                setSelectedLabPresetId("");
-                setLabError(null);
-              }}
-            >
-              清空输入
-            </button>
-          ) : null}
-        </div>
-
-        <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
-          <div className="helper">快捷填充</div>
-          <div className="strategy-pill-row" style={{ marginTop: 0 }}>
-            {PORTFOLIO_SCENARIO_LAB_QUICK_INPUTS.map((prompt) => (
-              <button
-                key={prompt}
-                type="button"
-                className="stock-page-button"
-                onClick={() => {
-                  setLabInput(prompt);
-                  setSelectedLabPresetId("");
-                  setLabError(null);
-                }}
-              >
-                {prompt}
-              </button>
-            ))}
-            {PORTFOLIO_SCENARIO_LAB_PRESETS.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                className="stock-page-button"
-                data-active={selectedLabPresetId === item.id}
-                onClick={() => applyLabPreset(item.id)}
-              >
-                {item.title}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {labError ? (
-          <div className="helper" style={{ marginTop: 10, color: "#b42318" }}>
-            {labError}
-          </div>
-        ) : null}
-
-        {labResult ? (
-          <>
-            <div className="hero-grid" style={{ marginTop: 16 }}>
-              <div className="summary-card">
-                <div className="card-title">解析结果</div>
-                <div className="stock-score-value" style={{ fontSize: 22 }}>
-                  {labResult.parse.headline}
-                </div>
-                <div className="helper">{summarizeMatchedTemplates(labResult.parse)}</div>
-              </div>
-              <div className="summary-card">
-                <div className="card-title">解析置信度</div>
-                <div className="stock-score-value">{formatConfidence(labResult.parse.confidence)}</div>
-                <div className="helper">
-                  {labResult.parse.extracted_shock_pct !== undefined && labResult.parse.extracted_shock_pct !== null
-                    ? `识别到冲击 ${formatPercent(labResult.parse.extracted_shock_pct, 0)}`
-                    : "未显式提取百分比，采用模板默认冲击"}
-                </div>
-              </div>
-              <div className="summary-card">
-                <div className="card-title">组合变化</div>
-                <div
-                  className="stock-score-value"
-                  style={{ color: (labResult.scenario.portfolio_change || 0) < 0 ? "#b42318" : "#027a48" }}
-                >
-                  {formatSignedMoney(labResult.scenario.portfolio_change, 0)}
-                </div>
-                <div className="helper">{formatSignedPercent(labResult.scenario.portfolio_change_pct, 2)}</div>
-              </div>
-              <div className="summary-card">
-                <div className="card-title">受影响权重</div>
-                <div className="stock-score-value">{formatPercent(labResult.scenario.impacted_weight, 0)}</div>
-                <div className="helper">命中规则的持仓占比</div>
-              </div>
-            </div>
-
-            <div
-              style={{
-                marginTop: 12,
-                border: "1px solid rgba(15, 23, 42, 0.08)",
-                borderRadius: 16,
-                padding: 14,
-                background: "rgba(255, 255, 255, 0.82)",
-              }}
-            >
-              <div className="card-title">解释层</div>
-              <div className="helper" style={{ marginTop: 8 }}>
-                {labResult.parse.explanation}
-              </div>
-            </div>
-
-            {labResult.parse.matched_template_names.length ? (
-              <div
-                style={{
-                  marginTop: 12,
-                  border: "1px solid rgba(15, 23, 42, 0.08)",
-                  borderRadius: 16,
-                  padding: 14,
-                  background: "rgba(255, 255, 255, 0.82)",
-                }}
-              >
-                <div className="card-title">命中模板</div>
-                <div className="strategy-pill-row" style={{ marginTop: 10 }}>
-                  {labResult.parse.matched_template_names.map((item) => (
-                    <span key={item} className="strategy-pill" data-tone="neutral">
-                      {item}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-
-            {labResult.parse.clauses.length ? (
-              <div
-                style={{
-                  marginTop: 12,
-                  border: "1px solid rgba(15, 23, 42, 0.08)",
-                  borderRadius: 16,
-                  padding: 14,
-                  background: "rgba(255, 255, 255, 0.82)",
-                }}
-              >
-                <div className="card-title">解析轨迹</div>
-                <div style={{ display: "grid", gap: 12, marginTop: 12 }}>
-                  {labResult.parse.clauses.map((clause, index) => {
-                    const magnitude = formatClauseMagnitude(clause.extracted_shock_pct, clause.extracted_bp);
-                    return (
-                      <div
-                        key={`${clause.text}-${index}`}
-                        style={{
-                          border: "1px solid rgba(15, 23, 42, 0.08)",
-                          borderRadius: 14,
-                          padding: 12,
-                          background: "rgba(255, 255, 255, 0.78)",
-                        }}
-                      >
-                        <div
-                          style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            gap: 12,
-                            alignItems: "baseline",
-                            flexWrap: "wrap",
-                          }}
-                        >
-                          <div style={{ fontWeight: 700 }}>{clause.headline}</div>
-                          <div className="helper">
-                            {formatParserLabel(clause.parser)} · {formatConfidence(clause.confidence)}
-                          </div>
-                        </div>
-                        <div className="helper" style={{ marginTop: 6 }}>
-                          原始子句：{clause.text}
-                        </div>
-                        <div className="strategy-pill-row" style={{ marginTop: 10 }}>
-                          {clause.matched_template_name ? (
-                            <span className="strategy-pill" data-tone="neutral">
-                              模板：{clause.matched_template_name}
-                            </span>
-                          ) : null}
-                          {magnitude ? (
-                            <span className="strategy-pill" data-tone="neutral">
-                              冲击：{magnitude}
-                            </span>
-                          ) : null}
-                          {clause.rules.length === 0 ? (
-                            <span className="strategy-pill" data-tone="negative">
-                              未映射到规则
-                            </span>
-                          ) : null}
-                          {clause.rules.map((rule) => (
-                            <span key={`${clause.text}-${rule}`} className="strategy-pill" data-tone="neutral">
-                              {rule}
-                            </span>
-                          ))}
-                        </div>
-                        <div className="helper" style={{ marginTop: 10 }}>
-                          {clause.explanation}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            ) : null}
-
-            <div className="depth-grid" style={{ marginTop: 16 }}>
-              {renderImpactCards("受益行业", labResult.beneficiaries, "当前模板没有显式标出受益行业。")}
-              {renderImpactCards("受损行业", labResult.losers, "当前模板没有显式标出受损行业。")}
-            </div>
-          </>
-        ) : null}
-      </section>
-
-      <section className="strategy-feature-card">
-        <div className="page-header" style={{ marginBottom: 12 }}>
-          <div>
-            <div className="card-title">自定义场景预览</div>
-            <div className="helper">{`支持按全${isWatch ? "观察篮子" : "组合"}、市场、行业或单只股票叠加冲击，系统会即时回算损益。`}</div>
-          </div>
-          {customScenario ? (
+          {composerMode === "custom" && customScenario ? (
             <button type="button" className="stock-page-button" onClick={() => setCustomScenario(null)}>
               清除自定义结果
             </button>
           ) : null}
         </div>
 
-        <div className="toolbar">
-          <input
-            className="input"
-            type="text"
-            value={customName}
-            onChange={(event) => setCustomName(event.target.value)}
-            placeholder="场景名称"
-          />
-          <input
-            className="input"
-            type="text"
-            value={customDescription}
-            onChange={(event) => setCustomDescription(event.target.value)}
-            placeholder="场景说明，可选"
-          />
-        </div>
-
-        <div style={{ display: "grid", gap: 10, marginTop: 14 }}>
-          {customRules.map((rule, index) => (
-            <div
-              key={rule.id}
-              style={{
-                display: "grid",
-                gridTemplateColumns: "120px minmax(180px, 1fr) 140px 88px",
-                gap: 10,
-                alignItems: "center",
-              }}
-            >
-              <select
-                className="select"
-                value={rule.scopeType}
-                onChange={(event) => handleRuleChange(rule.id, { scopeType: event.target.value as PortfolioStressRuleScope })}
-              >
-                <option value="all">全组合</option>
-                <option value="market">市场</option>
-                <option value="sector">行业</option>
-                <option value="symbol">股票</option>
-              </select>
-              <input
-                className="input"
-                type="text"
-                value={rule.scopeValue}
-                disabled={rule.scopeType === "all"}
-                onChange={(event) => handleRuleChange(rule.id, { scopeValue: event.target.value })}
-                placeholder={
-                  rule.scopeType === "market"
-                    ? "A / HK / US"
-                    : rule.scopeType === "sector"
-                      ? "例如：科技、金融、房地产"
-                      : rule.scopeType === "symbol"
-                        ? "例如：00700.HK"
-                        : "全组合无需填写"
-                }
-              />
-              <input
-                className="input"
-                type="number"
-                step="0.1"
-                min={-95}
-                max={95}
-                value={rule.shockPctText}
-                onChange={(event) => handleRuleChange(rule.id, { shockPctText: event.target.value })}
-                placeholder="冲击幅度%"
-              />
-              <button
-                type="button"
-                className="stock-page-button"
-                onClick={() => handleRemoveRule(rule.id)}
-                disabled={customRules.length <= 1}
-              >
-                {index === 0 ? "删规则" : "删除"}
-              </button>
-            </div>
-          ))}
-        </div>
-
-        <div className="toolbar" style={{ marginTop: 14 }}>
-          <button type="button" className="stock-page-button" onClick={handleAddRule}>
-            添加规则
+        <div className="toolbar" style={{ marginBottom: 12 }}>
+          <button
+            type="button"
+            className="stock-page-button"
+            data-active={composerMode === "lab"}
+            onClick={() => setComposerMode("lab")}
+          >
+            自然语言
           </button>
           <button
             type="button"
-            className="primary-button"
-            onClick={() => void handlePreviewCustomScenario()}
-            disabled={customLoading}
+            className="stock-page-button"
+            data-active={composerMode === "custom"}
+            onClick={() => setComposerMode("custom")}
           >
-            {customLoading ? "计算中..." : "预览自定义场景"}
+            规则编辑
           </button>
         </div>
 
-        <div className="helper" style={{ marginTop: 10 }}>
-          规则会按命中结果叠加，并在单只股票层面限制到 ±95%。例如 `市场=HK -3%` 和 `行业=科技 -2%` 同时命中时，港股科技仓位按 `-5%` 处理。
-        </div>
-        {customError ? (
-          <div className="helper" style={{ marginTop: 8, color: "#b42318" }}>
-            {customError}
-          </div>
-        ) : null}
+        {composerMode === "lab" ? (
+          <>
+            <textarea
+              style={textareaStyle}
+              value={labInput}
+              onChange={(event) => {
+                const nextValue = event.target.value;
+                setLabInput(nextValue);
+                const matchedPreset = PORTFOLIO_SCENARIO_LAB_PRESETS.find((item) => item.prompt === nextValue.trim());
+                setSelectedLabPresetId(matchedPreset?.id ?? "");
+              }}
+              placeholder="例如：油价涨 8%，人民币贬值，地产政策放松，美债收益率上行 50bp"
+            />
+
+            <div className="helper" style={{ marginTop: 10 }}>
+              {basketHint}
+            </div>
+
+            <div className="toolbar" style={{ marginTop: 12, alignItems: "center" }}>
+              <button
+                type="button"
+                className="primary-button"
+                onClick={() => void handleRunScenarioLab()}
+                disabled={labLoading}
+              >
+                {labLoading ? "解析中..." : "运行情景实验室"}
+              </button>
+              {labInput.trim() ? (
+                <button
+                  type="button"
+                  className="stock-page-button"
+                  onClick={() => {
+                    setLabInput("");
+                    setSelectedLabPresetId("");
+                    setLabError(null);
+                  }}
+                >
+                  清空输入
+                </button>
+              ) : null}
+            </div>
+
+            <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
+              <div className="helper">快捷填充</div>
+              <div className="strategy-pill-row" style={{ marginTop: 0 }}>
+                {PORTFOLIO_SCENARIO_LAB_QUICK_INPUTS.map((prompt) => (
+                  <button
+                    key={prompt}
+                    type="button"
+                    className="stock-page-button"
+                    onClick={() => {
+                      setLabInput(prompt);
+                      setSelectedLabPresetId("");
+                      setLabError(null);
+                    }}
+                  >
+                    {prompt}
+                  </button>
+                ))}
+                {PORTFOLIO_SCENARIO_LAB_PRESETS.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className="stock-page-button"
+                    data-active={selectedLabPresetId === item.id}
+                    onClick={() => applyLabPreset(item.id)}
+                  >
+                    {item.title}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {labError ? (
+              <div className="helper" style={{ marginTop: 10, color: "#b42318" }}>
+                {labError}
+              </div>
+            ) : null}
+
+            {labResult ? (
+              <>
+                <div className="hero-grid" style={{ marginTop: 16 }}>
+                  <div className="summary-card">
+                    <div className="card-title">解析结果</div>
+                    <div className="stock-score-value" style={{ fontSize: 22 }}>
+                      {labResult.parse.headline}
+                    </div>
+                    <div className="helper">{summarizeMatchedTemplates(labResult.parse)}</div>
+                  </div>
+                  <div className="summary-card">
+                    <div className="card-title">解析置信度</div>
+                    <div className="stock-score-value">{formatConfidence(labResult.parse.confidence)}</div>
+                    <div className="helper">
+                      {labResult.parse.extracted_shock_pct !== undefined && labResult.parse.extracted_shock_pct !== null
+                        ? `识别到冲击 ${formatPercent(labResult.parse.extracted_shock_pct, 0)}`
+                        : "未显式提取百分比，采用模板默认冲击"}
+                    </div>
+                  </div>
+                  <div className="summary-card">
+                    <div className="card-title">组合变化</div>
+                    <div
+                      className="stock-score-value"
+                      style={{ color: (labResult.scenario.portfolio_change || 0) < 0 ? "#b42318" : "#027a48" }}
+                    >
+                      {formatSignedMoney(labResult.scenario.portfolio_change, 0)}
+                    </div>
+                    <div className="helper">{formatSignedPercent(labResult.scenario.portfolio_change_pct, 2)}</div>
+                  </div>
+                  <div className="summary-card">
+                    <div className="card-title">受影响权重</div>
+                    <div className="stock-score-value">{formatPercent(labResult.scenario.impacted_weight, 0)}</div>
+                    <div className="helper">命中规则的持仓占比</div>
+                  </div>
+                </div>
+
+                <div
+                  style={{
+                    marginTop: 12,
+                    border: "1px solid rgba(15, 23, 42, 0.08)",
+                    borderRadius: 16,
+                    padding: 14,
+                    background: "rgba(255, 255, 255, 0.82)",
+                  }}
+                >
+                  <div className="card-title">解释层</div>
+                  <div className="helper" style={{ marginTop: 8 }}>
+                    {labResult.parse.explanation}
+                  </div>
+                </div>
+
+                {labResult.parse.matched_template_names.length ? (
+                  <div
+                    style={{
+                      marginTop: 12,
+                      border: "1px solid rgba(15, 23, 42, 0.08)",
+                      borderRadius: 16,
+                      padding: 14,
+                      background: "rgba(255, 255, 255, 0.82)",
+                    }}
+                  >
+                    <div className="card-title">命中模板</div>
+                    <div className="strategy-pill-row" style={{ marginTop: 10 }}>
+                      {labResult.parse.matched_template_names.map((item) => (
+                        <span key={item} className="strategy-pill" data-tone="neutral">
+                          {item}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+
+                {labResult.parse.clauses.length ? (
+                  <div
+                    style={{
+                      marginTop: 12,
+                      border: "1px solid rgba(15, 23, 42, 0.08)",
+                      borderRadius: 16,
+                      padding: 14,
+                      background: "rgba(255, 255, 255, 0.82)",
+                    }}
+                  >
+                    <div className="card-title">解析轨迹</div>
+                    <div style={{ display: "grid", gap: 12, marginTop: 12 }}>
+                      {labResult.parse.clauses.map((clause, index) => {
+                        const magnitude = formatClauseMagnitude(clause.extracted_shock_pct, clause.extracted_bp);
+                        return (
+                          <div
+                            key={`${clause.text}-${index}`}
+                            style={{
+                              border: "1px solid rgba(15, 23, 42, 0.08)",
+                              borderRadius: 14,
+                              padding: 12,
+                              background: "rgba(255, 255, 255, 0.78)",
+                            }}
+                          >
+                            <div
+                              style={{
+                                display: "flex",
+                                justifyContent: "space-between",
+                                gap: 12,
+                                alignItems: "baseline",
+                                flexWrap: "wrap",
+                              }}
+                            >
+                              <div style={{ fontWeight: 700 }}>{clause.headline}</div>
+                              <div className="helper">
+                                {formatParserLabel(clause.parser)} · {formatConfidence(clause.confidence)}
+                              </div>
+                            </div>
+                            <div className="helper" style={{ marginTop: 6 }}>
+                              原始子句：{clause.text}
+                            </div>
+                            <div className="strategy-pill-row" style={{ marginTop: 10 }}>
+                              {clause.matched_template_name ? (
+                                <span className="strategy-pill" data-tone="neutral">
+                                  模板：{clause.matched_template_name}
+                                </span>
+                              ) : null}
+                              {magnitude ? (
+                                <span className="strategy-pill" data-tone="neutral">
+                                  冲击：{magnitude}
+                                </span>
+                              ) : null}
+                              {clause.rules.length === 0 ? (
+                                <span className="strategy-pill" data-tone="negative">
+                                  未映射到规则
+                                </span>
+                              ) : null}
+                              {clause.rules.map((rule) => (
+                                <span key={`${clause.text}-${rule}`} className="strategy-pill" data-tone="neutral">
+                                  {rule}
+                                </span>
+                              ))}
+                            </div>
+                            <div className="helper" style={{ marginTop: 10 }}>
+                              {clause.explanation}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : null}
+
+                <div className="depth-grid" style={{ marginTop: 16 }}>
+                  {renderImpactCards("受益行业", labResult.beneficiaries, "当前模板没有显式标出受益行业。")}
+                  {renderImpactCards("受损行业", labResult.losers, "当前模板没有显式标出受损行业。")}
+                </div>
+              </>
+            ) : null}
+          </>
+        ) : (
+          <>
+            <div className="toolbar">
+              <input
+                className="input"
+                type="text"
+                value={customName}
+                onChange={(event) => setCustomName(event.target.value)}
+                placeholder="场景名称"
+              />
+              <input
+                className="input"
+                type="text"
+                value={customDescription}
+                onChange={(event) => setCustomDescription(event.target.value)}
+                placeholder="场景说明，可选"
+              />
+            </div>
+
+            <div style={{ display: "grid", gap: 10, marginTop: 14 }}>
+              {customRules.map((rule, index) => (
+                <div
+                  key={rule.id}
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "120px minmax(180px, 1fr) 140px 88px",
+                    gap: 10,
+                    alignItems: "center",
+                  }}
+                >
+                  <select
+                    className="select"
+                    value={rule.scopeType}
+                    onChange={(event) => handleRuleChange(rule.id, { scopeType: event.target.value as PortfolioStressRuleScope })}
+                  >
+                    <option value="all">全组合</option>
+                    <option value="market">市场</option>
+                    <option value="sector">行业</option>
+                    <option value="symbol">股票</option>
+                  </select>
+                  <input
+                    className="input"
+                    type="text"
+                    value={rule.scopeValue}
+                    disabled={rule.scopeType === "all"}
+                    onChange={(event) => handleRuleChange(rule.id, { scopeValue: event.target.value })}
+                    placeholder={
+                      rule.scopeType === "market"
+                        ? "A / HK / US"
+                        : rule.scopeType === "sector"
+                          ? "例如：科技、金融、房地产"
+                          : rule.scopeType === "symbol"
+                            ? "例如：00700.HK"
+                            : "全组合无需填写"
+                    }
+                  />
+                  <input
+                    className="input"
+                    type="number"
+                    step="0.1"
+                    min={-95}
+                    max={95}
+                    value={rule.shockPctText}
+                    onChange={(event) => handleRuleChange(rule.id, { shockPctText: event.target.value })}
+                    placeholder="冲击幅度%"
+                  />
+                  <button
+                    type="button"
+                    className="stock-page-button"
+                    onClick={() => handleRemoveRule(rule.id)}
+                    disabled={customRules.length <= 1}
+                  >
+                    {index === 0 ? "删规则" : "删除"}
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <div className="toolbar" style={{ marginTop: 14 }}>
+              <button type="button" className="stock-page-button" onClick={handleAddRule}>
+                添加规则
+              </button>
+              <button
+                type="button"
+                className="primary-button"
+                onClick={() => void handlePreviewCustomScenario()}
+                disabled={customLoading}
+              >
+                {customLoading ? "计算中..." : "预览自定义场景"}
+              </button>
+            </div>
+
+            <div className="helper" style={{ marginTop: 10 }}>
+              规则会按命中结果叠加，并在单只股票层面限制到 ±95%。例如 `市场=HK -3%` 和 `行业=科技 -2%` 同时命中时，港股科技仓位按 `-5%` 处理。
+            </div>
+            {customError ? (
+              <div className="helper" style={{ marginTop: 8, color: "#b42318" }}>
+                {customError}
+              </div>
+            ) : null}
+          </>
+        )}
       </section>
 
       <div className="hero-grid">

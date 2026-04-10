@@ -88,7 +88,7 @@ export function IndexDecompositionPanel() {
     <div className="card market-panel" data-tone="cool" style={{ display: "flex", flexDirection: "column", gap: 18 }}>
       <div className="panel-header">
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          <span className="kicker">Index Decomposition</span>
+          <span className="kicker">指数拆解</span>
           <div className="card-title" style={{ marginBottom: 0 }}>
             {displayName}
           </div>

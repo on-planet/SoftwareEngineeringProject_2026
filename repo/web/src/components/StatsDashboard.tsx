@@ -35,7 +35,7 @@ function StatCard<T>({ title, items, getLabel, getCount }: StatCardProps<T>) {
     <div className="card surface-panel">
       <div className="card-title">{title}</div>
       {items.length === 0 ? (
-        <div className="helper">No data.</div>
+        <div className="helper">暂无数据。</div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {items.map((item, index) => (
@@ -188,7 +188,6 @@ export function StatsDashboard({
     () => loadStatsOverview(queryParams),
     getStatsOverviewQueryOptions(statsQueryKey),
   );
-
   const statsPayload = useMemo(
     () => normalizeStatsOverviewResponse(statsQuery.data, queryParams),
     [queryParams, statsQuery.data],
@@ -220,7 +219,7 @@ export function StatsDashboard({
         values: events.by_date.map((item) => item.count),
         color: "#2563eb",
         areaColor: "rgba(37, 99, 235, 0.28)",
-        title: "Event volume",
+        title: "事件数量",
       }),
     [events.by_date],
   );
@@ -230,7 +229,7 @@ export function StatsDashboard({
         labels: events.by_type.map((item) => item.type),
         values: events.by_type.map((item) => item.count),
         color: "#0891b2",
-        title: "Event type",
+        title: "事件类型",
       }),
     [events.by_type],
   );
@@ -240,7 +239,7 @@ export function StatsDashboard({
         labels: events.by_symbol.map((item) => item.symbol),
         values: events.by_symbol.map((item) => item.count),
         color: "#0f766e",
-        title: "Event symbol",
+        title: "事件标的",
       }),
     [events.by_symbol],
   );
@@ -251,7 +250,7 @@ export function StatsDashboard({
         values: news.by_date.map((item) => item.count),
         color: "#f59e0b",
         areaColor: "rgba(245, 158, 11, 0.3)",
-        title: "News volume",
+        title: "新闻数量",
       }),
     [news.by_date],
   );
@@ -261,7 +260,7 @@ export function StatsDashboard({
         labels: news.by_sentiment.map((item) => item.sentiment),
         values: news.by_sentiment.map((item) => item.count),
         color: "#d97706",
-        title: "News sentiment",
+        title: "情感分布",
       }),
     [news.by_sentiment],
   );
@@ -271,17 +270,17 @@ export function StatsDashboard({
         labels: news.by_symbol.map((item) => item.symbol),
         values: news.by_symbol.map((item) => item.count),
         color: "#b45309",
-        title: "News symbol",
+        title: "新闻标的",
       }),
     [news.by_symbol],
   );
 
   if (statsQuery.isLoading && !statsQuery.data) {
-    return <div className="helper">Loading overview analytics...</div>;
+    return <div className="helper">统计概览加载中...</div>;
   }
 
   if (statsQuery.error) {
-    return <div className="helper">{`Failed to load overview analytics: ${statsQuery.error.message}`}</div>;
+    return <div className="helper">{`统计概览加载失败：${statsQuery.error.message}`}</div>;
   }
 
   return (
@@ -289,39 +288,39 @@ export function StatsDashboard({
       <section className="card surface-panel">
         <div className="section-headline" style={{ marginBottom: 12 }}>
           <div>
-            <div className="card-title">Analytics Query</div>
+            <div className="card-title">查询参数</div>
             <div className="helper">
-              Schema {statsPayload.schema_version} | {statsPayload.query.granularity} |{" "}
-              {statsPayload.query.symbols.length ? statsPayload.query.symbols.join(", ") : "all symbols"}
+              版本 {statsPayload.schema_version} | {statsPayload.query.granularity === "day" ? "日度" : statsPayload.query.granularity === "week" ? "周度" : "月度"} |{" "}
+              {statsPayload.query.symbols.length ? statsPayload.query.symbols.join(", ") : "全部标的"}
             </div>
           </div>
           <button type="button" className="stock-page-button" onClick={() => statsQuery.refetch()}>
-            Refresh
+            刷新
           </button>
         </div>
         <div className="control-bar">
           <label className="field-stack">
-            <span>Granularity</span>
+            <span>粒度</span>
             <select className="select" value={granularity} onChange={(event) => setGranularity(event.target.value as StatsOverviewGranularity)}>
-              <option value="day">Day</option>
-              <option value="week">Week</option>
-              <option value="month">Month</option>
+              <option value="day">日度</option>
+              <option value="week">周度</option>
+              <option value="month">月度</option>
             </select>
           </label>
           <label className="field-stack">
-            <span>Top Dates</span>
+            <span>日期条数</span>
             <input className="input" type="number" min={0} value={topDate} onChange={(event) => setTopDate(Number(event.target.value) || 0)} />
           </label>
           <label className="field-stack">
-            <span>Top Types</span>
+            <span>类型条数</span>
             <input className="input" type="number" min={0} value={topType} onChange={(event) => setTopType(Number(event.target.value) || 0)} />
           </label>
           <label className="field-stack">
-            <span>Top Symbols</span>
+            <span>标的条数</span>
             <input className="input" type="number" min={0} value={topSymbol} onChange={(event) => setTopSymbol(Number(event.target.value) || 0)} />
           </label>
           <label className="field-stack">
-            <span>Top Sentiments</span>
+            <span>情感条数</span>
             <input className="input" type="number" min={0} value={topSentiment} onChange={(event) => setTopSentiment(Number(event.target.value) || 0)} />
           </label>
         </div>
@@ -332,45 +331,45 @@ export function StatsDashboard({
           <div className="section-headline">
             <div>
               <h2 className="section-title" style={{ marginBottom: 0 }}>
-                Event Analytics
+                事件统计
               </h2>
-              <div className="helper">This screen now consumes the explicit dashboard aggregate schema directly.</div>
+              <div className="helper">基于仪表盘聚合数据模式实时计算。</div>
             </div>
-            <span className="kicker">Event</span>
+            <span className="kicker">事件</span>
           </div>
           <div className="metric-grid">
-            <MetricCard label="Total Events" value={eventTotals.total} helper="Summed from the aggregate series" />
-            <MetricCard label="Event Types" value={eventTotals.typeCount} helper="Primary breakdown from the aggregate schema" />
-            <MetricCard label="Covered Symbols" value={eventTotals.symbolCount} helper="Distinct symbol buckets returned by the API" />
+            <MetricCard label="事件总数" value={eventTotals.total} helper="聚合序列汇总" />
+            <MetricCard label="事件类型" value={eventTotals.typeCount} helper="聚合模式主分类" />
+            <MetricCard label="覆盖标的" value={eventTotals.symbolCount} helper="API 返回的不同标的分组数" />
           </div>
           <div className="grid grid-3">
             <div className="card surface-panel">
-              <div className="card-title">By Date</div>
+              <div className="card-title">按日期分布</div>
               <ReactECharts option={eventDateOption} style={{ height: 240 }} />
             </div>
             <div className="card surface-panel">
-              <div className="card-title">By Type</div>
+              <div className="card-title">按类型分布</div>
               <ReactECharts option={eventTypeOption} style={{ height: 240 }} />
             </div>
             <div className="card surface-panel">
-              <div className="card-title">By Symbol</div>
+              <div className="card-title">按标的分布</div>
               <ReactECharts option={eventSymbolOption} style={{ height: 240 }} />
             </div>
           </div>
           <StatCard<EventDateStat>
-            title="Event Series"
+            title="事件序列"
             items={events.by_date}
             getLabel={(item) => formatDate(item.date)}
             getCount={(item) => item.count}
           />
           <StatCard<EventTypeStat>
-            title="Top Event Types"
+            title="热门事件类型"
             items={events.by_type}
             getLabel={(item) => item.type}
             getCount={(item) => item.count}
           />
           <StatCard<EventSymbolStat>
-            title="Top Event Symbols"
+            title="热门事件标的"
             items={events.by_symbol}
             getLabel={(item) => item.symbol}
             getCount={(item) => item.count}
@@ -383,45 +382,45 @@ export function StatsDashboard({
           <div className="section-headline">
             <div>
               <h2 className="section-title" style={{ marginBottom: 0 }}>
-                News Analytics
+                新闻统计
               </h2>
-              <div className="helper">The page no longer casts this payload to downstream news stats types.</div>
+              <div className="helper">基于仪表盘聚合数据模式实时计算。</div>
             </div>
-            <span className="kicker">News</span>
+            <span className="kicker">新闻</span>
           </div>
           <div className="metric-grid">
-            <MetricCard label="Total News" value={newsTotals.total} helper="Summed from the aggregate series" />
-            <MetricCard label="Sentiments" value={newsTotals.sentimentCount} helper="Primary breakdown from the aggregate schema" />
-            <MetricCard label="Covered Symbols" value={newsTotals.symbolCount} helper="Distinct symbol buckets returned by the API" />
+            <MetricCard label="新闻总数" value={newsTotals.total} helper="聚合序列汇总" />
+            <MetricCard label="情感类别" value={newsTotals.sentimentCount} helper="聚合模式主分类" />
+            <MetricCard label="覆盖标的" value={newsTotals.symbolCount} helper="API 返回的不同标的分组数" />
           </div>
           <div className="grid grid-3">
             <div className="card surface-panel" data-tone="warm">
-              <div className="card-title">By Date</div>
+              <div className="card-title">按日期分布</div>
               <ReactECharts option={newsDateOption} style={{ height: 240 }} />
             </div>
             <div className="card surface-panel" data-tone="warm">
-              <div className="card-title">By Sentiment</div>
+              <div className="card-title">按情感分布</div>
               <ReactECharts option={newsSentimentOption} style={{ height: 240 }} />
             </div>
             <div className="card surface-panel" data-tone="warm">
-              <div className="card-title">By Symbol</div>
+              <div className="card-title">按标的分布</div>
               <ReactECharts option={newsSymbolOption} style={{ height: 240 }} />
             </div>
           </div>
           <StatCard<NewsDateStat>
-            title="News Series"
+            title="新闻序列"
             items={news.by_date}
             getLabel={(item) => formatDate(item.date)}
             getCount={(item) => item.count}
           />
           <StatCard<NewsSentimentStat>
-            title="Top Sentiments"
+            title="热门情感"
             items={news.by_sentiment}
             getLabel={(item) => item.sentiment}
             getCount={(item) => item.count}
           />
           <StatCard<NewsSymbolStat>
-            title="Top News Symbols"
+            title="热门新闻标的"
             items={news.by_symbol}
             getLabel={(item) => item.symbol}
             getCount={(item) => item.count}

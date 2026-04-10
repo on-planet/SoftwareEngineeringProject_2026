@@ -19,6 +19,7 @@ function buildMotionStyle(index: number): React.CSSProperties {
 export type StatsViewTab = "portfolio" | "performance" | "workspace" | "events" | "news";
 export type PortfolioViewTab = "watch" | "bought";
 export type StatsTargetTab = "watch" | "bought";
+type BoughtInsightsTab = "diagnostic" | "stress";
 
 type StatsPageViewProps = {
   authLoading: boolean;
@@ -88,6 +89,14 @@ export function StatsPageView({
   onStatsTargetTabChange,
   onSelectWatchTarget,
 }: StatsPageViewProps) {
+  const [boughtInsightsTab, setBoughtInsightsTab] = React.useState<BoughtInsightsTab>("diagnostic");
+
+  React.useEffect(() => {
+    if (portfolioViewTab !== "bought") {
+      setBoughtInsightsTab("diagnostic");
+    }
+  }, [portfolioViewTab]);
+
   if (authLoading) {
     return <LoadingState />;
   }
@@ -108,7 +117,7 @@ export function StatsPageView({
       <section className={`card market-panel ${styles.hero}`}>
         <div className={styles.heroLead}>
           <div className={styles.heroText}>
-            <span className="kicker">Portfolio Lab</span>
+            <span className="kicker">组合实验室</span>
             <h1 className="page-title">账户统计面板</h1>
             <p className={styles.heroDescription}>
               把自选、持仓、组合表现、事件/新闻统计，以及个人告警和关系图谱放到同一个工作台里。
@@ -146,7 +155,7 @@ export function StatsPageView({
                 <div className="card-title">观察标的</div>
                 <div className="helper">支持批量勾选、快速加入和一键转为持仓。</div>
               </div>
-              <span className="kicker">Watchlist</span>
+              <span className="kicker">自选</span>
             </div>
 
             <div className={styles.toolbarStack}>
@@ -200,7 +209,7 @@ export function StatsPageView({
                 <div className="helper">可以在个股页添加，也可以直接在这里手动维护。</div>
               </div>
             ) : (
-              <div className={styles.list} style={{ marginTop: 14 }}>
+              <div className={`${styles.list} ${styles.watchList}`} style={{ marginTop: 14 }}>
                 {targets.watchTargets.map((item) => (
                   <div key={item} className={styles.listItem}>
                     <label className={styles.watchLabel}>
@@ -242,7 +251,7 @@ export function StatsPageView({
                 <div className="card-title">已买标的</div>
                 <div className="helper">持仓信息会直接驱动收益比较、组合分析和压力测试。</div>
               </div>
-              <span className="kicker">Positions</span>
+              <span className="kicker">持仓</span>
             </div>
 
             {targets.boughtTargets.length === 0 ? (
@@ -251,7 +260,7 @@ export function StatsPageView({
                 <div className="helper">从左侧观察列表直接转入，或在个股页补充买入记录。</div>
               </div>
             ) : (
-              <div className={styles.list}>
+              <div className={`${styles.list} ${styles.boughtList}`}>
                 {targets.boughtTargets.map((item) => (
                   <div key={item.symbol} className={styles.listItem}>
                     <div className={styles.itemMeta}>
@@ -353,29 +362,55 @@ export function StatsPageView({
 
         {statsViewTab === "portfolio" ? (
           <section className="card market-panel motion-tab-panel" data-tone="neutral">
-            <div className="page-header" style={{ marginBottom: 12 }}>
-              <div>
-                <div className="card-title">{portfolioViewTab === "watch" ? "观察标的诊断报告" : "组合诊断报告"}</div>
-                <div className="helper">
-                  {portfolioViewTab === "watch"
-                    ? "按等权观察篮子生成画像、风格暴露和宏观敏感度，先看结构和风险，再决定是否转入持仓。"
-                    : "自动生成组合画像、风格暴露和宏观敏感度，不再只看收益率。"}
+            {portfolioViewTab === "watch" ? (
+              <>
+                <div className="page-header" style={{ marginBottom: 12 }}>
+                  <div>
+                    <div className="card-title">观察标的诊断报告</div>
+                    <div className="helper">
+                      按等权观察篮子生成画像、风格暴露和宏观敏感度，先看结构和风险，再决定是否转入持仓。
+                    </div>
+                  </div>
                 </div>
-              </div>
-            </div>
-            <PortfolioDiagnosticReport targetType={portfolioViewTab} />
-          </section>
-        ) : null}
-
-        {statsViewTab === "portfolio" && portfolioViewTab === "bought" ? (
-          <section className="card market-panel motion-tab-panel">
-            <div className="page-header" style={{ marginBottom: 12 }}>
-              <div>
-                <div className="card-title">组合压力测试</div>
-                <div className="helper">预设场景和自定义规则会估算组合潜在损失、受影响权重和重点风险暴露。</div>
-              </div>
-            </div>
-            <PortfolioStressTestPanel targetType="bought" />
+                <PortfolioDiagnosticReport targetType="watch" />
+              </>
+            ) : (
+              <>
+                <div className="page-header" style={{ marginBottom: 12 }}>
+                  <div>
+                    <div className="card-title">{boughtInsightsTab === "diagnostic" ? "组合诊断报告" : "组合压力测试"}</div>
+                    <div className="helper">
+                      {boughtInsightsTab === "diagnostic"
+                        ? "自动生成组合画像、风格暴露和宏观敏感度，不再只看收益率。"
+                        : "预设场景和自定义规则会估算组合潜在损失、受影响权重和重点风险暴露。"}
+                    </div>
+                  </div>
+                </div>
+                <div className={`toolbar ${styles.filterBar}`} style={{ marginBottom: 12 }}>
+                  <button
+                    type="button"
+                    className="stock-page-button"
+                    data-active={boughtInsightsTab === "diagnostic"}
+                    onClick={() => setBoughtInsightsTab("diagnostic")}
+                  >
+                    组合诊断报告
+                  </button>
+                  <button
+                    type="button"
+                    className="stock-page-button"
+                    data-active={boughtInsightsTab === "stress"}
+                    onClick={() => setBoughtInsightsTab("stress")}
+                  >
+                    组合压力测试
+                  </button>
+                </div>
+                {boughtInsightsTab === "diagnostic" ? (
+                  <PortfolioDiagnosticReport targetType="bought" />
+                ) : (
+                  <PortfolioStressTestPanel targetType="bought" />
+                )}
+              </>
+            )}
           </section>
         ) : null}
 

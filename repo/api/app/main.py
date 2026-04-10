@@ -11,6 +11,7 @@ from etl.utils.env import load_project_env
 load_project_env()
 
 from fastapi import FastAPI, HTTPException
+from starlette.middleware.gzip import GZipMiddleware
 
 from app.core.handlers import http_error_handler, http_exception_handler
 from app.core.middleware import RequestLogMiddleware
@@ -27,6 +28,10 @@ def create_app() -> FastAPI:
 
     app.add_exception_handler(Exception, http_error_handler)
     app.add_exception_handler(HTTPException, http_exception_handler)
+
+    # GZip 压缩中间件（仅压缩 >1KB 的响应）
+    # 对大型股票列表等大数据响应启用压缩，减少传输时间
+    app.add_middleware(GZipMiddleware, minimum_size=1000)
 
     app.add_middleware(RequestLogMiddleware)
 

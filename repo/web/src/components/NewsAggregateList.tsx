@@ -8,39 +8,39 @@ const PLACEHOLDER_IMAGE =
   "https://images.unsplash.com/photo-1504711434969-e33886168f5c?auto=format&fit=crop&w=800&q=60";
 
 const SOURCE_CATEGORY_LABELS: Record<string, string> = {
-  "": "All Sources",
-  financial_media: "Financial Media",
-  investment_research: "Research",
-  international_media: "International",
-  policy_media: "Policy",
-  investment_community: "Community",
-  finance_portal: "Portal",
-  general_news: "General News",
+  "": "全部来源",
+  financial_media: "财经媒体",
+  investment_research: "投研机构",
+  international_media: "国际媒体",
+  policy_media: "政策媒体",
+  investment_community: "投资社区",
+  finance_portal: "财经门户",
+  general_news: "综合新闻",
 };
 
 const TOPIC_CATEGORY_LABELS: Record<string, string> = {
-  "": "All Topics",
-  macro_economy: "Macro",
-  global_markets: "Global Markets",
-  world_news: "World News",
-  financial_policy: "Policy",
-  stock_news: "Stock News",
-  market_flash: "Market Flash",
-  market_news: "Market News",
-  funds: "Funds",
-  personal_finance: "Personal Finance",
-  opinion: "Opinion",
-  research: "Research",
-  general: "General",
+  "": "全部主题",
+  macro_economy: "宏观经济",
+  global_markets: "全球市场",
+  world_news: "国际新闻",
+  financial_policy: "金融政策",
+  stock_news: "股票新闻",
+  market_flash: "市场快讯",
+  market_news: "市场新闻",
+  funds: "基金",
+  personal_finance: "个人理财",
+  opinion: "观点",
+  research: "研究报告",
+  general: "综合",
 };
 
 const TIME_BUCKET_LABELS: Record<string, string> = {
-  "": "All Sessions",
-  pre_market: "Pre-market",
-  trading_hours: "Trading",
-  post_market: "Post-market",
-  night: "Night",
-  weekend: "Weekend",
+  "": "全部时段",
+  pre_market: "盘前",
+  trading_hours: "交易时段",
+  post_market: "盘后",
+  night: "夜间",
+  weekend: "周末",
 };
 
 type NewsPage = ApiPage<NewsItemResponse>;
@@ -73,12 +73,12 @@ function buildNewsAggregateCacheKey(params: {
 
 function formatSentiment(value: string) {
   if (value === "positive") {
-    return "Positive";
+    return "正面";
   }
   if (value === "negative") {
-    return "Negative";
+    return "负面";
   }
-  return "Neutral";
+  return "中性";
 }
 
 function sentimentColor(value: string) {
@@ -100,14 +100,14 @@ function formatRelationValues(values?: string[] | string | null) {
 
 function formatCacheSummary(meta: CacheMeta | null) {
   if (!meta) {
-    return "Freshness unknown";
+    return "新鲜度未知";
   }
-  const parts = [meta.cache_hit ? "cache hit" : "network"];
+  const parts = [meta.cache_hit ? "缓存命中" : "网络请求"];
   if (meta.as_of) {
-    parts.push(`as of ${new Date(meta.as_of).toLocaleString("zh-CN")}`);
+    parts.push(`截至 ${new Date(meta.as_of).toLocaleString("zh-CN")}`);
   }
   if (meta.refresh_queued) {
-    parts.push("refresh queued");
+    parts.push("刷新已排队");
   }
   return parts.join(" | ");
 }
@@ -195,7 +195,7 @@ export function NewsAggregateList() {
         writePersistentCache(cacheKey, response);
         setError(null);
       } catch (nextError) {
-        setError(nextError instanceof Error ? nextError.message : "Failed to load news feed");
+        setError(nextError instanceof Error ? nextError.message : "加载新闻失败");
       } finally {
         inflightPages.current.delete(page);
         setLoadingInitial(false);
@@ -222,18 +222,18 @@ export function NewsAggregateList() {
   }, [error, hasMore, lastLoadedPage, loadPage, loadingInitial, loadingMore]);
 
   if (loadingInitial && mergedItems.length === 0) {
-    return <div className="helper">Loading news feed...</div>;
+    return <div className="helper">新闻加载中...</div>;
   }
 
   if (error && mergedItems.length === 0) {
-    return <div className="helper">{`News feed failed: ${error}`}</div>;
+    return <div className="helper">{`新闻加载失败：${error}`}</div>;
   }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <div className="toolbar" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
         <div className="helper">
-          {mergedItems.length} loaded / {total} total
+          已加载 {mergedItems.length} / 共 {total} 条
           <span style={{ marginLeft: 8 }}>{formatCacheSummary(cacheMeta)}</span>
         </div>
         <div className="toolbar" style={{ gap: 8, flexWrap: "wrap" }}>
@@ -259,9 +259,9 @@ export function NewsAggregateList() {
             ))}
           </select>
           <select className="select" value={limit} onChange={(event) => setLimit(Number(event.target.value) || 24)}>
-            <option value={12}>12 / page</option>
-            <option value={24}>24 / page</option>
-            <option value={48}>48 / page</option>
+            <option value={12}>12 条/页</option>
+            <option value={24}>24 条/页</option>
+            <option value={48}>48 条/页</option>
           </select>
         </div>
       </div>
@@ -274,11 +274,11 @@ export function NewsAggregateList() {
         gap={12}
         resetKey={resetKey}
         onEndReached={handleEndReached}
-        emptyMessage="No news items"
+        emptyMessage="暂无新闻"
         footer={
           <div className="helper" style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-            <span>{hasMore ? "Scroll to load more pages." : "All items loaded."}</span>
-            <span>{loadingMore ? "Loading more..." : error ? `Latest error: ${error}` : "Virtualized feed active"}</span>
+            <span>{hasMore ? "滚动加载更多页面。" : "已加载全部内容。"}</span>
+            <span>{loadingMore ? "加载更多..." : error ? `最新错误：${error}` : "虚拟化列表已激活"}</span>
           </div>
         }
         renderItem={(item) => {
@@ -287,7 +287,7 @@ export function NewsAggregateList() {
           const themes = formatRelationValues(item.themes);
           const eventTags = formatRelationValues(item.event_tags);
           const keywords = formatRelationValues(item.keywords);
-          const sourceLabel = item.source_site || item.source || "Unknown";
+          const sourceLabel = item.source_site || item.source || "未知";
           const summaryParts = [themes, eventTags, keywords].filter(Boolean).join(" | ");
 
           return (
@@ -317,7 +317,7 @@ export function NewsAggregateList() {
                   {sourceLabel}
                   {item.link ? (
                     <a href={item.link} target="_blank" rel="noreferrer" style={{ marginLeft: 8, color: "var(--accent)" }}>
-                      Open
+                      打开
                     </a>
                   ) : null}
                 </div>
@@ -328,9 +328,9 @@ export function NewsAggregateList() {
                 </div>
                 {relatedSymbols || relatedSectors ? (
                   <div className="helper" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {relatedSymbols ? `Symbols: ${relatedSymbols}` : ""}
+                    {relatedSymbols ? `相关标的：${relatedSymbols}` : ""}
                     {relatedSymbols && relatedSectors ? " | " : ""}
-                    {relatedSectors ? `Sectors: ${relatedSectors}` : ""}
+                    {relatedSectors ? `相关板块：${relatedSectors}` : ""}
                   </div>
                 ) : null}
                 {summaryParts ? (

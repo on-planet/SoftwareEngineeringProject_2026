@@ -110,7 +110,7 @@ export function PerformanceComparisonView({ model }: PerformanceComparisonViewPr
             <div className="card-title">{`观察组合收益对比 · ${periodLabel}`}</div>
             <div className="helper">自选组合按等权均值对齐，大盘基准自动根据标的市场选择。</div>
           </div>
-          <span className="kicker">Watch</span>
+          <span className="kicker">观察</span>
         </div>
 
         {normalizedWatchSymbols.length === 0 ? (
@@ -163,7 +163,7 @@ export function PerformanceComparisonView({ model }: PerformanceComparisonViewPr
             <div className="card-title">{`持仓组合收益对比 · ${periodLabel}`}</div>
             <div className="helper">按持仓金额加权，组合收益从每笔买入日期开始累计。</div>
           </div>
-          <span className="kicker">Position</span>
+          <span className="kicker">持仓</span>
         </div>
 
         {normalizedBoughtTargets.length === 0 ? (

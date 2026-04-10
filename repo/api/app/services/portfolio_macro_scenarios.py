@@ -3,6 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 import re
 
+try:
+    import jieba
+except Exception:  # pragma: no cover - fallback path when jieba is unavailable
+    jieba = None
+
 from app.schemas.portfolio_stress import PortfolioScenarioImpactOut, PortfolioStressRuleIn
 from app.services.portfolio_stress_service import clip_shock_pct, custom_rule_label
 
@@ -69,14 +74,24 @@ class ResolvedScenarioBundle:
     losers: list[PortfolioScenarioImpactOut]
 
 
-UP_WORDS = ("涨", "上涨", "上行", "走高", "走强", "反弹", "回暖", "修复", "改善", "利好", "benefit", "higher")
-DOWN_WORDS = ("跌", "下跌", "下行", "走低", "走弱", "回落", "承压", "疲软", "恶化", "利空", "hurt", "lower")
+@dataclass(frozen=True)
+class TemplateMatchScore:
+    template: ScenarioTemplate
+    total_score: float
+    entity_score: float
+    direction_score: float
+    matched_keywords: tuple[str, ...]
+    matched_direction_keywords: tuple[str, ...]
+
+
+UP_WORDS = ("涨", "上涨", "上行", "上升", "走高", "走强", "反弹", "回暖", "修复", "改善", "利好", "benefit", "higher")
+DOWN_WORDS = ("跌", "下跌", "下行", "下降", "走低", "走弱", "回落", "承压", "疲软", "恶化", "利空", "hurt", "lower")
 QUAL_UP_WORDS = ("放松", "宽松", "松绑", "刺激", "托底", "支持", "缓和", "修复")
 QUAL_DOWN_WORDS = ("收紧", "从严", "加码", "打压", "趋严", "整顿", "压制")
 EXTRA_UP_WORDS = ("受益", "景气", "抬升", "修复", "改善", "回升")
 EXTRA_DOWN_WORDS = ("拖累", "受压", "走弱", "回撤", "放缓", "恶化")
 
-CLAUSE_SPLIT_RE = re.compile(r"(?:[,，;；。/\n+&]|(?:并且|而且|同时|以及|且|并|叠加|同时叠加|and|with))")
+CLAUSE_SPLIT_RE = re.compile(r"(?:[,，、;；。/\n+&]|(?:并且|而且|同时|以及|且|并|叠加|同时叠加|或者|或|and|with|or))")
 PERCENT_RE = re.compile(r"([+-]?\d+(?:\.\d+)?)\s*(?:%|pct|％)")
 BP_RE = re.compile(r"([+-]?\d+(?:\.\d+)?)\s*(?:bp|bps|基点)")
 SIGNED_NUMBER_RE = re.compile(r"([+-]\d+(?:\.\d+)?)")
@@ -169,7 +184,7 @@ TEMPLATES: tuple[ScenarioTemplate, ...] = (
         base_trigger=0.08,
         trigger_unit="percent",
         keywords=("油价", "原油", "布油", "wti", "crude", "oil"),
-        direction_keywords=("涨", "上涨", "上行", "飙升", "走高", "走强"),
+        direction_keywords=("涨", "上涨", "上行", "上升", "飙升", "走高", "走强"),
         rules=(
             ScenarioRuleSeed("sector", "能源", 0.06),
             ScenarioRuleSeed("sector", "航空旅游", -0.05),
@@ -193,7 +208,7 @@ TEMPLATES: tuple[ScenarioTemplate, ...] = (
         base_trigger=0.08,
         trigger_unit="percent",
         keywords=("油价", "原油", "布油", "wti", "crude", "oil"),
-        direction_keywords=("跌", "下跌", "回落", "走低", "跳水", "走弱"),
+        direction_keywords=("跌", "下跌", "下降", "回落", "走低", "跳水", "走弱"),
         rules=(
             ScenarioRuleSeed("sector", "能源", -0.05),
             ScenarioRuleSeed("sector", "航空旅游", 0.04),
@@ -462,6 +477,152 @@ TEMPLATES: tuple[ScenarioTemplate, ...] = (
 
 TEMPLATE_MAP = {template.code: template for template in TEMPLATES}
 
+TOKEN_SPLIT_RE = re.compile(r"[^\w\u4e00-\u9fff/%.+-]+")
+LATIN_TOKEN_RE = re.compile(r"[a-z][a-z0-9/_+-]*")
+TOKEN_STOP_WORDS = {
+    "和",
+    "与",
+    "及",
+    "并",
+    "并且",
+    "而且",
+    "同时",
+    "以及",
+    "且",
+    "the",
+    "a",
+    "an",
+}
+TEMPLATE_ENTITY_WEIGHT = 0.65
+TEMPLATE_DIRECTION_WEIGHT = 1.35
+TEMPLATE_MATCH_MIN_SCORE = 5.0
+
+_JIEBA_DICT_PRIMED = False
+
+
+def _prime_jieba_dictionary() -> None:
+    global _JIEBA_DICT_PRIMED
+    if _JIEBA_DICT_PRIMED or jieba is None:
+        return
+    for template in TEMPLATES:
+        for term in template.keywords + template.direction_keywords:
+            value = str(term or "").strip()
+            if len(value) >= 2:
+                jieba.add_word(value, freq=300000)
+    for triggers, canonical in PHRASE_ALIAS_GROUPS:
+        for trigger in triggers:
+            value = str(trigger or "").strip()
+            if len(value) >= 2:
+                jieba.add_word(value, freq=200000)
+        canonical_value = str(canonical or "").strip()
+        if len(canonical_value) >= 2:
+            jieba.add_word(canonical_value, freq=300000)
+    _JIEBA_DICT_PRIMED = True
+
+
+def _tokenize_clause(text: str) -> tuple[str, ...]:
+    value = str(text or "").strip().lower()
+    if not value:
+        return ()
+    _prime_jieba_dictionary()
+    raw_tokens: list[str] = []
+    if jieba is not None:
+        try:
+            raw_tokens = [str(item).strip().lower() for item in jieba.cut(value, HMM=True)]
+        except Exception:
+            raw_tokens = []
+    if not raw_tokens:
+        raw_tokens = [str(item).strip().lower() for item in TOKEN_SPLIT_RE.split(value)]
+    raw_tokens.extend(str(item).strip().lower() for item in LATIN_TOKEN_RE.findall(value))
+
+    tokens: list[str] = []
+    seen: set[str] = set()
+    for item in raw_tokens:
+        token = str(item or "").strip()
+        if not token or token in TOKEN_STOP_WORDS:
+            continue
+        if token in seen:
+            continue
+        seen.add(token)
+        tokens.append(token)
+    return tuple(tokens)
+
+
+def _keyword_hit_score(text: str, tokens: tuple[str, ...], keyword: str) -> float:
+    term = str(keyword or "").strip().lower()
+    if not term:
+        return 0.0
+    score = 0.0
+    if term in text:
+        score += 2.4 if len(term) >= 2 else 1.4
+    if term in tokens:
+        score += 2.6 if len(term) >= 2 else 1.4
+    if len(term) >= 2 and any(token in term or term in token for token in tokens):
+        score += 0.7
+    if "/" in term:
+        parts = tuple(part for part in term.split("/") if part)
+        if parts and all(part in text or part in tokens for part in parts):
+            score += 0.6
+    return score
+
+
+def _top_keyword_hits(
+    text: str,
+    tokens: tuple[str, ...],
+    keywords: tuple[str, ...],
+    *,
+    limit: int,
+) -> tuple[tuple[str, float], ...]:
+    hits: list[tuple[str, float]] = []
+    for keyword in keywords:
+        hit_score = _keyword_hit_score(text, tokens, keyword)
+        if hit_score > 0:
+            hits.append((keyword, hit_score))
+    if not hits:
+        return ()
+    hits.sort(key=lambda item: item[1], reverse=True)
+    return tuple(hits[:limit])
+
+
+def _score_template_match(template: ScenarioTemplate, text: str, tokens: tuple[str, ...]) -> TemplateMatchScore:
+    entity_hits = _top_keyword_hits(text, tokens, template.keywords, limit=3)
+    direction_hits = _top_keyword_hits(text, tokens, template.direction_keywords, limit=2)
+    entity_score = sum(score for _, score in entity_hits)
+    direction_score = sum(score for _, score in direction_hits)
+
+    total_score = entity_score * TEMPLATE_ENTITY_WEIGHT + direction_score * TEMPLATE_DIRECTION_WEIGHT
+    if entity_score > 0 and direction_score > 0:
+        total_score += 2.0
+    if template.trigger_unit == "bp" and _extract_bp(text) is not None:
+        total_score += 0.9
+    if template.trigger_unit == "percent" and _extract_percent(text) is not None:
+        total_score += 0.8
+    if template.trigger_unit == "qualitative" and _contains_any(text, QUAL_UP_WORDS + QUAL_DOWN_WORDS):
+        total_score += 0.5
+
+    return TemplateMatchScore(
+        template=template,
+        total_score=total_score,
+        entity_score=entity_score,
+        direction_score=direction_score,
+        matched_keywords=tuple(keyword for keyword, _ in entity_hits),
+        matched_direction_keywords=tuple(keyword for keyword, _ in direction_hits),
+    )
+
+
+def _best_template_match(text: str) -> TemplateMatchScore | None:
+    tokens = _tokenize_clause(text)
+    scores = [_score_template_match(template, text, tokens) for template in TEMPLATES]
+    if not scores:
+        return None
+    scores.sort(key=lambda item: item.total_score, reverse=True)
+    best = scores[0]
+    if best.total_score < TEMPLATE_MATCH_MIN_SCORE:
+        return None
+    if best.entity_score <= 0 or best.direction_score <= 0:
+        return None
+    return best
+
 
 def _append_phrase(text: str, phrase: str) -> str:
     if phrase in text:
@@ -475,12 +636,13 @@ def _contains_any(text: str, parts: tuple[str, ...]) -> bool:
 
 def _apply_aliases(text: str) -> str:
     value = text
+    original = value
     for triggers, canonical in PHRASE_ALIAS_GROUPS:
         if _contains_any(value, triggers):
             value = _append_phrase(value, canonical)
-    if RMB_WEAKER_RE.search(value) or USD_STRONGER_RE.search(value):
+    if RMB_WEAKER_RE.search(original) or USD_STRONGER_RE.search(original):
         value = _append_phrase(value, "人民币贬值")
-    if RMB_STRONGER_RE.search(value) or USD_WEAKER_RE.search(value):
+    if RMB_STRONGER_RE.search(original) or USD_WEAKER_RE.search(original):
         value = _append_phrase(value, "人民币升值")
     return value
 
@@ -498,7 +660,6 @@ def _normalize_text(text: str) -> str:
         "）": ")",
     })
     normalized = value.translate(translation)
-    normalized = _apply_aliases(normalized)
     return re.sub(r"\s+", " ", normalized).strip()
 
 
@@ -603,7 +764,12 @@ def _infer_template_magnitude(template: ScenarioTemplate, text: str) -> float | 
     return None
 
 
-def _build_template_clause(template: ScenarioTemplate, clause_text: str) -> ResolvedScenarioClause:
+def _build_template_clause(
+    template: ScenarioTemplate,
+    clause_text: str,
+    *,
+    match_score: TemplateMatchScore | None = None,
+) -> ResolvedScenarioClause:
     explicit_magnitude = (
         _extract_percent(clause_text)
         if template.trigger_unit == "percent"
@@ -615,18 +781,28 @@ def _build_template_clause(template: ScenarioTemplate, clause_text: str) -> Reso
     rules = _scale_rule_shocks(template, magnitude)
     explanation_parts = [
         template.description,
-        f"Applied {len(rules)} mapped rules for clause `{clause_text}`.",
+        f"已为子句 `{clause_text}` 应用 {len(rules)} 条映射规则。",
     ]
+    if match_score is not None:
+        match_bits: list[str] = []
+        if match_score.matched_keywords:
+            match_bits.append(f"关键词={','.join(match_score.matched_keywords[:3])}")
+        if match_score.matched_direction_keywords:
+            match_bits.append(f"方向={','.join(match_score.matched_direction_keywords[:2])}")
+        details = f" ({'; '.join(match_bits)})" if match_bits else ""
+        explanation_parts.append(
+            f"通过词典关键词评分匹配到模板{details}，匹配分数={match_score.total_score:.2f}。"
+        )
     if explicit_magnitude is not None:
         formatted = _format_magnitude(template, explicit_magnitude)
         if formatted:
-            explanation_parts.append(f"Used explicit magnitude {formatted}.")
+            explanation_parts.append(f"使用了显式指定的幅度 {formatted}。")
     elif magnitude is not None:
         formatted = _format_magnitude(template, magnitude)
         if formatted:
-            explanation_parts.append(f"Inferred magnitude {formatted} from intensity words or aliases.")
+            explanation_parts.append(f"从强度词或别名推断出幅度 {formatted}。")
     elif template.trigger_unit != "qualitative":
-        explanation_parts.append("No explicit magnitude was found, so the template baseline shock was used.")
+        explanation_parts.append("未找到显式幅度，使用了模板基线冲击。")
     return ResolvedScenarioClause(
         text=clause_text,
         parser="template",
@@ -644,10 +820,8 @@ def _build_template_clause(template: ScenarioTemplate, clause_text: str) -> Reso
 
 
 def _match_template(text: str) -> ScenarioTemplate | None:
-    for template in TEMPLATES:
-        if _contains_any(text, template.keywords) and _contains_any(text, template.direction_keywords):
-            return template
-    return None
+    matched = _best_template_match(text)
+    return matched.template if matched is not None else None
 
 
 def _extract_direction(text: str) -> int:
@@ -679,7 +853,7 @@ def _resolve_generic_scope_clause(text: str) -> ResolvedScenarioClause | None:
             shock_pct=clip_shock_pct(direction * magnitude),
         )
         headline = f"{sector}{'走强' if direction > 0 else '承压'} {magnitude * 100:.0f}%"
-        explanation = f"Generic scope parser mapped `{text}` into one sector shock on {sector}."
+        explanation = f"通用范围解析器将 `{text}` 映射为对 {sector} 行业的冲击。"
         label = sector
     else:
         rule = PortfolioStressRuleIn(
@@ -687,19 +861,19 @@ def _resolve_generic_scope_clause(text: str) -> ResolvedScenarioClause | None:
             scope_value=market,
             shock_pct=clip_shock_pct(direction * magnitude),
         )
-        headline = f"{market} market {'up' if direction > 0 else 'down'} {magnitude * 100:.0f}%"
-        explanation = f"Generic scope parser mapped `{text}` into one market shock on {market}."
+        headline = f"{market} 市场 {'上涨' if direction > 0 else '下跌'} {magnitude * 100:.0f}%"
+        explanation = f"通用范围解析器将 `{text}` 映射为对 {market} 市场的冲击。"
         label = market
 
     direct = PortfolioScenarioImpactOut(
         label=label,
         direction="benefit" if direction > 0 else "hurt",
-        rationale="The parsed scope itself is directly shocked inside the portfolio.",
+        rationale="解析的范围本身在组合内直接受到冲击。",
     )
     reverse = PortfolioScenarioImpactOut(
         label=label,
         direction="hurt" if direction > 0 else "benefit",
-        rationale="The reverse side depends on cross-sector spillover and should be reviewed manually.",
+        rationale="反向影响取决于跨行业溢出效应，建议手动复核。",
     )
     return ResolvedScenarioClause(
         text=text,
@@ -723,12 +897,40 @@ def _unparsed_clause(text: str) -> ResolvedScenarioClause:
         parser="unparsed",
         confidence="low",
         headline=text,
-        explanation="This clause could not be mapped into a supported macro scenario or generic scope shock yet.",
+        explanation="该子句暂时无法映射到支持的宏观情景或通用范围冲击。",
         matched_template_code=None,
         matched_template_name=None,
         extracted_shock_pct=None,
         extracted_bp=None,
         rules=[],
+        beneficiaries=[],
+        losers=[],
+    )
+
+
+def _fallback_market_clause(text: str) -> ResolvedScenarioClause | None:
+    direction = _extract_direction(text)
+    if direction == 0:
+        return None
+    magnitude = _extract_percent(text) or _infer_percent_magnitude(text) or 0.03
+    shock = clip_shock_pct(direction * magnitude)
+    rule = PortfolioStressRuleIn(scope_type="all", scope_value=None, shock_pct=shock)
+    headline = f"全市场{'走强' if direction > 0 else '承压'} {magnitude * 100:.0f}%"
+    explanation = (
+        f"回退解析器将无法识别的文本 `{text}` 映射为全组合市场冲击。"
+        "如有需要，请复核并手动调整生成的规则。"
+    )
+    return ResolvedScenarioClause(
+        text=text,
+        parser="fallback",
+        confidence="low",
+        headline=headline,
+        explanation=explanation,
+        matched_template_code=None,
+        matched_template_name="fallback-market-parser",
+        extracted_shock_pct=magnitude,
+        extracted_bp=None,
+        rules=[rule],
         beneficiaries=[],
         losers=[],
     )
@@ -782,17 +984,17 @@ def _combine_explanation(
     generic_count = len([item for item in clauses if item.parser == "generic"])
     skipped_count = total_count - parsed_count
     parts = [
-        f"Parsed {parsed_count}/{total_count} clauses into {rules_count} combined stress rules.",
-        f"Matched {template_count} template clauses and {generic_count} generic clauses.",
+        f"已将 {parsed_count}/{total_count} 个子句解析为 {rules_count} 条组合压力规则。",
+        f"匹配到 {template_count} 个模板子句和 {generic_count} 个通用子句。",
     ]
     if skipped_count > 0:
-        parts.append(f"{skipped_count} clauses were left as manual-review items.")
+        parts.append(f"{skipped_count} 个子句需要手动复核。")
     return " ".join(parts)
 
 
 def _combine_headline(parsed_clauses: list[ResolvedScenarioClause]) -> str:
     if not parsed_clauses:
-        return "Unparsed macro scenario"
+        return "未解析的宏观情景"
     if len(parsed_clauses) == 1:
         return parsed_clauses[0].headline
     return " + ".join(item.headline for item in parsed_clauses[:3])
@@ -800,7 +1002,7 @@ def _combine_headline(parsed_clauses: list[ResolvedScenarioClause]) -> str:
 
 def _combine_description(parsed_clauses: list[ResolvedScenarioClause]) -> str:
     if not parsed_clauses:
-        return "No supported macro clause was parsed."
+        return "未解析到支持的宏观子句。"
     return " ".join(item.explanation for item in parsed_clauses[:3])
 
 
@@ -815,7 +1017,7 @@ def _build_bundle(clauses: list[ResolvedScenarioClause]) -> ResolvedScenarioBund
     parsed_clauses = [item for item in clauses if item.rules]
     if not parsed_clauses:
         raise ValueError(
-            "Unable to parse this scenario. Try inputs like 油价涨 8%、人民币贬值、地产政策放松、美债收益率上行 50bp，或者 港股科技跌 6%。"
+            "无法解析该情景。请尝试输入如：油价涨 8%、人民币贬值、地产政策放松、美债收益率上行 50bp，或者 港股科技跌 6%。"
         )
     rules = _merge_rules(parsed_clauses)
     template_codes = [item.matched_template_code for item in parsed_clauses if item.matched_template_code]
@@ -847,7 +1049,7 @@ def _build_bundle(clauses: list[ResolvedScenarioClause]) -> ResolvedScenarioBund
 def build_macro_scenario_from_code(code: str) -> ResolvedScenarioBundle:
     template = TEMPLATE_MAP.get(str(code or "").strip())
     if template is None:
-        raise ValueError("Unsupported macro scenario template.")
+        raise ValueError("不支持的宏观情景模板。")
     clause = _build_template_clause(template, template.name)
     return _build_bundle([clause])
 
@@ -855,17 +1057,22 @@ def build_macro_scenario_from_code(code: str) -> ResolvedScenarioBundle:
 def resolve_portfolio_macro_scenario(text: str) -> ResolvedScenarioBundle:
     normalized = _normalize_text(text)
     if not normalized:
-        raise ValueError("Scenario text cannot be empty.")
+        raise ValueError("情景文本不能为空。")
 
     clauses: list[ResolvedScenarioClause] = []
     for raw_clause in _split_clauses(normalized):
-        template = _match_template(raw_clause)
-        if template is not None:
-            clauses.append(_build_template_clause(template, raw_clause))
+        clause_text = _apply_aliases(raw_clause)
+        matched = _best_template_match(clause_text)
+        if matched is not None:
+            clauses.append(_build_template_clause(matched.template, clause_text, match_score=matched))
             continue
-        generic = _resolve_generic_scope_clause(raw_clause)
+        generic = _resolve_generic_scope_clause(clause_text)
         if generic is not None:
             clauses.append(generic)
             continue
-        clauses.append(_unparsed_clause(raw_clause))
+        clauses.append(_unparsed_clause(clause_text))
+    if not any(item.rules for item in clauses):
+        fallback = _fallback_market_clause(_apply_aliases(normalized))
+        if fallback is not None:
+            return _build_bundle([fallback])
     return _build_bundle(clauses)
