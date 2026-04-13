@@ -1,0 +1,24 @@
+postgres:
+  url: "postgresql+psycopg2://postgres:123456@postgres:5432/quantpulse"
+  pool_size: 10
+  max_overflow: 5
+redis:
+  url: "redis://redis:6379/0"
+market:
+  timezone: "Asia/Shanghai"
+  t1_offset_days: 1
+etl:
+  incremental_lookback_days: 7
+  retention_days: 7
+  news_event_retention_days: 30
+  parallel_workers: 4
+  schedules:
+    index_job: "00:30"
+    financial_job: "01:00"
+    news_job: "01:30"
+    macro_job: "02:00"
+    events_job: "02:30"
+    index_constituent_job: "03:00"
+    sector_exposure_job: "03:30"
+    fund_holdings_job: "04:00"
+    futures_job: "04:30"

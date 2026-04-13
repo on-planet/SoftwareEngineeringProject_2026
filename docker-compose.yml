@@ -1,0 +1,87 @@
+version: "3.8"
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: quantpulse-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-123456}
+      POSTGRES_DB: quantpulse
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./repo/db/init.sql:/docker-entrypoint-initdb.d/01-init.sql
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d quantpulse"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: quantpulse-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    image: ${API_IMAGE:-quantpulse-api:latest}
+    build:
+      context: .
+      dockerfile: repo/api/Dockerfile
+    container_name: quantpulse-api
+    environment:
+      - DATABASE_URL=postgresql+psycopg2://postgres:${POSTGRES_PASSWORD:-123456}@postgres:5432/quantpulse
+      - REDIS_URL=redis://redis:6379/0
+      - AUTH_TOKEN_SECRET=${AUTH_TOKEN_SECRET:-CHANGE_ME_TO_A_RANDOM_SECRET}
+      - AUTH_ADMIN_ACCOUNT=${AUTH_ADMIN_ACCOUNT:-admin}
+      - AUTH_ADMIN_PASSWORD=${AUTH_ADMIN_PASSWORD:-admin}
+      - API_RELOAD=0
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  web:
+    image: ${WEB_IMAGE:-quantpulse-web:latest}
+    build:
+      context: .
+      dockerfile: repo/web/Dockerfile
+    container_name: quantpulse-web
+    environment:
+      - API_PROXY_TARGET=http://api:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
+  etl:
+    build:
+      context: .
+      dockerfile: repo/api/Dockerfile
+    container_name: quantpulse-etl
+    environment:
+      - DATABASE_URL=postgresql+psycopg2://postgres:${POSTGRES_PASSWORD:-123456}@postgres:5432/quantpulse
+      - REDIS_URL=redis://redis:6379/0
+    volumes:
+      - ./docker/etl-settings.yml:/app/etl/config/settings.yml:ro
+    command: ["python", "-m", "etl.main"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    profiles:
+      - etl
+
+volumes:
+  postgres_data:

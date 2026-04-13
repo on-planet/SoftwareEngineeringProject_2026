@@ -1,0 +1,42 @@
+# Python
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info
+.pytest_cache
+
+# Node
+node_modules
+.next
+
+# IDE
+.idea
+.vscode
+
+# Git
+.git
+.gitignore
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs
+
+# Docker
+.dockerignore
+Dockerfile
+docker-compose.yml
+
+# Local env
+.env.local
+.env
+
+# Data/state
+state
+*.lock
