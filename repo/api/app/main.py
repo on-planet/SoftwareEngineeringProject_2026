@@ -13,13 +13,20 @@ load_project_env()
 from fastapi import FastAPI, HTTPException
 from starlette.middleware.gzip import GZipMiddleware
 
+from app.core.db import SessionLocal
 from app.core.handlers import http_error_handler, http_exception_handler
 from app.core.middleware import RequestLogMiddleware
 from app.routers import get_router_registrations
+from app.services.auth_service import ensure_admin_user
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    db = SessionLocal()
+    try:
+        ensure_admin_user(db)
+    finally:
+        db.close()
     yield
 
 

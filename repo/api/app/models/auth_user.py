@@ -16,6 +16,7 @@ class AuthUser(Base):
     password_salt = Column(String(128), nullable=False)
     is_active = Column(Boolean, nullable=False, default=True)
     is_email_verified = Column(Boolean, nullable=False, default=False)
+    is_admin = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
     last_login_at = Column(DateTime, nullable=True)

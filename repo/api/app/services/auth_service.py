@@ -29,12 +29,12 @@ def _serialize_auth_user(user: AuthUser) -> dict:
         "email": user.email,
         "is_active": bool(user.is_active),
         "is_email_verified": bool(user.is_email_verified),
-        "is_admin": is_admin_account(user.email),
+        "is_admin": bool(user.is_admin),
         "created_at": user.created_at,
     }
 
 
-def _ensure_admin_user(db: Session) -> AuthUser:
+def ensure_admin_user(db: Session) -> AuthUser:
     admin_account = normalize_account(settings.auth_admin_account)
     admin_password = settings.auth_admin_password
     user = db.query(AuthUser).filter(AuthUser.email == admin_account).first()
@@ -46,6 +46,7 @@ def _ensure_admin_user(db: Session) -> AuthUser:
             password_salt=salt,
             is_active=True,
             is_email_verified=True,
+            is_admin=True,
         )
         db.add(user)
         db.commit()
@@ -64,6 +65,9 @@ def _ensure_admin_user(db: Session) -> AuthUser:
     if not user.is_email_verified:
         user.is_email_verified = True
         changed = True
+    if not user.is_admin:
+        user.is_admin = True
+        changed = True
     if changed:
         db.commit()
         db.refresh(user)
@@ -77,6 +81,7 @@ def _build_token_payload(user: AuthUser) -> dict:
             user_id=int(user.id),
             email=user.email,
             expires_in_seconds=expires_in_seconds,
+            is_admin=bool(user.is_admin),
         ),
         "token_type": "bearer",
         "expires_in_seconds": expires_in_seconds,
@@ -109,9 +114,13 @@ def register_user(db: Session, *, account: str, password: str) -> dict:
 def login_user(db: Session, *, account: str, password: str) -> dict:
     normalized_account = normalize_account(account)
     if is_admin_account(normalized_account):
-        if password != settings.auth_admin_password:
+        user = db.query(AuthUser).filter(AuthUser.email == normalized_account).first()
+        if user is None:
             raise ValueError("Account or password is incorrect")
-        user = _ensure_admin_user(db)
+        if not user.is_active:
+            raise ValueError("Account is disabled")
+        if not verify_password(password, user.password_salt, user.password_hash):
+            raise ValueError("Account or password is incorrect")
         user.last_login_at = datetime.utcnow()
         db.commit()
         db.refresh(user)

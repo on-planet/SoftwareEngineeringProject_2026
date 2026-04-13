@@ -39,11 +39,12 @@ def _b64url_decode(token: str) -> bytes:
     return base64.urlsafe_b64decode(f"{token}{padding}".encode("utf-8"))
 
 
-def create_access_token(*, user_id: int, email: str, expires_in_seconds: int) -> str:
+def create_access_token(*, user_id: int, email: str, expires_in_seconds: int, is_admin: bool = False) -> str:
     now = datetime.utcnow()
     payload = {
         "sub": str(user_id),
         "email": email,
+        "is_admin": is_admin,
         "iat": int(now.timestamp()),
         "exp": int((now + timedelta(seconds=expires_in_seconds)).timestamp()),
     }

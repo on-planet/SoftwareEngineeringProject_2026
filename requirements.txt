@@ -10,3 +10,4 @@ pysnowball
 xlrd
 baostock
 akshare
+jieba

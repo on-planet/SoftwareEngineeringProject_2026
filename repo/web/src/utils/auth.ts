@@ -1,6 +1,5 @@
 const AUTH_TOKEN_KEY = "quantpulse_auth_token";
 const LEGACY_AUTH_TOKEN_KEY = "kiloquant_auth_token";
-const ADMIN_MODE_KEY = "quantpulse_admin_mode";
 export const AUTH_CHANGED_EVENT = "quantpulse:auth-token-changed";
 const LEGACY_AUTH_CHANGED_EVENT = "kiloquant:auth-token-changed";
 
@@ -83,24 +82,5 @@ export function clearAuthToken() {
   }
   window.localStorage.removeItem(AUTH_TOKEN_KEY);
   window.localStorage.removeItem(LEGACY_AUTH_TOKEN_KEY);
-  window.localStorage.removeItem(ADMIN_MODE_KEY);
   dispatchAuthChanged();
-}
-
-export function getAdminModeEnabled() {
-  if (typeof window === "undefined") {
-    return false;
-  }
-  return window.localStorage.getItem(ADMIN_MODE_KEY) === "1";
-}
-
-export function setAdminModeEnabled(enabled: boolean) {
-  if (typeof window === "undefined") {
-    return;
-  }
-  if (enabled) {
-    window.localStorage.setItem(ADMIN_MODE_KEY, "1");
-  } else {
-    window.localStorage.removeItem(ADMIN_MODE_KEY);
-  }
 }

@@ -7,3 +7,4 @@ export * from "./api/insights";
 export * from "./api/macro";
 export * from "./api/finance";
 export * from "./api/user";
+export * from "./api/admin";

@@ -130,6 +130,7 @@ CREATE TABLE IF NOT EXISTS auth_users (
     password_salt VARCHAR(128) NOT NULL,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     is_email_verified BOOLEAN NOT NULL DEFAULT FALSE,
+    is_admin BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
     last_login_at TIMESTAMP

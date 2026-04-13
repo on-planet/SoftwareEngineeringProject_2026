@@ -28,3 +28,5 @@ repo/web/out/
 
 # TypeScript
 *.tsbuildinfo
+repo/db/migrations/20260324_003_user_workspace_and_alerts.sql
+repo/db/migrations/20260324_003_user_workspace_and_alerts.sql
