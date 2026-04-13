@@ -2,32 +2,19 @@
 
 ## 1. Scope
 
-本文档描述当前仓库中已经落地的 QuantPulse 技术实现，重点覆盖：
+本文档描述 QuantPulse 当前已落地的技术实现，面向接手开发者、维护者和答辩汇报场景。
 
+覆盖范围：
 - 系统分层与运行链路
-- API、ETL、Web 的模块划分
-- 数据库、缓存和配置来源
-- 当前已经实现的核心业务能力
+- API、ETL、Web 模块划分
+- 数据库、缓存、配置来源
+- 管理员权限模型与管理后台
+- Docker 部署与 CI/CD
 - 启动、回填、测试和维护要点
-
-面向对象：
-
-- 需要接手本项目的开发者
-- 需要做答辩、汇报或二次开发的同学
-- 需要快速定位功能所在模块的维护者
 
 ## 2. System Overview
 
-QuantPulse 采用典型的三层结构：
-
-1. ETL 层
-   - 负责外部数据抓取、转换、落库、缓存预热和周期调度
-2. API 层
-   - 负责统一查询接口、用户能力接口和部分解释层聚合
-3. Web 层
-   - 负责行情展示、个人空间、图谱、策略分析和监控面板
-
-主数据流如下：
+QuantPulse 采用三层结构：
 
 ```text
 External data sources
@@ -37,186 +24,179 @@ External data sources
     -> Next.js frontend
 ```
 
+1. **ETL 层**：负责外部数据抓取、转换、落库、缓存预热和周期调度
+2. **API 层**：负责统一查询接口、用户能力接口、管理员接口和部分解释层聚合
+3. **Web 层**：负责行情展示、个人空间、新闻图谱、策略分析、管理后台
+
 ## 3. Repository Layout
 
 ```text
 repo/
   api/
     app/
-      core/        # 配置、数据库、缓存、中间件、异常处理
-      models/      # SQLAlchemy 模型
-      routers/     # FastAPI 路由
-      schemas/     # Pydantic schema
-      services/    # 业务服务
-      adapters/    # API/ETL 解耦适配层
+      core/          配置、数据库、Redis 缓存、中间件、异常处理
+      models/        SQLAlchemy 模型
+      routers/       FastAPI 路由（自动扫描注册）
+      schemas/       Pydantic schema
+      services/      业务服务
+      adapters/      API/ETL 解耦适配层
+      tasks/         定时任务脚本
   etl/
-    jobs/          # 调度任务
-    fetchers/      # 外部数据抓取器
-    loaders/       # PostgreSQL / Redis 写入
-    transformers/  # 数据转换
-    utils/         # 环境加载、LLM、数据库池等工具
-    state/         # 调度状态、模型产物、回测缓存
-    config/        # ETL 调度配置
+    scheduler.py     周期调度入口
+    main.py          单次任务入口
+    jobs/            调度任务实现
+    fetchers/        外部数据源访问封装
+    loaders/         PostgreSQL / Redis 写入
+    transformers/    数据转换
+    utils/           环境加载、日志、数据库池等
+    state/           调度状态、模型产物、回测缓存
+    config/          ETL 调度配置（settings.yml）
   web/
     src/
-      pages/       # Next.js pages router
-      components/  # 业务组件
-      domain/      # 领域封装层
-      hooks/       # 数据 hooks
-      services/    # 前端 API 封装
-      providers/   # Auth 等全局 provider
-      styles/      # 全局样式、token、模块样式
+      pages/         Next.js pages router
+      components/    业务组件
+      services/api/  前端 API 封装
+      providers/     Auth 等全局 provider
+      styles/        全局样式、CSS token、模块样式
   db/
-    init.sql       # 全量初始化
-    migrations/    # 增量迁移
-  tests/           # 后端与服务层测试
+    init.sql         全量初始化
+    migrations/      增量迁移
+  tests/             后端测试
 ```
 
 ## 4. Runtime Dependencies
 
-### 4.1 System Dependencies
+### 4.1 System
 
 - Python 3.12
 - Node.js 18+
 - PostgreSQL 14+
 - Redis 6+
+- Docker & Docker Compose（推荐部署方式）
 
-### 4.2 Python Dependencies
+### 4.2 Python
 
-基础依赖位于 `../requirements.txt`：
+基础依赖：`requirements.txt`
 
-- `fastapi`
-- `uvicorn`
-- `sqlalchemy`
-- `psycopg2-binary`
-- `pydantic`
-- `pydantic-settings`
-- `redis`
-- `pyyaml`
-- `pysnowball`
-- `xlrd`
-- `baostock`
-- `akshare`
+- `fastapi`, `uvicorn`
+- `sqlalchemy`, `psycopg2-binary`
+- `pydantic`, `pydantic-settings`
+- `redis`, `pyyaml`
+- `pysnowball`, `baostock`, `akshare`, `jieba`
 
-可选依赖：
+可选：`requirements-autogluon.txt`（AutoGluon 策略训练）
 
-- `requirements-autogluon.txt`
-  - 用于 AutoGluon 策略训练与部分回测能力
+### 4.3 Frontend
 
-### 4.3 Frontend Dependencies
-
-前端依赖定义在 `web/package.json`：
-
-- `next`
-- `react`
-- `react-dom`
-- `echarts`
-- `echarts-for-react`
+- `next`, `react`, `react-dom`
+- `echarts`, `echarts-for-react`
 - `typescript`
 
 ## 5. Configuration Sources
 
-QuantPulse 当前有两类配置来源：
-
 ### 5.1 Root `.env.local`
 
-根目录 `.env.local` 是运行时主配置来源，API、ETL 和启动脚本都会读取。
+运行时主配置来源，API、ETL 和启动脚本都会读取。
 
 关键字段：
 
-- `DATABASE_URL`
-- `REDIS_URL`
-- `XUEQIUTOKEN` / `SNOWBALL_TOKEN`
-- `AUTH_TOKEN_SECRET`
-- `AUTH_TOKEN_EXPIRE_HOURS`
-- `AUTH_ADMIN_ACCOUNT`
-- `AUTH_ADMIN_PASSWORD`
-- `LLM_ENABLED`
-- `LLM_PROVIDER`
-- `LLM_API_KEY`
-- `LLM_MODEL`
-- `LLM_BASE_URL`
-- `SMTP_*`
+- `DATABASE_URL` — PostgreSQL 连接串
+- `REDIS_URL` — Redis 连接串
+- `AUTH_TOKEN_SECRET` — JWT 签名密钥
+- `AUTH_ADMIN_ACCOUNT` / `AUTH_ADMIN_PASSWORD` — 管理员账号密码
+- `XUEQIUTOKEN` / `SNOWBALL_TOKEN` — 雪球 Cookie
+- `LLM_ENABLED` / `LLM_API_KEY` / `LLM_MODEL` — LLM 增强配置
 
-环境加载逻辑：
-
-- `etl/utils/env.py`
-  - 直接从根目录读取 `.env.local`
-- `api/app/core/config.py`
-  - 使用 `BaseSettings`
-  - 同时兼容 `.env` / `.env.local`
-  - 若环境变量缺失，会回退到 `etl/config/settings.yml` 的默认数据库和 Redis 配置
+加载逻辑：
+- `etl/utils/env.py` 直接从根目录读取 `.env.local`
+- `api/app/core/config.py` 使用 `BaseSettings`，兼容 `.env` / `.env.local`，缺失时回退到 `etl/config/settings.yml`
 
 ### 5.2 `etl/config/settings.yml`
 
-这个文件主要控制：
-
-- ETL 默认 PostgreSQL / Redis 地址
-- 连接池参数
-- 市场时区和 T-1 偏移
-- 调度并行度
-- 每个 ETL 任务的执行时间
+控制 ETL 的默认连接、连接池、时区和调度参数。Docker 部署时通过挂载 `docker/etl-settings.yml` 覆盖原配置中的 `localhost`。
 
 ## 6. Database Design
 
-数据库初始化脚本为 `db/init.sql`，增量迁移位于 `db/migrations`。
+初始化脚本：`db/init.sql`
+增量迁移：`db/migrations/*.sql`
 
-核心表按域分为几类：
+核心表分类：
 
-### 6.1 市场与证券基础数据
+**市场与证券基础**
+- `stocks`, `indices`, `daily_prices`, `index_constituents`
 
-- `stocks`
-- `indices`
-- `daily_prices`
-- `index_constituents`
+**财务、估值与风险**
+- `financials`, `fundamental_score`, `stock_valuation_snapshots`, 各类指标缓存表
 
-### 6.2 财务、估值与风险
+**新闻、事件与关系链**
+- `news`, `events`, 新闻关系与传播链相关表
 
-- `financials`
-- `fundamental_score`
-- `stock_valuation_snapshots`
-- 各类风险和指标缓存表
-
-### 6.3 新闻、事件与关系链
-
-- `news`
-- `events`
-- 新闻关系、主题、传播链相关表
-
-### 6.4 用户域
-
-- `auth_user`
+**用户域**
+- `auth_users` — 包含 `is_admin` 管理员标识字段
 - `user_watch_targets`
 - `user_bought_targets`
 - `user_alert_rules`
 - 用户工作台相关表
 
-### 6.5 策略与模型产物
+**策略与模型**
+- 策略运行记录、AutoGluon 模型状态、回测缓存
 
-- 策略运行记录
-- AutoGluon 模型状态
-- 回测缓存
+## 7. Authentication & Admin Model
 
-## 7. ETL Architecture
+### 7.1 Authentication
 
-### 7.1 Main Components
+- 自研 JWT（HMAC-SHA256），Payload 包含 `sub`（user_id）、`email`、`is_admin`
+- Token 通过 `/api/auth/login` 或 `/api/auth/register` 获取
+- 受保护路由统一使用 `get_current_user` FastAPI 依赖做认证
 
-- `etl/scheduler.py`
-  - 周期调度入口
-  - 锁文件控制
-  - 并行作业调度
-- `etl/main.py`
-  - 单次任务入口
-- `etl/jobs/*`
-  - 每类数据对应一类任务
-- `etl/fetchers/*`
-  - 外部数据源访问封装
-- `etl/loaders/*`
-  - 数据入库与缓存写入
+### 7.2 Admin Identity
 
-### 7.2 Implemented Jobs
+- 数据库 `auth_users.is_admin` 布尔字段持久化管理员身份
+- 应用启动时（`lifespan`），`ensure_admin_user()` 自动确保环境变量中指定的管理员账号存在，且 `is_admin=True`
+- JWT Token 中直接携带 `is_admin`，后端可快速鉴权
 
-当前仓库已实现的重点任务包括：
+### 7.3 Admin APIs
+
+`repo/api/app/routers/admin.py`：
+
+- `GET /api/admin/users` — 分页用户列表
+- `PATCH /api/admin/users/{user_id}` — 更新用户状态（禁用/启用、管理员权限）
+- `GET /api/admin/system` — 系统状态（应用名、数据库/Redis 连接、缓存统计）
+- `POST /api/admin/system/clear-cache` — 清理缓存（全部或按 pattern）
+- `GET /api/admin/access/logs` — 最近访问记录（含客户端 IP）
+- `GET /api/admin/access/stats` — 访问统计（Top IP、状态码分布、路径分布、每小时计数）
+
+所有管理员 API 均通过 `require_admin` 依赖进行 `403` 鉴权。
+
+### 7.4 Admin Frontend
+
+页面：`/admin`
+
+模块：
+- **系统状态**：数据库/Redis 连接、内存缓存条目数、Redis 命中/未命中
+- **性能监控**：平均响应时间、P95/P99、错误率(5xx)、实时 QPS、总请求数
+- **访问分析**：
+  - 每小时访问量趋势折线图（ECharts）
+  - 状态码分布环形图（ECharts）
+  - Top 10 访问 IP 表格
+  - Top 10 访问路径表格
+  - 最近访问记录表格（含 IP、方法、路径、状态码、耗时）
+- **缓存清理**：全部清理 / 按通配符清理
+- **用户管理**：用户列表、禁用/启用、设为管理员/取消管理员
+
+数据每 10 秒自动刷新一次。
+
+## 8. ETL Architecture
+
+### 8.1 Components
+
+- `etl/scheduler.py` — 周期调度入口，含锁文件控制、并行作业调度
+- `etl/main.py` — 单次任务入口
+- `etl/jobs/*` — 每类数据对应一个任务
+- `etl/fetchers/*` — 外部数据源封装
+- `etl/loaders/*` — 数据入库与缓存写入
+
+### 8.2 Implemented Jobs
 
 - 指数行情
 - 个股详情与研究数据补全
@@ -229,237 +209,170 @@ QuantPulse 当前有两类配置来源：
 - 期货数据
 - 风险/指标缓存预热
 
-### 7.3 Scheduler Behavior
+### 8.3 Scheduler Behavior
 
-调度器的关键行为：
-
-- 使用锁文件防止重复运行
+- 锁文件 `repo/state/etl.lock` 防止重复运行
 - 支持按任务类型配置时间表
 - 支持并行 worker
-- 支持部分任务断点恢复
-- 支持保留期清理
+- 支持断点恢复与增量运行
+- 支持保留期清理（新闻/事件 30 天，其他 7 天）
 - 支持回填脚本单独触发
 
-### 7.4 Backfill Scripts
+### 8.4 Backfill Scripts
 
-根目录提供了三个高频脚本：
+根目录高频回填脚本：
 
 - `start_backfill_all_stocks.cmd`
 - `start_backfill_macro_news.cmd`
 - `start_backfill_stock_names_sectors.cmd`
 
-它们分别用于：
+## 9. API Architecture
 
-- 股票全链路数据回填
-- 宏观和新闻回填
-- 股票基础信息补全
+### 9.1 Bootstrap
 
-## 8. API Architecture
+入口：`api/app/main.py`
 
-### 8.1 Application Bootstrap
-
-应用入口：`api/app/main.py`
-
-API 启动时会完成：
-
+启动时完成：
 - 加载项目环境变量
 - 创建 FastAPI 实例
 - 注册异常处理器
-- 注册请求日志中间件
-- 挂载所有路由
+- 注册请求日志中间件（含 IP 记录）
+- 挂载所有路由（`app/routers/__init__.py` 自动扫描）
+- 调用 `ensure_admin_user()` 确保管理员账号存在
 
-### 8.2 Router Organization
+### 9.2 Router Organization
 
-路由按业务域拆分，核心包括：
+按业务域拆分：
 
-- 认证：`auth`
-- 指数：`index`
-- 个股：`stock`
-- 宏观：`macro`
-- 资讯和事件：`news` / `events`
-- 风险和指标：`risk`
-- 用户目标：`user_targets`
-- 用户工作台和告警：`user_workspace` / `user_alerts`
-- 策略与评分：`strategy`
+- `auth` — 注册、登录、当前用户信息
+- `admin` — 用户管理、系统状态、缓存清理、访问分析（管理员专属）
+- `index` — 指数
+- `stock` — 个股
+- `macro` — 宏观
+- `news` / `events` — 资讯和事件
+- `risk` — 风险和指标
+- `user_targets` / `user_workspace` / `user_alerts` — 用户域
+- `strategy` — 策略与评分
 
-### 8.3 Service Layer
+### 9.3 Middleware
 
-服务层承担了大部分业务逻辑，包括：
+`RequestLogMiddleware`（`api/app/core/middleware.py`）：
+- 记录每次请求的 `method`、`path`、`status`、`duration_ms`
+- 记录客户端 IP（优先读取 `X-Forwarded-For`）
+- 在内存中维护线程安全的环形缓冲区（最多 2000 条），供管理后台访问分析使用
 
-- 数据拼装
-- 缓存读写
-- 聚合接口 schema 规范化
-- 自然语言情景映射
-- 新闻传播链与影响链计算
-- 组合诊断和压力测试
-- 策略评分与回测读取
+### 9.4 Service Layer
 
-### 8.4 Domain Modules
+承担业务逻辑：数据拼装、缓存读写、聚合接口规范化、自然语言情景映射、新闻传播链计算、组合诊断和压力测试、策略评分与回测读取。
 
-最近几轮重构后，以下能力已经收拢为相对独立的 domain/service 边界：
+## 10. Frontend Architecture
 
-- 告警
-- 新闻图谱
-- 组合压力测试
-- 组合诊断报告
-- 策略评分
-- Dashboard 聚合接口
-
-目标是避免页面或路由层互相直接依赖内部实现细节。
-
-## 9. Frontend Architecture
-
-### 9.1 Technical Stack
+### 10.1 Stack
 
 - Next.js 13 pages router
 - React 18
 - TypeScript
-- ECharts
+- ECharts（可视化图表）
 
-### 9.2 Page Structure
+### 10.2 Page Structure
 
-核心页面包括：
+- `/` — 首页（指数、宏观、热点概览）
+- `/stocks` — 股票列表
+- `/stock/[symbol]` — 个股详情
+- `/stats` — 个人空间
+- `/macro` — 宏观
+- `/futures` — 期货
+- `/insights` — 洞察
+- `/strategy/smoke-butt` — 策略
+- `/auth` — 登录/注册
+- `/admin` — 管理后台（管理员专属）
 
-- 首页：指数、宏观、热点概览
-- `stocks`
-- `stock/[symbol]`
-- `stats`
-- `macro`
-- `futures`
-- `insights`
-- `strategy/smoke-butt`
-- `auth`
+### 10.3 Admin Page Navigation
 
-### 9.3 Frontend Data Layer
+进入 `/admin` 后，顶部导航栏隐藏所有普通页面入口（概览、股票、策略等），仅保留：
+- QuantPulse 品牌
+- 管理后台链接
+- 返回前台链接
+- 当前用户邮箱
+- 登出按钮
 
-前端数据层分为三层：
+### 10.4 Frontend Data Layer
 
-1. `services/api`
-   - 原始 HTTP 请求封装
-2. `domain`
-   - query key、normalizer、领域级数据加载器
-3. `hooks`
-   - 页面状态组合和缓存使用
+- `services/api` — 原始 HTTP 请求封装
+- `domain` — query key、normalizer
+- `hooks` — 页面状态组合
 
-### 9.4 Frontend Caching Strategy
+### 10.5 Caching & Performance
 
-已经落地的优化包括：
-
-- 请求级缓存
+- 请求级缓存（内存 + 持久化）
 - query key 统一
-- 用户维度缓存隔离
 - 首屏与二屏拆分加载
-- 持久化缓存
 - 部分 SSR 预热后 prime 到共享缓存
 
-### 9.5 UI and Style Architecture
+### 10.6 Admin Visualizations
 
-样式层已经开始从“页面样式文件”过渡到：
+管理后台使用 `echarts-for-react` 实现：
+- 每小时访问量趋势折线图（面积图）
+- 状态码分布环形饼图
 
-- `styles/tokens.css`
-  - 设计 token
-- `styles/semantic.css`
-  - 语义类
-- 局部模块样式
-  - 组件级模块 CSS
+## 11. Docker Deployment
 
-### 9.6 Motion and Monitoring
+项目已完整容器化。
 
-目前前端只保留少量有效动效：
+### 11.1 Images
 
-- 首屏分组渐入
-- 数字滚动
-- tab 切换过渡
+- `repo/api/Dockerfile` — Python 3.12 slim 基础，安装依赖后运行 uvicorn
+- `repo/web/Dockerfile` — Node 18 多阶段构建，生产镜像仅包含 `.next` 产物
 
-监控侧已经加入：
+### 11.2 Compose Services
 
-- TTFB
-- FCP
-- 接口耗时
-- Query 缓存命中率
-- 后端 `cache_hit`
+`docker-compose.yml` 定义：
 
-性能监控面板默认隐藏，仅管理员登录后进入管理员模式可见。
+- `postgres` — PostgreSQL 15，挂载 `init.sql` 自动初始化
+- `redis` — Redis 7
+- `api` — FastAPI 服务
+- `web` — Next.js 前端（代理到 `api:8000`）
+- `etl` — 按需启动的 ETL 容器（`profile: etl`）
 
-## 10. Current Business Capabilities
+### 11.3 ETL in Docker
 
-### 10.1 News Graph Enhancement
+ETL 容器通过挂载 `docker/etl-settings.yml` 覆盖原 `localhost` 配置，使其连接到 Docker 内部网络的服务名 `postgres` 和 `redis`。
 
-新闻图谱已从单纯关系图升级为：
+## 12. CI/CD
 
-- Propagation Chains
-- Impact Chains
-- Drill Into News
-- 个人空间关联标的 overlap
+### 12.1 GitHub Actions CI
 
-### 10.2 Explainability Layer
+`.github/workflows/ci.yml`：
+- 安装 Python 依赖并运行 `pytest`
+- 前端 `npm ci` + `tsc --noEmit` + `npm run build`
+- Docker Buildx 构建 API / Web 镜像（仅检查，不推送）
 
-当前解释层已经落在：
+### 12.2 GitHub Actions CD
 
-- 告警 explanation
-- 策略评分 explanation
-- 情景实验室解析 explanation
-- 组合画像标签 explanation
+`.github/workflows/cd.yml`：
+- Push 到 `master`/`main` 时触发
+- 构建并推送镜像到 `ghcr.io`
+- 通过 `appleboy/ssh-action` 登录生产服务器
+- 执行 `docker compose pull` + `docker compose up -d`
+- 自动清理 7 天前的旧镜像
 
-### 10.3 Scenario Lab and Portfolio Diagnostics
+所需 Secrets：`DEPLOY_HOST`、`DEPLOY_USER`、`DEPLOY_KEY`
 
-已实现：
+### 12.3 ETL Automation
 
-- 自然语言情景输入
-- 默认案例与快捷填充
-- 自定义规则压力测试
-- 组合诊断报告
-- 观察标的诊断报告
+`scripts/run-etl.sh` 配合服务器 `crontab` 实现定时运行：
 
-当前策略：
+```cron
+0 2 * * * cd ~/quantpulse && bash scripts/run-etl.sh
+```
 
-- 压力测试只在“已买标的”下展示
-- 观察标的下保留组合分析和诊断，不展示压力测试入口
+脚本自动生成带时间戳的日志，并清理 30 天前的旧日志。
 
-### 10.4 Strategy and Backtest
+## 13. Testing
 
-当前策略页支持：
+测试目录：`repo/tests`
 
-- 策略评分
-- 信号解释
-- 回测结果
-- Backtest Confidence
-
-回测侧已做：
-
-- 磁盘缓存
-- 延迟渲染
-- 历史窗口收敛
-
-## 11. Performance and Reliability
-
-已经落实的性能/稳定性改造包括：
-
-- API/ETL 解耦
-- 数据库连接池优化
-- 前端跨页面共享缓存
-- 个股详情首屏/二屏拆分
-- hydration mismatch 修复
-- 个人空间循环渲染问题修复
-- 新闻图谱去重和相关性过滤
-- 右侧性能面板管理员可见性控制
-
-专项说明见 `docs` 目录。
-
-## 12. Testing
-
-测试目录：`tests`
-
-当前仓库包含 61 个测试文件，主要覆盖：
-
-- ETL 调度和断点恢复
-- 数据源兜底与兼容
-- 缓存策略
-- 指数和个股服务
-- 新闻图谱与新闻 NLP
-- 用户目标、工作台、告警
-- 组合压力测试
-- 策略路由与策略服务
+覆盖领域：ETL 调度、数据源兜底、缓存策略、指数/个股服务、新闻图谱、用户域、组合压力测试、策略路由等。
 
 常用命令：
 
@@ -467,32 +380,15 @@ API 启动时会完成：
 python -m unittest repo.tests.test_user_targets_routes -v
 python -m unittest repo.tests.test_news_graph_service -v
 python -m unittest repo.tests.test_portfolio_stress_service -v
-cd web
-npx tsc --noEmit --pretty false
+
+cd repo\web
+npx tsc --noEmit --skipLibCheck
 npm run build
 ```
-
-## 13. Deployment Notes
-
-当前仓库更偏开发/课程项目结构，部署方式以本地运行和脚本驱动为主。
-
-已具备但未完全工程化的部分：
-
-- 环境变量管理
-- 增量迁移
-- ETL 锁文件
-- 前端性能监控
-
-尚未完全补齐的部分：
-
-- 容器化部署
-- CI/CD
-- 标准化生产环境监控
-- 更细粒度权限模型
 
 ## 14. Related Documents
 
 - 根目录快速开始：[`../README.md`](../README.md)
+- Docker 部署与 CI/CD：[`../DOCKER_DEPLOY.md`](../DOCKER_DEPLOY.md)
 - 仓库说明：[`README.md`](./README.md)
-- 专项文档索引：[`docs/README.md`](./docs/README.md)
 - 数据库迁移：[`db/migrations/README.md`](./db/migrations/README.md)

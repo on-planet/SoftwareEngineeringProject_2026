@@ -3,11 +3,12 @@
 ## 目录结构说明
 
 - `repo/api` — FastAPI 后端
-- `repo/web` — Next.js 前端
 - `repo/etl` — Python ETL 数据 pipeline
-- `repo/db` — 数据库初始化与迁移脚本
+- `repo/web` — Next.js 前端
+- `repo/db` — 数据库初始化与增量迁移脚本
 - `.github/workflows` — GitHub Actions CI/CD
 - `scripts/` — 部署与运维脚本
+- `docker/` — Docker 环境专属配置（如 ETL 覆盖配置）
 
 ## 核心服务
 
@@ -61,8 +62,8 @@ docker compose --profile etl run --rm etl
 
 ### 流程概览
 
-1. **CI**：每次 Push / Pull Request 自动运行后端测试、前端构建、Docker 镜像构建检查
-2. **CD**：Push 到 `master` 或 `main` 分支时：
+1. **CI**（`.github/workflows/ci.yml`）：每次 Push / Pull Request 自动运行后端测试、前端构建、Docker 镜像构建检查
+2. **CD**（`.github/workflows/cd.yml`）：Push 到 `master` 或 `main` 分支时：
    - 构建 API / Web Docker 镜像
    - 推送到 **GitHub Container Registry (ghcr.io)**
    - SSH 登录生产服务器，拉取最新镜像并重启服务
@@ -134,8 +135,8 @@ crontab -l
 | `AUTH_TOKEN_SECRET` | `CHANGE_ME_TO_A_RANDOM_SECRET` | JWT 签名密钥 |
 | `AUTH_ADMIN_ACCOUNT` | `admin` | 管理员账号 |
 | `AUTH_ADMIN_PASSWORD` | `admin` | 管理员密码 |
-| `API_IMAGE` | `quantpulse-api:latest` | API 镜像名称 |
-| `WEB_IMAGE` | `quantpulse-web:latest` | Web 镜像名称 |
+| `API_IMAGE` | `quantpulse-api:latest` | API 镜像名称（生产部署时指向 ghcr.io） |
+| `WEB_IMAGE` | `quantpulse-web:latest` | Web 镜像名称（生产部署时指向 ghcr.io） |
 
 示例（Linux/macOS）：
 
@@ -184,8 +185,37 @@ bash scripts/deploy.sh
 
 如果是**已有数据迁移到 Docker**，请根据 `repo/db/migrations/` 下的脚本按顺序执行 `ALTER TABLE` 等增量变更。
 
+### Docker 中的迁移示例
+
+假设你新增了一个迁移文件并已上传到服务器：
+
+```bash
+cd ~/quantpulse
+docker compose exec postgres psql -U postgres -d quantpulse -f /app/db/migrations/2026XXXX_YYY_description.sql
+```
+
 ## 网络说明
 
 - 前端 (`web`) 通过 `API_PROXY_TARGET=http://api:8000` 代理到后端。
 - 后端 (`api`) 通过 `DATABASE_URL` 和 `REDIS_URL` 环境变量连接 `postgres` 和 `redis`。
 - ETL 通过挂载 `docker/etl-settings.yml` 覆盖原配置中的 `localhost` 为 Docker 内部服务名。
+
+## 镜像构建说明
+
+### API 镜像
+
+基于 `python:3.12-slim`：
+1. 安装编译依赖（gcc、libpq-dev）
+2. 安装 `requirements.txt`
+3. 复制 `repo/etl`、`repo/api`、`repo/db`
+4. 设置 `PYTHONPATH=/app:/app/api`
+5. 默认命令：`uvicorn app.main:app --host 0.0.0.0 --port 8000`
+
+### Web 镜像
+
+基于 `node:18-alpine`，采用多阶段构建：
+1. **Builder 阶段**：安装依赖、复制源码、执行 `npm run build`
+2. **Production 阶段**：仅保留 `package*.json`、`.next` 产物、`public`、`next.config.js`
+3. 默认命令：`npm start`
+
+多阶段构建确保生产镜像体积最小化。
