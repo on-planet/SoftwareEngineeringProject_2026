@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: quantpulse-api
+    runtime: docker
+    plan: free
+    autoDeploy: true
+    dockerContext: .
+    dockerfilePath: ./repo/api/Dockerfile
+    healthCheckPath: /health/live
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: AUTH_TOKEN_SECRET
+        generateValue: true
+      - key: AUTH_TOKEN_EXPIRE_HOURS
+        value: "24"
+      - key: AUTH_ADMIN_ACCOUNT
+        value: admin
+      - key: AUTH_ADMIN_PASSWORD
+        sync: false
+      - key: LLM_ENABLED
+        value: "false"
+      - key: API_RELOAD
+        value: "0"
