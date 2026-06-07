@@ -2,13 +2,31 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
+from app.core.cache import delete_cache_pattern
 from app.models.user_bought_target import UserBoughtTarget
 from app.models.user_watch_target import UserWatchTarget
 from app.schemas.user_targets import BoughtTargetUpsertIn
 
 
+TARGET_REPORT_CACHE_SCOPES = {
+    "watch": (
+        "user:watch-targets:diagnostics",
+        "user:watch-targets:stress-test",
+    ),
+    "bought": (
+        "user:bought-targets:diagnostics",
+        "user:bought-targets:stress-test",
+    ),
+}
+
+
 def normalize_symbol(symbol: str) -> str:
     return (symbol or "").strip().upper()
+
+
+def invalidate_target_report_cache(user_id: int, target_type: str) -> None:
+    for scope in TARGET_REPORT_CACHE_SCOPES.get(target_type, ()):
+        delete_cache_pattern(f"{scope}|*user_id={user_id}|*")
 
 
 def list_watch_targets(db: Session, user_id: int) -> list[UserWatchTarget]:
@@ -33,6 +51,7 @@ def upsert_watch_target(db: Session, user_id: int, symbol: str) -> UserWatchTarg
         item = UserWatchTarget(user_id=user_id, symbol=normalized)
         db.add(item)
     db.commit()
+    invalidate_target_report_cache(user_id, "watch")
     db.refresh(item)
     return item
 
@@ -57,6 +76,7 @@ def batch_upsert_watch_targets(db: Session, user_id: int, symbols: list[str]) ->
         if current is None:
             db.add(UserWatchTarget(user_id=user_id, symbol=symbol))
     db.commit()
+    invalidate_target_report_cache(user_id, "watch")
     return list_watch_targets(db, user_id)
 
 
@@ -73,6 +93,7 @@ def delete_watch_target(db: Session, user_id: int, symbol: str) -> bool:
         return False
     db.delete(item)
     db.commit()
+    invalidate_target_report_cache(user_id, "watch")
     return True
 
 
@@ -112,6 +133,7 @@ def upsert_bought_target(db: Session, user_id: int, payload: BoughtTargetUpsertI
         item.fee = float(payload.fee)
         item.note = str(payload.note or "")
     db.commit()
+    invalidate_target_report_cache(user_id, "bought")
     db.refresh(item)
     return item
 
@@ -144,6 +166,7 @@ def batch_upsert_bought_targets(
         current.fee = float(payload.fee)
         current.note = str(payload.note or "")
     db.commit()
+    invalidate_target_report_cache(user_id, "bought")
     return list_bought_targets(db, user_id)
 
 
@@ -160,4 +183,5 @@ def delete_bought_target(db: Session, user_id: int, symbol: str) -> bool:
         return False
     db.delete(item)
     db.commit()
+    invalidate_target_report_cache(user_id, "bought")
     return True

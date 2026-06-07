@@ -11,6 +11,7 @@ import {
   getMyWatchTargets,
   getUserScopedQueryOptions,
   primeApiQuery,
+  runApiQuery,
   upsertMyBoughtTarget,
   upsertMyBoughtTargetsBatch,
   upsertMyWatchTarget,
@@ -26,6 +27,17 @@ import {
   upsertBoughtTarget,
 } from "../utils/boughtTargets";
 import { addWatchTarget, readWatchTargets, removeWatchTarget, replaceWatchTargets } from "../utils/watchTargets";
+import {
+  buildPortfolioDiagnosticsQueryKey,
+  getPortfolioDiagnosticsQueryOptions,
+  loadPortfolioDiagnostics,
+} from "../domain/portfolioDiagnostics";
+import {
+  PORTFOLIO_STRESS_POSITION_LIMIT,
+  buildPortfolioStressQueryKey,
+  getPortfolioStressQueryOptions,
+  loadPortfolioStress,
+} from "../domain/portfolioStress";
 
 export type BuyFormState = {
   symbol: string;
@@ -220,6 +232,24 @@ function toBoughtTargetItems(items: BoughtTarget[]): BoughtTargetItem[] {
   }));
 }
 
+function refreshPortfolioTargetReports(token: string | null, targetType: "watch" | "bought") {
+  if (!token) {
+    return;
+  }
+  const diagnosticsKey = buildPortfolioDiagnosticsQueryKey(token, targetType);
+  const stressKey = buildPortfolioStressQueryKey(token, targetType, PORTFOLIO_STRESS_POSITION_LIMIT);
+  void runApiQuery(
+    diagnosticsKey,
+    () => loadPortfolioDiagnostics(token, targetType),
+    { ...getPortfolioDiagnosticsQueryOptions(targetType), force: true },
+  ).catch(() => undefined);
+  void runApiQuery(
+    stressKey,
+    () => loadPortfolioStress(token, targetType, PORTFOLIO_STRESS_POSITION_LIMIT),
+    { ...getPortfolioStressQueryOptions(targetType), force: true },
+  ).catch(() => undefined);
+}
+
 export function useStatsTargets({
   authToken,
   authed,
@@ -282,7 +312,9 @@ export function useStatsTargets({
     }
 
     if (hasWatchGap && mergedWatch.length > 0) {
-      void upsertMyWatchTargetsBatch(authToken, mergedWatch).catch(() => undefined);
+      void upsertMyWatchTargetsBatch(authToken, mergedWatch)
+        .then(() => refreshPortfolioTargetReports(authToken, "watch"))
+        .catch(() => undefined);
     }
   }, [authed, authToken, watchTargetsQuery.data, watchTargetsQueryKey]);
 
@@ -326,7 +358,9 @@ export function useStatsTargets({
           fee: item.fee,
           note: item.note,
         })),
-      ).catch(() => undefined);
+      )
+        .then(() => refreshPortfolioTargetReports(authToken, "bought"))
+        .catch(() => undefined);
     }
   }, [authed, authToken, boughtTargetsQuery.data, boughtTargetsQueryKey]);
 
@@ -384,9 +418,11 @@ export function useStatsTargets({
       );
     }
     if (authToken) {
-      void upsertMyWatchTarget(authToken, target).catch(() => {
-        setWatchError("Saved locally, but remote sync failed.");
-      });
+      void upsertMyWatchTarget(authToken, target)
+        .then(() => refreshPortfolioTargetReports(authToken, "watch"))
+        .catch(() => {
+          setWatchError("Saved locally, but remote sync failed.");
+        });
     }
   };
 
@@ -403,9 +439,11 @@ export function useStatsTargets({
       );
     }
     if (authToken) {
-      void deleteMyWatchTarget(authToken, target).catch(() => {
-        setWatchError("Removed locally, but remote sync failed.");
-      });
+      void deleteMyWatchTarget(authToken, target)
+        .then(() => refreshPortfolioTargetReports(authToken, "watch"))
+        .catch(() => {
+          setWatchError("Removed locally, but remote sync failed.");
+        });
     }
   };
 
@@ -431,7 +469,9 @@ export function useStatsTargets({
       );
     }
     if (authToken && removed.length > 0) {
-      void Promise.allSettled(removed.map((item) => deleteMyWatchTarget(authToken, item))).then(() => undefined);
+      void Promise.allSettled(removed.map((item) => deleteMyWatchTarget(authToken, item))).then(() => {
+        refreshPortfolioTargetReports(authToken, "watch");
+      });
     }
   };
 
@@ -502,9 +542,11 @@ export function useStatsTargets({
         buy_date: buyForm.buyDate,
         fee,
         note: buyForm.note.trim(),
-      }).catch(() => {
-        setBuyModalError("Saved locally, but remote sync failed.");
-      });
+      })
+        .then(() => refreshPortfolioTargetReports(authToken, "bought"))
+        .catch(() => {
+          setBuyModalError("Saved locally, but remote sync failed.");
+        });
     }
 
     if (pendingBuySymbols.length > 0) {
@@ -546,7 +588,9 @@ export function useStatsTargets({
       );
     }
     if (authToken) {
-      void deleteMyBoughtTarget(authToken, targetSymbol).catch(() => undefined);
+      void deleteMyBoughtTarget(authToken, targetSymbol)
+        .then(() => refreshPortfolioTargetReports(authToken, "bought"))
+        .catch(() => undefined);
     }
   };
 

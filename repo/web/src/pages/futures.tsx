@@ -72,22 +72,12 @@ export default function FuturesPage() {
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
   const [activeCategory, setActiveCategory] = useState<string>("全部");
-  const [page, setPage] = useState(0);
-  const PAGE_SIZE = 6;
-
-  useEffect(() => {
-    setPage(0);
-  }, [activeCategory]);
 
   const filteredItems = useMemo(() => {
     if (activeCategory === "全部") return items;
     return items.filter((item) => getFuturesCategory(item.symbol) === activeCategory);
   }, [items, activeCategory]);
 
-  const pageCount = Math.ceil(filteredItems.length / PAGE_SIZE);
-  const paginatedItems = useMemo(() => {
-    return filteredItems.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
-  }, [filteredItems, page]);
 
   useEffect(() => {
     let active = true;
@@ -290,7 +280,7 @@ export default function FuturesPage() {
         ) : (
           <>
             <div className="grid grid-3">
-              {paginatedItems.map((item) => {
+              {filteredItems.map((item) => {
                 const open = Number(item.open ?? 0);
                 const close = Number(item.close ?? 0);
                 const delta = close - open;
@@ -330,37 +320,6 @@ export default function FuturesPage() {
                 );
               })}
             </div>
-            {pageCount > 1 && (
-              <div style={{ display: "flex", justifyContent: "center", gap: 8, marginTop: 16 }}>
-                <button
-                  type="button"
-                  className="chip-button"
-                  disabled={page === 0}
-                  onClick={() => setPage((p) => Math.max(0, p - 1))}
-                >
-                  上一页
-                </button>
-                {Array.from({ length: pageCount }, (_, i) => (
-                  <button
-                    key={i}
-                    type="button"
-                    className="chip-button"
-                    data-active={page === i}
-                    onClick={() => setPage(i)}
-                  >
-                    {i + 1}
-                  </button>
-                ))}
-                <button
-                  type="button"
-                  className="chip-button"
-                  disabled={page === pageCount - 1}
-                  onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
-                >
-                  下一页
-                </button>
-              </div>
-            )}
           </>
         )}
       </section>

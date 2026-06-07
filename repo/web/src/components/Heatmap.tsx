@@ -103,7 +103,7 @@ export function Heatmap({
       (market === "A" || market === "HK")
         ? preloadedPages?.[market]
         : undefined;
-    if (preloadedPage !== undefined) {
+    if (preloadedPage !== undefined && ((preloadedPage.items ?? []).length > 0 || (preloadedPage.total ?? 0) > 0)) {
       setItems(preloadedPage.items ?? []);
       setTotal(preloadedPage.total ?? 0);
       setLoading(false);

@@ -3,6 +3,7 @@ import { useRouter } from "next/router";
 import React, { useEffect, useMemo, useState } from "react";
 
 import { StockFundamental } from "../../components/StockFundamental";
+import { StockCigarbuttCard } from "../../components/StockCigarbuttCard";
 import { StockSmokeButtCard } from "../../components/StockSmokeButtCard";
 import { useApiQuery } from "../../hooks/useApiQuery";
 import {
@@ -264,6 +265,10 @@ export default function StockPage({ symbol }: Props) {
 
           <section>
             <StockSmokeButtCard symbol={activeSymbol} />
+          </section>
+
+          <section>
+            <StockCigarbuttCard symbol={activeSymbol} />
           </section>
 
           <section>

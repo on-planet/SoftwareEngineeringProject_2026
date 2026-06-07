@@ -1,7 +1,9 @@
 import dynamic from "next/dynamic";
 import Link from "next/link";
+import { useRouter } from "next/router";
 import React, { useEffect, useMemo, useState } from "react";
 
+import { CigarbuttAnalysisPanel } from "../../components/CigarbuttAnalysisPanel";
 import { VirtualTable } from "../../components/virtual/VirtualTable";
 import {
   buildStrategySignalExplanation,
@@ -104,6 +106,7 @@ function DeferredSection({
 }
 
 export default function SmokeButtStrategyPage() {
+  const router = useRouter();
   const [activeStrategy, setActiveStrategy] = useState<"autogluon" | "cigarbutt">("autogluon");
   const [market, setMarket] = useState<"" | "A" | "HK" | "US">("");
   const [signal, setSignal] = useState<"" | StrategySignal>("");
@@ -133,6 +136,20 @@ export default function SmokeButtStrategyPage() {
   const items = listQuery.data?.items ?? [];
   const total = listQuery.data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+  useEffect(() => {
+    if (!router.isReady) {
+      return;
+    }
+    if (router.query.tab === "cigarbutt") {
+      setActiveStrategy("cigarbutt");
+    }
+    if (typeof router.query.symbol === "string" && router.query.symbol.trim()) {
+      const nextSymbol = router.query.symbol.trim().toUpperCase();
+      setCigarbuttSymbol(nextSymbol);
+      setCigarbuttQuery(buildCigarbuttQueryKey(nextSymbol));
+    }
+  }, [router.isReady, router.query.symbol, router.query.tab]);
 
   const handleTrain = async () => {
     setIsTraining(true);
@@ -241,7 +258,7 @@ export default function SmokeButtStrategyPage() {
             <div className="helper">分析失败：{cigarbuttResult.error.message}</div>
           )}
           {cigarbuttResult.data?.analysis && (
-            <CigarbuttResultPanel data={cigarbuttResult.data} />
+            <CigarbuttAnalysisPanel data={cigarbuttResult.data} />
           )}
         </div>
         )}
