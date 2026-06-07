@@ -47,18 +47,21 @@ def list_event_timeline(
 ):
     cache_key = _cache_key(symbols, event_types, keyword, sort_by, start, end, limit, offset, sort)
     cached = get_json(cache_key)
+    cached_items: list[EventTimelineItem] = []
+    cached_total = 0
+
     if isinstance(cached, dict) and isinstance(cached.get("items"), list) and isinstance(cached.get("total"), int):
-        items = [EventTimelineItem(**item) for item in cached.get("items") if isinstance(item, dict)]
-        if items or cached.get("total", 0) > 0:
+        cached_items = [EventTimelineItem(**item) for item in cached.get("items") if isinstance(item, dict)]
+        cached_total = cached.get("total", 0)
+        if cached_items or cached_total > 0:
             if start is None and end is None:
                 cutoff = date.today() - timedelta(days=1)
-                has_recent = any(item.date >= cutoff for item in items)
-                if not has_recent:
-                    items = []
-                else:
-                    return items, cached.get("total")
+                has_recent = any(item.date >= cutoff for item in cached_items)
+                if has_recent:
+                    return cached_items, cached_total
+                # 没有最近数据时继续查数据库，但保留 cached_items 作为 fallback
             else:
-                return items, cached.get("total")
+                return cached_items, cached_total
 
     paged, total = list_event_feed_page(
         db,
@@ -72,5 +75,14 @@ def list_event_timeline(
         offset=offset,
         sort=sort,
     )
-    set_json(cache_key, {"items": [item_to_dict(item) for item in paged], "total": total}, ttl=EVENT_TIMELINE_CACHE_TTL)
+
+    if paged:
+        set_json(cache_key, {"items": [item_to_dict(item) for item in paged], "total": total}, ttl=EVENT_TIMELINE_CACHE_TTL)
+        return paged, total
+
+    # 数据库为空但缓存有旧数据，回退到缓存，避免 ETL 未运行时完全空白
+    if cached_items:
+        return cached_items, cached_total
+
+    set_json(cache_key, {"items": [], "total": 0}, ttl=EVENT_TIMELINE_CACHE_TTL)
     return paged, total

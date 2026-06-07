@@ -4,7 +4,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
 import os
 
-from etl.fetchers.events_client import get_events, get_buyback, get_insider_trade
+from etl.providers import get_provider
+
+_provider = get_provider()
 from etl.loaders.pg_loader import upsert_events, upsert_buyback, upsert_insider_trade
 from etl.loaders.redis_cache import cache_events
 from etl.utils.dates import date_range
@@ -16,9 +18,9 @@ LOGGER = get_logger(__name__)
 
 def _fetch_event_day(as_of: date) -> tuple[list[dict], list[dict], list[dict]]:
     with ThreadPoolExecutor(max_workers=3, thread_name_prefix="events_day") as executor:
-        event_future = executor.submit(get_events, as_of)
-        buyback_future = executor.submit(get_buyback, as_of)
-        insider_future = executor.submit(get_insider_trade, as_of)
+        event_future = executor.submit(_provider.events.get_events, as_of)
+        buyback_future = executor.submit(_provider.events.get_buyback, as_of)
+        insider_future = executor.submit(_provider.events.get_insider_trade, as_of)
         events_rows = ensure_required(event_future.result(), ["symbol", "type", "title", "date"], "events.events")
         buyback_rows = ensure_required(buyback_future.result(), ["symbol", "date", "amount"], "events.buyback")
         insider_rows = ensure_required(insider_future.result(), ["symbol", "date", "type", "shares"], "events.insider")

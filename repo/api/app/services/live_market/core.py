@@ -958,12 +958,22 @@ def list_live_stocks(
     limit: int = 100,
     offset: int = 0,
     sort: str = "asc",
+    sql_only: bool = False,
 ):
     normalized_market = market.upper() if market else None
     keyword_text = keyword.strip() if keyword else None
     normalized_keyword = keyword.strip().lower() if keyword else None
     sector_text = sector.strip() if sector else None
     normalized_sector = sector.strip().lower() if sector else None
+    if sql_only:
+        return _list_stock_rows_from_db(
+            market=normalized_market,
+            keyword=keyword_text,
+            sector=sector_text,
+            limit=limit,
+            offset=offset,
+            sort=sort,
+        )
     page_cache_key = build_cache_key(
         "live:stocks:page",
         market=normalized_market,
@@ -1044,14 +1054,19 @@ def _get_live_stock_profile(
     cache_key = build_cache_key("live:stock:profile", symbol=normalized)
     cached = get_json(cache_key)
     local_snapshot = _load_db_stock_live_snapshot(normalized) if not prefer_live else {}
+    # HK/US stocks often lack quote_detail/pankou from data providers;
+    # relax cache-hit requirements so that basic quote + identity is enough.
+    is_hk_or_us = normalized.endswith(".HK") or normalized.endswith(".US")
+    cache_has_quote_detail = isinstance(cached.get("quote_detail"), dict) if isinstance(cached, dict) else False
+    cache_has_pankou = isinstance(cached.get("pankou"), dict) if isinstance(cached, dict) else False
     if (
         isinstance(cached, dict)
         and not prefer_live
         and not local_snapshot
         and _has_quote_signal(cached)
         and _has_identity_signal(cached)
-        and (include_quote_detail or isinstance(cached.get("quote_detail"), dict))
-        and (include_pankou or isinstance(cached.get("pankou"), dict))
+        and (include_quote_detail or cache_has_quote_detail or is_hk_or_us)
+        and (include_pankou or cache_has_pankou or is_hk_or_us)
     ):
         if queue_background_refresh:
             _queue_background_profile_refresh(normalized)

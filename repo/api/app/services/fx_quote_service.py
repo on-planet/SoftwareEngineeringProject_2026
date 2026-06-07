@@ -5,11 +5,9 @@ from sqlalchemy.orm import Session
 from app.models.fx_quote import FxPairQuote, FxSpotQuote, FxSwapQuote
 from app.services.cache_utils import item_to_dict
 from app.utils.query_params import SortOrder
-from etl.fetchers.akshare_reference_client import (
-    fetch_fx_pair_quote_rows,
-    fetch_fx_spot_quote_rows,
-    fetch_fx_swap_quote_rows,
-)
+from etl.providers import get_provider
+
+_provider = get_provider()
 
 
 def _replace_rows(db: Session, model, rows: list[dict]) -> int:
@@ -54,7 +52,7 @@ def list_fx_spot_quotes(
     sort: SortOrder = "asc",
     refresh: bool = False,
 ) -> tuple[list[dict], int]:
-    _ensure_rows(db, FxSpotQuote, refresh, fetch_fx_spot_quote_rows)
+    _ensure_rows(db, FxSpotQuote, refresh, _provider.reference.fetch_fx_spot_quote_rows)
     return _list_rows(db, FxSpotQuote, pair=pair, limit=limit, offset=offset, sort=sort)
 
 
@@ -67,7 +65,7 @@ def list_fx_swap_quotes(
     sort: SortOrder = "asc",
     refresh: bool = False,
 ) -> tuple[list[dict], int]:
-    _ensure_rows(db, FxSwapQuote, refresh, fetch_fx_swap_quote_rows)
+    _ensure_rows(db, FxSwapQuote, refresh, _provider.reference.fetch_fx_swap_quote_rows)
     return _list_rows(db, FxSwapQuote, pair=pair, limit=limit, offset=offset, sort=sort)
 
 
@@ -80,5 +78,5 @@ def list_fx_pair_quotes(
     sort: SortOrder = "asc",
     refresh: bool = False,
 ) -> tuple[list[dict], int]:
-    _ensure_rows(db, FxPairQuote, refresh, fetch_fx_pair_quote_rows)
+    _ensure_rows(db, FxPairQuote, refresh, _provider.reference.fetch_fx_pair_quote_rows)
     return _list_rows(db, FxPairQuote, pair=pair, limit=limit, offset=offset, sort=sort)

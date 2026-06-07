@@ -12,7 +12,9 @@ if str(ROOT) not in sys.path:
 if str(ROOT / "api") not in sys.path:
     sys.path.insert(0, str(ROOT / "api"))
 
+from app.services import heatmap_service
 from app.services.heatmap_service import get_cached_heatmap
+from etl.jobs import sector_exposure_job
 from etl.jobs.sector_exposure_job import run_stock_valuation_backfill
 from etl.transformers.heatmap import build_heatmap
 
@@ -45,6 +47,26 @@ class HeatmapAndValuationBackfillTests(unittest.TestCase):
         self.assertEqual(items[0]["sector"], "科技")
         self.assertEqual(items[1]["sector"], "未分类")
 
+    def test_live_hk_heatmap_fallback_builds_from_provider_rows(self) -> None:
+        basics = [
+            {"symbol": "00700.HK", "market": "HK", "sector": "Technology"},
+            {"symbol": "00005.HK", "market": "HK", "sector": "Finance"},
+        ]
+        daily_rows = [
+            {"symbol": "00700.HK", "date": date(2026, 6, 1), "open": 100.0, "close": 105.0},
+            {"symbol": "00005.HK", "date": date(2026, 6, 1), "open": 80.0, "close": 78.0},
+        ]
+
+        with patch.object(heatmap_service._provider.market, "get_stock_basic", return_value=basics), patch.object(
+            heatmap_service._provider.market,
+            "get_daily_prices",
+            return_value=daily_rows,
+        ):
+            items = heatmap_service._build_live_market_heatmap("HK", date(2026, 6, 1))
+
+        self.assertEqual(len(items), 2)
+        self.assertEqual(sorted(item["avg_change"] for item in items), [-2.0, 5.0])
+
     def test_run_stock_valuation_backfill_skips_stale_dates(self) -> None:
         with patch("etl.jobs.sector_exposure_job.get_stock_basic", return_value=[{"symbol": "000001.SZ"}]), patch(
             "etl.jobs.sector_exposure_job.market_data_session"
@@ -61,6 +83,43 @@ class HeatmapAndValuationBackfillTests(unittest.TestCase):
         self.assertEqual(inserted, 0)
         daily_rows.assert_not_called()
         fetch_snapshots.assert_not_called()
+
+    def test_sector_exposure_job_upserts_stock_basics_and_fetches_missing_daily_rows(self) -> None:
+        stock_rows = [{"symbol": "000001.SZ", "market": "A", "sector": "银行", "name": "平安银行"}]
+        daily_rows = [
+            {"symbol": "000001.SZ", "date": date(2026, 6, 1), "open": 10.0, "close": 11.0, "high": 11.0, "low": 10.0, "volume": 1.0}
+        ]
+
+        with patch.object(sector_exposure_job, "get_stock_basic", return_value=stock_rows), patch.object(
+            sector_exposure_job, "get_daily_prices", return_value=daily_rows
+        ) as daily_fetch, patch.object(
+            sector_exposure_job, "market_data_session"
+        ) as market_session, patch.object(
+            sector_exposure_job, "list_daily_price_rows", return_value=[]
+        ), patch.object(
+            sector_exposure_job, "list_stock_valuation_rows", return_value=[]
+        ), patch.object(
+            sector_exposure_job, "_fetch_missing_valuation_snapshots", return_value=[]
+        ), patch.object(
+            sector_exposure_job, "upsert_stocks", return_value=1
+        ) as upsert_stocks, patch.object(
+            sector_exposure_job, "upsert_daily_prices", return_value=1
+        ), patch.object(
+            sector_exposure_job, "cache_heatmap"
+        ) as cache_heatmap, patch.object(
+            sector_exposure_job, "cache_sector_exposure"
+        ), patch.object(
+            sector_exposure_job, "upsert_sector_exposure", return_value=1
+        ), patch.object(
+            sector_exposure_job, "upsert_sector_exposure_summary", return_value=1
+        ):
+            market_session.return_value.__enter__.return_value = None
+            market_session.return_value.__exit__.return_value = None
+            total = sector_exposure_job.run_sector_exposure_job(date(2026, 6, 1), date(2026, 6, 1))
+
+        upsert_stocks.assert_called_once_with(stock_rows)
+        daily_fetch.assert_called_once()
+        cache_heatmap.assert_called_once()
 
 
 if __name__ == "__main__":

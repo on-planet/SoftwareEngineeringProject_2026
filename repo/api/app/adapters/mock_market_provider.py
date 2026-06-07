@@ -146,6 +146,7 @@ class MockMarketDataProvider:
         period: str = "day",
         count: int = 240,
         as_of: date | None = None,
+        is_index: bool = False,
     ) -> list[dict]:
         """返回 Mock K 线历史数据"""
         if "kline_history" in self._test_data:

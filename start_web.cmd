@@ -1,6 +1,9 @@
 @echo off
 setlocal
 
-REM å¯åŠ¨ Web å‰ç«¯
-cd /d %~dp0\repo\web
+set "PROJECT_DIR=%~dp0"
+if "%PROJECT_DIR:~-1%"=="\" set "PROJECT_DIR=%PROJECT_DIR:~0,-1%"
+
+REM Æô¶¯ Web Ç°¶Ë
+cd /d "%PROJECT_DIR%\repo\web"
 npm run dev

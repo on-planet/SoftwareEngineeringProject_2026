@@ -125,51 +125,69 @@ export function buildNewsGraphOption(graph: NewsGraphResponse) {
         return "";
       },
     },
-    animationDuration: 600,
+    animationDuration: 1400,
+    animationEasing: "cubicOut",
+    animationDurationUpdate: 1000,
+    animationEasingUpdate: "cubicInOut",
     series: [
       {
         type: "graph",
         layout: "force",
         roam: true,
         draggable: true,
-        data: graph.nodes.map((node) => ({
+        data: graph.nodes.map((node, index) => ({
           ...node,
           symbol: getNewsGraphNodeSymbol(node),
           symbolSize: node.size,
           itemStyle: {
             color: getNewsGraphNodeColor(node),
             opacity: node.type === "news" ? 0.92 : 1,
+            shadowBlur: node.type === "stock" || node.type === "news" ? 16 : 10,
+            shadowColor: getNewsGraphNodeColor(node),
+            borderColor: "#ffffff",
+            borderWidth: node.type === "stock" ? 2 : 1,
           },
           label: {
             show: true,
             color: "#0f172a",
             fontSize: node.type === "news" ? 11 : 12,
+            fontWeight: node.type === "stock" ? 700 : 600,
             formatter: truncateNewsGraphLabel(node.label, node.type === "news" ? 16 : 18),
           },
+          animationDelay: index * 40,
+          animationDuration: 1000 + index * 60,
         })),
-        links: graph.edges.map((edge) => ({
+        links: graph.edges.map((edge, index) => ({
           ...edge,
           lineStyle: {
             width: Math.max(1, edge.weight * 2.4),
-            opacity: edge.type === "cooccurs_event" || edge.type === "related_news" ? 0.45 : 0.7,
-            curveness: edge.type === "mentions_peer" ? 0.18 : 0.08,
+            opacity: edge.type === "cooccurs_event" || edge.type === "related_news" ? 0.35 : 0.65,
+            curveness: edge.type === "mentions_peer" ? 0.22 : 0.12,
+            type: edge.type === "propagation" ? "dashed" : "solid",
+            color: edge.type === "impact" ? "#f59e0b" : undefined,
           },
-          label: edge.label
-            ? {
-                show: false,
-                formatter: edge.label,
-              }
-            : undefined,
+          animationDelay: index * 20,
         })),
         force: {
-          repulsion: 260,
-          gravity: 0.08,
-          edgeLength: [60, 140],
+          repulsion: 380,
+          gravity: 0.06,
+          edgeLength: [50, 170],
+          layoutAnimation: true,
         },
         emphasis: {
           focus: "adjacency",
+          scale: true,
+          itemStyle: {
+            shadowBlur: 28,
+            borderWidth: 3,
+          },
           lineStyle: {
-            width: 3,
+            width: 4,
+            opacity: 1,
+          },
+          label: {
+            fontSize: 14,
+            fontWeight: 700,
           },
         },
       },

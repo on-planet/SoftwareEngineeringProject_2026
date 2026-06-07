@@ -56,7 +56,7 @@ def get_kline_history(
 ) -> list[dict]:
     """获取 K 线历史数据"""
     adapter = get_market_data_adapter()
-    return adapter.get_kline_history(symbol, period=period, count=count, as_of=as_of)
+    return adapter.get_kline_history(symbol, period=period, count=count, as_of=as_of, is_index=is_index)
 
 
 def get_recent_financials(symbol: str, *, count: int = 8) -> list[dict]:

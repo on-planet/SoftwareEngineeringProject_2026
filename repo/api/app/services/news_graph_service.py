@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 import json
 from typing import Any
 
@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.models.events import Event
 from app.models.news import News, NewsRelatedSector, NewsRelatedSymbol
 from app.models.stocks import Stock
+from app.utils.symbols import normalize_symbol, symbol_lookup_aliases
 from app.schemas.news_graph import (
     NewsGraphChainOut,
     NewsGraphChainStepOut,
@@ -23,6 +24,7 @@ from app.schemas.news_graph import (
     NewsGraphOut,
 )
 from app.services.news_relation_utils import serialize_news_items, with_news_relations
+from etl.providers import get_provider
 from etl.utils.llm_client import chat_completion
 from etl.utils.sector_taxonomy import UNKNOWN_SECTOR, normalize_sector_name
 from etl.utils.stock_basics_cache import load_stock_basics_cache
@@ -30,6 +32,9 @@ from etl.utils.stock_basics_cache import load_stock_basics_cache
 MAX_NEWS_ITEMS = 24
 MAX_THEME_NODES = 6
 MAX_PEER_NODES = 6
+MAX_INDEX_CONSTITUENT_NEWS_SYMBOLS = 50
+
+_provider = get_provider()
 
 
 def _dedupe(values: list[str]) -> list[str]:
@@ -94,26 +99,42 @@ def _nearby_news_query(
     *,
     symbol: str,
     sector: str | None,
+    aliases: list[str] | None = None,
+    component_symbols: list[str] | None = None,
     start_at: datetime,
     limit: int,
 ) -> list[News]:
     base_query = with_news_relations(db.query(News)).filter(News.published_at >= start_at)
     target_limit = max(1, min(int(limit), MAX_NEWS_ITEMS))
-    direct_rows = (
-        base_query.filter(
-            or_(
-                News.symbol == symbol,
-                News.related_symbol_rows.any(symbol=symbol),
-            )
+    direct_symbols = sorted(_normalize_symbol_values([symbol, *(aliases or [])]))
+    peer_symbols = sorted(_normalize_symbol_values(component_symbols or []))
+    filters = [
+        News.symbol.in_(direct_symbols),
+        News.related_symbol_rows.any(NewsRelatedSymbol.symbol.in_(direct_symbols)),
+    ]
+    if peer_symbols:
+        filters.extend(
+            [
+                News.symbol.in_(peer_symbols),
+                News.related_symbol_rows.any(NewsRelatedSymbol.symbol.in_(peer_symbols)),
+            ]
         )
+    direct_rows = (
+        base_query.filter(or_(*filters))
         .order_by(News.published_at.desc(), News.id.desc())
-        .limit(target_limit)
+        .limit(max(target_limit * 3, target_limit))
         .all()
     )
     if len(direct_rows) >= target_limit or not sector or sector == UNKNOWN_SECTOR:
         return _rank_news_rows(
             direct_rows,
-            score=lambda item: _stock_news_relevance_score(item, symbol=symbol, sector=sector),
+            score=lambda item: _stock_news_relevance_score(
+                item,
+                symbol=symbol,
+                sector=sector,
+                aliases=direct_symbols,
+                component_symbols=peer_symbols,
+            ),
         )[:target_limit]
 
     sector_rows = (
@@ -124,7 +145,13 @@ def _nearby_news_query(
     )
     return _rank_news_rows(
         [*direct_rows, *sector_rows],
-        score=lambda item: _stock_news_relevance_score(item, symbol=symbol, sector=sector),
+        score=lambda item: _stock_news_relevance_score(
+            item,
+            symbol=symbol,
+            sector=sector,
+            aliases=direct_symbols,
+            component_symbols=peer_symbols,
+        ),
     )[:target_limit]
 
 
@@ -294,17 +321,29 @@ def _normalize_sector_values(values: list[str] | tuple[str, ...] | set[str] | No
     return normalized
 
 
-def _stock_news_relevance_score(item: News, *, symbol: str, sector: str | None) -> int:
-    normalized_symbol = str(symbol or "").strip().upper()
+def _stock_news_relevance_score(
+    item: News,
+    *,
+    symbol: str,
+    sector: str | None,
+    aliases: list[str] | tuple[str, ...] | set[str] | None = None,
+    component_symbols: list[str] | tuple[str, ...] | set[str] | None = None,
+) -> int:
+    target_symbols = _normalize_symbol_values([symbol, *(list(aliases or []))])
+    component_symbol_set = _normalize_symbol_values(component_symbols)
     target_sector = normalize_sector_name(sector)
     item_symbol = str(item.symbol or "").strip().upper()
     related_symbols = _normalize_symbol_values(item.related_symbols)
     related_sectors = _normalize_sector_values(item.related_sectors)
     score = 0
-    if item_symbol == normalized_symbol:
+    if item_symbol in target_symbols:
         score += 12
-    if normalized_symbol in related_symbols:
+    if target_symbols & related_symbols:
         score += 10
+    if item_symbol in component_symbol_set:
+        score += 6
+    if component_symbol_set & related_symbols:
+        score += 5
     if target_sector and target_sector != UNKNOWN_SECTOR and target_sector in related_sectors:
         score += 2
     return score
@@ -784,11 +823,92 @@ def _build_llm_explanation(
     )
 
 
+def _manual_index_alias(symbol: str) -> str | None:
+    aliases = {
+        "北证50": "899050.BJ",
+        "北交所50": "899050.BJ",
+        "BEIJING50": "899050.BJ",
+        "BSE50": "899050.BJ",
+        "恒生指数": "HKHSI",
+        "恒指": "HKHSI",
+        "国企指数": "HKHSCEI",
+        "恒生国企": "HKHSCEI",
+        "恒生科技": "HKHSTECH",
+        "恒生科技指数": "HKHSTECH",
+    }
+    return aliases.get(str(symbol or "").strip().upper()) or aliases.get(str(symbol or "").strip())
+
+
+def _supported_index_spec(symbol: str) -> dict | None:
+    manual = _manual_index_alias(symbol)
+    try:
+        canonical = _provider.market.normalize_index_symbol(manual or symbol)
+    except Exception:
+        canonical = manual or str(symbol or "").strip().upper()
+    for spec in _provider.market.supported_index_specs():
+        if str(spec.get("symbol") or "").strip().upper() == str(canonical or "").strip().upper():
+            return dict(spec)
+    return None
+
+
+def _index_constituent_rows(symbol: str) -> list[dict]:
+    target_date = date.today()
+    try:
+        if symbol in _provider.index.supported_hk_index_symbols():
+            return _provider.index.get_hk_index_constituents(symbol)
+        return _provider.index.get_index_constituents(symbol, target_date)
+    except Exception:
+        return []
+
+
+def _resolve_graph_center(db: Session, raw_symbol: str) -> tuple[dict[str, str], str, list[str], list[str]]:
+    normalized_stock_symbol = normalize_symbol(raw_symbol)
+    stock_item = db.query(Stock).filter(Stock.symbol == normalized_stock_symbol).first()
+    if stock_item is not None:
+        return (
+            {
+                "symbol": str(stock_item.symbol or normalized_stock_symbol),
+                "name": str(stock_item.name or normalized_stock_symbol),
+                "market": str(stock_item.market or ""),
+                "sector": str(stock_item.sector or UNKNOWN_SECTOR),
+            },
+            "stock",
+            symbol_lookup_aliases(raw_symbol),
+            [],
+        )
+
+    index_spec = _supported_index_spec(raw_symbol)
+    if index_spec is not None:
+        index_symbol = str(index_spec.get("symbol") or raw_symbol).strip().upper()
+        constituents = _index_constituent_rows(index_symbol)
+        component_symbols = [
+            str(row.get("symbol") or "").strip().upper()
+            for row in constituents[:MAX_INDEX_CONSTITUENT_NEWS_SYMBOLS]
+            if row.get("symbol")
+        ]
+        aliases = _dedupe([index_symbol, str(index_spec.get("snowball_symbol") or ""), raw_symbol])
+        return (
+            {
+                "symbol": index_symbol,
+                "name": str(index_spec.get("name") or index_symbol),
+                "market": str(index_spec.get("market") or ""),
+                "sector": UNKNOWN_SECTOR,
+            },
+            "index",
+            aliases,
+            component_symbols,
+        )
+
+    aliases = symbol_lookup_aliases(raw_symbol)
+    return _resolve_stock_center(db, normalized_stock_symbol), "stock", aliases, []
+
+
 def build_stock_news_graph(db: Session, symbol: str, *, days: int = 7, limit: int = 18) -> NewsGraphOut:
-    normalized_symbol = str(symbol or "").strip().upper()
+    center, center_type, symbol_aliases, component_symbols = _resolve_graph_center(db, symbol)
+    normalized_symbol = str(center.get("symbol") or symbol or "").strip().upper()
+    center_node_id = f"{center_type}:{normalized_symbol}"
     target_days = max(1, min(int(days), 30))
     target_limit = max(5, min(int(limit), MAX_NEWS_ITEMS))
-    center = _resolve_stock_center(db, normalized_symbol)
     center_sector = normalize_sector_name(center.get("sector"), market=center.get("market"))
     start_date = date.today() - timedelta(days=target_days - 1)
     start_at = datetime.combine(start_date, time.min).replace(tzinfo=None)
@@ -797,17 +917,24 @@ def build_stock_news_graph(db: Session, symbol: str, *, days: int = 7, limit: in
         db,
         symbol=normalized_symbol,
         sector=center_sector,
+        aliases=symbol_aliases,
+        component_symbols=component_symbols,
         start_at=start_at,
         limit=target_limit,
     )
-    events = _nearby_event_rows(db, symbol=normalized_symbol, start_date=start_date)
+    events = _nearby_event_rows(db, symbol=normalized_symbol, start_date=start_date) if center_type == "stock" else []
 
     theme_counter: Counter[str] = Counter()
     peer_counter: Counter[str] = Counter()
+    component_symbol_set = _normalize_symbol_values(component_symbols)
+    target_symbol_set = _normalize_symbol_values([normalized_symbol, *symbol_aliases])
     for item in news_rows:
         theme_counter.update(item.themes)
+        item_symbol = str(item.symbol or "").strip().upper()
+        if item_symbol in component_symbol_set:
+            peer_counter.update([item_symbol])
         for peer in item.related_symbols:
-            if peer != normalized_symbol:
+            if peer not in target_symbol_set:
                 peer_counter.update([peer])
     allowed_themes = {item for item, _ in theme_counter.most_common(MAX_THEME_NODES)}
     allowed_peers = {item for item, _ in peer_counter.most_common(MAX_PEER_NODES)}
@@ -818,8 +945,8 @@ def build_stock_news_graph(db: Session, symbol: str, *, days: int = 7, limit: in
     _add_node(
         nodes,
         NewsGraphNodeOut(
-            id=f"stock:{normalized_symbol}",
-            type="stock",
+            id=center_node_id,
+            type=center_type,
             label=f"{center.get('name') or normalized_symbol} ({normalized_symbol})",
             size=58,
             metadata={
@@ -844,7 +971,7 @@ def build_stock_news_graph(db: Session, symbol: str, *, days: int = 7, limit: in
         _add_edge(
             edges,
             NewsGraphEdgeOut(
-                source=f"stock:{normalized_symbol}",
+                source=center_node_id,
                 target=f"sector:{center_sector}",
                 type="belongs_to",
                 weight=1.0,
@@ -877,7 +1004,7 @@ def build_stock_news_graph(db: Session, symbol: str, *, days: int = 7, limit: in
             edges,
             NewsGraphEdgeOut(
                 source=node_id,
-                target=f"stock:{normalized_symbol}",
+                target=center_node_id,
                 type="event_of",
                 weight=0.95,
                 label=str(item.type or "event"),
@@ -887,7 +1014,9 @@ def build_stock_news_graph(db: Session, symbol: str, *, days: int = 7, limit: in
     for item in news_rows:
         news_id = int(item.id)
         news_node_id = f"news:{news_id}"
-        direct_hit = normalized_symbol == str(item.symbol or "").upper() or normalized_symbol in item.related_symbols
+        item_symbol = str(item.symbol or "").strip().upper()
+        item_related_symbols = _normalize_symbol_values(item.related_symbols)
+        direct_hit = item_symbol in target_symbol_set or bool(target_symbol_set & item_related_symbols)
         _add_node(
             nodes,
             NewsGraphNodeOut(
@@ -915,7 +1044,7 @@ def build_stock_news_graph(db: Session, symbol: str, *, days: int = 7, limit: in
                 edges,
                 NewsGraphEdgeOut(
                     source=news_node_id,
-                    target=f"stock:{normalized_symbol}",
+                    target=center_node_id,
                     type="mentions",
                     weight=1.0,
                     label=item.impact_direction or item.sentiment,
@@ -965,8 +1094,11 @@ def build_stock_news_graph(db: Session, symbol: str, *, days: int = 7, limit: in
                     label="theme",
                 ),
             )
-        for peer in item.related_symbols:
-            if peer == normalized_symbol or peer not in allowed_peers:
+        peer_candidates = list(item.related_symbols)
+        if item_symbol in component_symbol_set and item_symbol not in peer_candidates:
+            peer_candidates.append(item_symbol)
+        for peer in peer_candidates:
+            if peer in target_symbol_set or peer not in allowed_peers:
                 continue
             peer_meta = _stock_lookup(peer)
             _add_node(
@@ -1047,8 +1179,8 @@ def build_stock_news_graph(db: Session, symbol: str, *, days: int = 7, limit: in
     )
     symbol_entities = [
         _build_entity(
-            entity_id=f"stock:{normalized_symbol}",
-            entity_type="stock",
+            entity_id=center_node_id,
+            entity_type=center_type,
             label=_format_stock_label(normalized_symbol, str(center.get("name") or normalized_symbol)),
         )
     ]
@@ -1091,7 +1223,7 @@ def build_stock_news_graph(db: Session, symbol: str, *, days: int = 7, limit: in
         sector_entities=sector_entities,
     )
     return NewsGraphOut(
-        center_type="stock",
+        center_type=center_type,
         center_id=normalized_symbol,
         center_label=center.get("name") or normalized_symbol,
         days=target_days,
@@ -1112,7 +1244,7 @@ def build_news_focus_graph(db: Session, news_id: int, *, days: int = 7, limit: i
         return None
     center_label = _truncate(str(row.title or f"news:{news_id}"), 36)
     target_days = max(1, min(int(days), 30))
-    start_at = (row.published_at or datetime.now(UTC).replace(tzinfo=None)) - timedelta(days=target_days)
+    start_at = (row.published_at or datetime.now(timezone.utc).replace(tzinfo=None)) - timedelta(days=target_days)
 
     related_symbols = row.related_symbols[: MAX_PEER_NODES + 1]
     related_sectors = row.related_sectors[:3]

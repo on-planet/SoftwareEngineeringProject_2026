@@ -180,6 +180,17 @@ export async function getSmokeButtBacktest(
   });
 }
 
+export async function getCigarbuttAnalysis(symbol: string, options?: ApiQueryOptions) {
+  return request<{
+    symbol: string;
+    stock_price?: number | null;
+    analysis: Record<string, unknown>;
+  }>(`/api/strategy/cigarbutt/${encodeURIComponent(symbol)}`, {
+    ...options,
+    label: options?.label ?? "cigarbutt-analysis",
+  });
+}
+
 export async function trainSmokeButtStrategy(payload?: {
   as_of?: string;
   horizon_days?: number;

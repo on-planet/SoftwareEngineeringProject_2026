@@ -47,9 +47,9 @@ export type IndexInsightSummary = {
   as_of?: string | null;
   constituent_total: number;
   priced_total: number;
-  weight_coverage: number;
-  top5_weight: number;
-  top10_weight: number;
+  weight_coverage?: number | null;
+  top5_weight?: number | null;
+  top10_weight?: number | null;
   rising_count: number;
   falling_count: number;
   flat_count: number;
@@ -367,18 +367,27 @@ export async function getStockDaily(symbol: string, params?: {
   return request(`/api/stock/${encodeURIComponent(symbol)}/daily${suffix ? `?${suffix}` : ""}`);
 }
 
-export async function getIndexConstituents(symbol: string, params?: { as_of?: string; limit?: number; offset?: number }) {
+export async function getIndexConstituents(
+  symbol: string,
+  params?: { as_of?: string; limit?: number; offset?: number; allow_live?: boolean },
+) {
   const query = new URLSearchParams();
   if (params?.as_of) query.set("as_of", params.as_of);
   if (params?.limit !== undefined) query.set("limit", String(params.limit));
   if (params?.offset !== undefined) query.set("offset", String(params.offset));
+  if (params?.allow_live) query.set("allow_live", "true");
   const suffix = query.toString();
   return request(`/api/index/${encodeURIComponent(symbol)}/constituents${suffix ? `?${suffix}` : ""}`);
 }
 
-export async function getIndexInsights(symbol: string, params?: { as_of?: string }) {
+export async function getIndexInsights(
+  symbol: string,
+  params?: { as_of?: string; prefer_live?: boolean; refresh_key?: string | number },
+) {
   const query = new URLSearchParams();
   if (params?.as_of) query.set("as_of", params.as_of);
+  if (params?.prefer_live) query.set("prefer_live", "true");
+  if (params?.refresh_key !== undefined) query.set("_ts", String(params.refresh_key));
   const suffix = query.toString();
   return request<IndexInsightResponse>(`/api/index/${encodeURIComponent(symbol)}/insights${suffix ? `?${suffix}` : ""}`);
 }

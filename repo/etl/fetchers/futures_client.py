@@ -1,34 +1,97 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-import json
+from typing import List
 import os
-import re
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
 
 from etl.utils.logging import get_logger
 from etl.utils.normalize import ensure_required
 
 LOGGER = get_logger(__name__)
 
-SHFE_BASE_URL = os.getenv("SHFE_BASE_URL", "https://www.shfe.com.cn").rstrip("/")
-SHFE_TIMEOUT_SECONDS = int(os.getenv("SHFE_TIMEOUT_SECONDS", "20"))
-SHFE_REPORT_REFERER = f"{SHFE_BASE_URL}/reports/tradedata/dailyandweeklydata/"
-SHFE_USER_AGENT = os.getenv(
-    "SHFE_USER_AGENT",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-)
+try:
+    import akshare as ak  # type: ignore
+except Exception as exc:  # pragma: no cover
+    ak = None
+    LOGGER.warning("akshare import failed in futures client: %s", exc)
+
+try:
+    import pandas as pd  # type: ignore
+except Exception as exc:  # pragma: no cover
+    pd = None
+    LOGGER.warning("pandas import failed in futures client: %s", exc)
+
 
 TARGET_PRODUCTS: dict[str, dict[str, str]] = {
-    "cu_f": {"symbol": "CU", "name": "铜"},
-    "au_f": {"symbol": "AU", "name": "黄金"},
-    "ag_f": {"symbol": "AG", "name": "白银"},
-    "ao_f": {"symbol": "AO", "name": "氧化铝"},
-    "sc_f": {"symbol": "SC", "name": "原油"},
-    "fu_f": {"symbol": "FU", "name": "燃料油"},
+    "cu_f": {"symbol": "CU", "name": "铜", "sina_code": "CU0"},
+    "au_f": {"symbol": "AU", "name": "黄金", "sina_code": "AU0"},
+    "ag_f": {"symbol": "AG", "name": "白银", "sina_code": "AG0"},
+    "ao_f": {"symbol": "AO", "name": "氧化铝", "sina_code": "AO0"},
+    "sc_f": {"symbol": "SC", "name": "原油", "sina_code": "SC0"},
+    "fu_f": {"symbol": "FU", "name": "燃料油", "sina_code": "FU0"},
 }
+
+
+TARGET_PRODUCTS.update(
+    {
+        "al_f": {"symbol": "AL", "name": "Aluminum", "sina_code": "AL0"},
+        "zn_f": {"symbol": "ZN", "name": "Zinc", "sina_code": "ZN0"},
+        "pb_f": {"symbol": "PB", "name": "Lead", "sina_code": "PB0"},
+        "ni_f": {"symbol": "NI", "name": "Nickel", "sina_code": "NI0"},
+        "sn_f": {"symbol": "SN", "name": "Tin", "sina_code": "SN0"},
+        "rb_f": {"symbol": "RB", "name": "Rebar", "sina_code": "RB0"},
+        "hc_f": {"symbol": "HC", "name": "Hot Coil", "sina_code": "HC0"},
+        "ss_f": {"symbol": "SS", "name": "Stainless Steel", "sina_code": "SS0"},
+        "ru_f": {"symbol": "RU", "name": "Rubber", "sina_code": "RU0"},
+        "br_f": {"symbol": "BR", "name": "Butadiene Rubber", "sina_code": "BR0"},
+        "bu_f": {"symbol": "BU", "name": "Bitumen", "sina_code": "BU0"},
+        "sp_f": {"symbol": "SP", "name": "Paper Pulp", "sina_code": "SP0"},
+        "lu_f": {"symbol": "LU", "name": "Low Sulfur Fuel Oil", "sina_code": "LU0"},
+        "nr_f": {"symbol": "NR", "name": "TSR 20 Rubber", "sina_code": "NR0"},
+        "bc_f": {"symbol": "BC", "name": "Bonded Copper", "sina_code": "BC0"},
+        "m_f": {"symbol": "M", "name": "Soybean Meal", "sina_code": "M0"},
+        "y_f": {"symbol": "Y", "name": "Soybean Oil", "sina_code": "Y0"},
+        "a_f": {"symbol": "A", "name": "Soybean No.1", "sina_code": "A0"},
+        "b_f": {"symbol": "B", "name": "Soybean No.2", "sina_code": "B0"},
+        "c_f": {"symbol": "C", "name": "Corn", "sina_code": "C0"},
+        "cs_f": {"symbol": "CS", "name": "Corn Starch", "sina_code": "CS0"},
+        "p_f": {"symbol": "P", "name": "Palm Oil", "sina_code": "P0"},
+        "i_f": {"symbol": "I", "name": "Iron Ore", "sina_code": "I0"},
+        "j_f": {"symbol": "J", "name": "Coke", "sina_code": "J0"},
+        "jm_f": {"symbol": "JM", "name": "Coking Coal", "sina_code": "JM0"},
+        "l_f": {"symbol": "L", "name": "LLDPE", "sina_code": "L0"},
+        "pp_f": {"symbol": "PP", "name": "Polypropylene", "sina_code": "PP0"},
+        "v_f": {"symbol": "V", "name": "PVC", "sina_code": "V0"},
+        "eg_f": {"symbol": "EG", "name": "Ethylene Glycol", "sina_code": "EG0"},
+        "eb_f": {"symbol": "EB", "name": "Styrene", "sina_code": "EB0"},
+        "pg_f": {"symbol": "PG", "name": "LPG", "sina_code": "PG0"},
+        "lh_f": {"symbol": "LH", "name": "Live Hog", "sina_code": "LH0"},
+        "cf_f": {"symbol": "CF", "name": "Cotton", "sina_code": "CF0"},
+        "sr_f": {"symbol": "SR", "name": "Sugar", "sina_code": "SR0"},
+        "ta_f": {"symbol": "TA", "name": "PTA", "sina_code": "TA0"},
+        "ma_f": {"symbol": "MA", "name": "Methanol", "sina_code": "MA0"},
+        "oi_f": {"symbol": "OI", "name": "Rapeseed Oil", "sina_code": "OI0"},
+        "rm_f": {"symbol": "RM", "name": "Rapeseed Meal", "sina_code": "RM0"},
+        "fg_f": {"symbol": "FG", "name": "Glass", "sina_code": "FG0"},
+        "sa_f": {"symbol": "SA", "name": "Soda Ash", "sina_code": "SA0"},
+        "pf_f": {"symbol": "PF", "name": "Polyester Staple Fiber", "sina_code": "PF0"},
+        "ap_f": {"symbol": "AP", "name": "Apple", "sina_code": "AP0"},
+        "cj_f": {"symbol": "CJ", "name": "Red Dates", "sina_code": "CJ0"},
+        "pk_f": {"symbol": "PK", "name": "Peanut", "sina_code": "PK0"},
+        "ur_f": {"symbol": "UR", "name": "Urea", "sina_code": "UR0"},
+        "sm_f": {"symbol": "SM", "name": "Manganese Silicon", "sina_code": "SM0"},
+        "sf_f": {"symbol": "SF", "name": "Ferrosilicon", "sina_code": "SF0"},
+        "if_f": {"symbol": "IF", "name": "CSI 300 Index", "sina_code": "IF0"},
+        "ih_f": {"symbol": "IH", "name": "SSE 50 Index", "sina_code": "IH0"},
+        "ic_f": {"symbol": "IC", "name": "CSI 500 Index", "sina_code": "IC0"},
+        "im_f": {"symbol": "IM", "name": "CSI 1000 Index", "sina_code": "IM0"},
+        "t_f": {"symbol": "T", "name": "10Y Treasury Bond", "sina_code": "T0"},
+        "tf_f": {"symbol": "TF", "name": "5Y Treasury Bond", "sina_code": "TF0"},
+        "ts_f": {"symbol": "TS", "name": "2Y Treasury Bond", "sina_code": "TS0"},
+        "tl_f": {"symbol": "TL", "name": "30Y Treasury Bond", "sina_code": "TL0"},
+    }
+)
+SUPPORTED_FUTURES_SYMBOLS = tuple(spec["symbol"] for spec in TARGET_PRODUCTS.values())
 
 
 def _safe_float(value) -> float | None:
@@ -48,203 +111,131 @@ def _safe_float(value) -> float | None:
     return number
 
 
-def _parse_report_date(value: object, fallback: date) -> date:
-    text = str(value or "").strip()
-    if len(text) >= 8 and text[:8].isdigit():
-        try:
-            return datetime.strptime(text[:8], "%Y%m%d").date()
-        except Exception:
-            return fallback
-    return fallback
+_FUTURES_HISTORY_CACHE: dict[str, pd.DataFrame] = {}
 
 
-def _delivery_rank(value: object) -> int:
-    text = str(value or "").strip()
-    if text.isdigit():
-        return int(text)
-    return 99_999_999
-
-
-def _extract_contract_month(row: dict) -> str:
-    delivery_month = str(row.get("DELIVERYMONTH") or "").strip()
-    if len(delivery_month) == 4 and delivery_month.isdigit():
-        return delivery_month
-    instrument_id = str(row.get("INSTRUMENTID") or "").strip().lower()
-    matched = re.search(r"(\d{4})$", instrument_id)
-    if matched:
-        return matched.group(1)
-    return ""
-
-
-def _is_contract_row(row: dict) -> bool:
-    product_id = str(row.get("PRODUCTID") or "").strip().lower()
-    contract_month = _extract_contract_month(row)
-    if product_id not in TARGET_PRODUCTS:
-        return False
-    if not contract_month:
-        return False
-    if product_id.endswith("_tas"):
-        return False
-    return True
-
-
-def _select_main_contract(rows: list[dict]) -> dict | None:
-    candidates = [row for row in rows if _is_contract_row(row)]
-    if not candidates:
+def _fetch_product_history(product_id: str) -> pd.DataFrame | None:
+    if ak is None or pd is None:
         return None
-    return max(
-        candidates,
-        key=lambda row: (
-            _safe_float(row.get("VOLUME")) or -1.0,
-            _safe_float(row.get("OPENINTEREST")) or -1.0,
-            -_delivery_rank(_extract_contract_month(row)),
-        ),
-    )
-
-
-def _normalize_row(product_id: str, row: dict, row_date: date) -> dict | None:
-    target = TARGET_PRODUCTS[product_id]
-    close = _safe_float(row.get("CLOSEPRICE"))
-    settlement = _safe_float(row.get("SETTLEMENTPRICE"))
-    close_value = close if close is not None else settlement
-    if close_value is None:
+    spec = TARGET_PRODUCTS.get(product_id)
+    if spec is None:
         return None
+    cache_key = spec["sina_code"]
+    cached = _FUTURES_HISTORY_CACHE.get(cache_key)
+    if cached is not None and not getattr(cached, "empty", True):
+        return cached
+    try:
+        df = ak.futures_zh_daily_sina(symbol=cache_key)
+    except Exception as exc:
+        LOGGER.warning("akshare futures fetch failed [%s]: %s", product_id, exc)
+        return None
+    if df is None or getattr(df, "empty", True):
+        return None
+    try:
+        df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.date
+    except Exception:
+        pass
+    _FUTURES_HISTORY_CACHE[cache_key] = df
+    return df
 
-    open_price = _safe_float(row.get("OPENPRICE"))
-    high = _safe_float(row.get("HIGHESTPRICE"))
-    low = _safe_float(row.get("LOWESTPRICE"))
-    volume = _safe_float(row.get("VOLUME"))
-    settlement_price = _safe_float(row.get("SETTLEMENTPRICE"))
-    open_interest = _safe_float(row.get("OPENINTEREST"))
-    turnover = _safe_float(row.get("TURNOVER"))
 
+def _row_for_date(df, as_of: date) -> dict | None:
+    if df is None or getattr(df, "empty", True):
+        return None
+    filtered = df[df["date"] <= as_of]
+    if filtered.empty:
+        return None
+    # 按日期降序取最新的一条
+    sorted_df = filtered.sort_values(by="date", ascending=False)
+    return sorted_df.iloc[0].to_dict()
+
+
+def _normalize_row(product_id: str, row: dict | None, as_of: date) -> dict | None:
+    if row is None:
+        return None
+    spec = TARGET_PRODUCTS[product_id]
+    close_val = _safe_float(row.get("close"))
+    if close_val is None:
+        return None
+    open_val = _safe_float(row.get("open"))
+    high_val = _safe_float(row.get("high"))
+    low_val = _safe_float(row.get("low"))
+    settle_val = _safe_float(row.get("settle"))
+    volume_val = _safe_float(row.get("volume"))
+    hold_val = _safe_float(row.get("hold"))
     return {
-        "symbol": target["symbol"],
-        "name": target["name"],
-        "date": row_date,
-        "contract_month": _extract_contract_month(row) or None,
-        "open": open_price if open_price is not None else close_value,
-        "high": high if high is not None else close_value,
-        "low": low if low is not None else close_value,
-        "close": close_value,
-        "settlement": settlement_price if settlement_price is not None else close_value,
-        "open_interest": open_interest,
-        "turnover": turnover,
-        "volume": volume,
-        "source": "SHFE",
+        "symbol": spec["symbol"],
+        "name": spec["name"],
+        "date": row.get("date") or as_of,
+        "contract_month": None,
+        "open": open_val if open_val is not None else close_val,
+        "high": high_val if high_val is not None else close_val,
+        "low": low_val if low_val is not None else close_val,
+        "close": close_val,
+        "settlement": settle_val if settle_val is not None else close_val,
+        "open_interest": hold_val,
+        "turnover": None,
+        "volume": volume_val,
+        "source": "AkShare",
     }
 
 
-def _daily_url(as_of: date) -> str:
-    stamp = int(datetime.now().timestamp() * 1000)
-    return f"{SHFE_BASE_URL}/data/tradedata/future/dailydata/kx{as_of:%Y%m%d}.dat?params={stamp}"
-
-
-def _weekly_url(as_of: date) -> str:
-    stamp = int(datetime.now().timestamp() * 1000)
-    return f"{SHFE_BASE_URL}/data/tradedata/future/weeklydata/{as_of:%Y%m%d}.dat?params={stamp}"
-
-
-def _fetch_payload(url: str, context: str) -> dict | None:
-    request = Request(
-        url,
-        headers={
-            "User-Agent": SHFE_USER_AGENT,
-            "Referer": SHFE_REPORT_REFERER,
-            "Accept": "application/json,text/plain,*/*",
-        },
-    )
-    try:
-        with urlopen(request, timeout=SHFE_TIMEOUT_SECONDS) as response:
-            payload = response.read().decode("utf-8")
-    except HTTPError as exc:
-        if exc.code == 404:
-            LOGGER.info("%s missing [%s]", context, url)
-            return None
-        LOGGER.warning("%s http error [%s]: %s", context, url, exc)
-        return None
-    except URLError as exc:
-        LOGGER.warning("%s url error [%s]: %s", context, url, exc)
-        return None
-    except Exception as exc:  # pragma: no cover - runtime/network dependent
-        LOGGER.warning("%s fetch failed [%s]: %s", context, url, exc)
-        return None
-
-    try:
-        data = json.loads(payload)
-    except Exception as exc:
-        LOGGER.warning("%s json decode failed [%s]: %s", context, url, exc)
-        return None
-    if not isinstance(data, dict):
-        return None
-    return data
-
-
-def _fetch_daily_payload(as_of: date) -> dict | None:
-    return _fetch_payload(_daily_url(as_of), f"shfe futures daily [{as_of}]")
-
-
-def _fetch_weekly_payload(as_of: date) -> dict | None:
-    return _fetch_payload(_weekly_url(as_of), f"shfe futures weekly [{as_of}]")
-
-
 def get_futures_daily(as_of: date) -> list[dict]:
-    payload = _fetch_daily_payload(as_of)
-    if not payload:
-        return []
-
-    instruments = payload.get("o_curinstrument")
-    if not isinstance(instruments, list) or not instruments:
-        LOGGER.info("shfe futures daily empty for %s", as_of)
-        return []
-
-    row_date = _parse_report_date(payload.get("report_date") or payload.get("update_date"), as_of)
-    grouped: dict[str, list[dict]] = {product_id: [] for product_id in TARGET_PRODUCTS}
-    for row in instruments:
-        if not isinstance(row, dict):
-            continue
-        product_id = str(row.get("PRODUCTID") or "").strip().lower()
-        if product_id in grouped:
-            grouped[product_id].append(row)
-
     rows: list[dict] = []
     for product_id in TARGET_PRODUCTS:
-        main_row = _select_main_contract(grouped[product_id])
-        if main_row is None:
-            continue
-        normalized = _normalize_row(product_id, main_row, row_date)
+        df = _fetch_product_history(product_id)
+        row = _row_for_date(df, as_of)
+        normalized = _normalize_row(product_id, row, as_of)
         if normalized is not None:
             rows.append(normalized)
-
     return ensure_required(rows, ["symbol", "date"], "futures.daily")
 
 
-def get_futures_weekly(as_of: date) -> list[dict]:
-    payload = _fetch_weekly_payload(as_of)
-    if not payload:
+def get_futures_history(
+    symbol: str,
+    *,
+    start: date | None = None,
+    end: date | None = None,
+    limit: int = 480,
+) -> list[dict]:
+    normalized_symbol = str(symbol or "").strip().upper()
+    product_id = next(
+        (
+            key
+            for key, spec in TARGET_PRODUCTS.items()
+            if str(spec.get("symbol") or "").strip().upper() == normalized_symbol
+        ),
+        None,
+    )
+    if product_id is None:
+        return []
+    df = _fetch_product_history(product_id)
+    if df is None or getattr(df, "empty", True):
         return []
 
-    instruments = payload.get("o_cursor")
-    if not isinstance(instruments, list) or not instruments:
-        LOGGER.info("shfe futures weekly empty for %s", as_of)
-        return []
-
-    row_date = _parse_report_date(payload.get("report_date") or payload.get("update_date"), as_of)
-    grouped: dict[str, list[dict]] = {product_id: [] for product_id in TARGET_PRODUCTS}
-    for row in instruments:
-        if not isinstance(row, dict):
-            continue
-        product_id = str(row.get("PRODUCTID") or "").strip().lower()
-        if product_id in grouped:
-            grouped[product_id].append(row)
-
+    end_at = end or date.today()
     rows: list[dict] = []
-    for product_id in TARGET_PRODUCTS:
-        main_row = _select_main_contract(grouped[product_id])
-        if main_row is None:
+    for raw in df.to_dict(orient="records"):
+        row_date = raw.get("date")
+        if isinstance(row_date, datetime):
+            row_date = row_date.date()
+        if not isinstance(row_date, date):
             continue
-        normalized = _normalize_row(product_id, main_row, row_date)
+        if start is not None and row_date < start:
+            continue
+        if row_date > end_at:
+            continue
+        normalized = _normalize_row(product_id, raw, row_date)
         if normalized is not None:
             rows.append(normalized)
+    rows.sort(key=lambda item: item.get("date"))
+    if limit > 0:
+        rows = rows[-limit:]
+    return ensure_required(rows, ["symbol", "date"], "futures.history")
 
+
+def get_futures_weekly(as_of: date) -> list[dict]:
+    rows = get_futures_daily(as_of)
+    for row in rows:
+        row["source"] = "AkShare"
     return ensure_required(rows, ["symbol", "date"], "futures.weekly")

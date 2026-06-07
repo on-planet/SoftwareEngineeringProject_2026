@@ -40,7 +40,7 @@ function buildHeatmapCacheKey(params: {
   offset: number;
 }) {
   return [
-    "heatmap",
+    "heatmap:v2",
     `asOf=${params.asOf || "latest"}`,
     `market=${params.market || "all"}`,
     `minChange=${params.minChange ?? "none"}`,
@@ -225,7 +225,11 @@ export function Heatmap({
         </div>
       </div>
       {loading ? (
-        <div className="helper">热力图加载中...</div>
+        <div className="grid grid-3">
+          {Array.from({ length: 6 }, (_, i) => (
+            <div key={i} className="skeleton-card" />
+          ))}
+        </div>
       ) : error ? (
         <div className="helper">热力图加载失败：{error}</div>
       ) : items.length === 0 ? (

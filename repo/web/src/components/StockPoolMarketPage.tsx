@@ -74,7 +74,7 @@ function dedupeSymbols(values: string[]) {
 }
 
 function buildStockListCacheKey(market: MarketCode, keyword: string, sector: string, page: number) {
-  return `stocks:v5:${market}:keyword=${keyword || "none"}:sector=${sector || "none"}:page=${page}:limit=${PAGE_SIZE}:sort=asc`;
+  return `stocks:v6:${market}:keyword=${keyword || "none"}:sector=${sector || "none"}:page=${page}:limit=${PAGE_SIZE}:sort=asc`;
 }
 
 function getStockListQueryOptions(cacheKey: string) {

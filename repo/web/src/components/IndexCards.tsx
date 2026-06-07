@@ -53,6 +53,7 @@ export function IndexCards({
   initialPage,
 }: Props) {
   const cacheKey = useMemo(() => buildIndicesQueryKey(asOf), [asOf]);
+  const hasInitial = Boolean(initialPage);
 
   useEffect(() => {
     if (!initialPage) {
@@ -62,13 +63,13 @@ export function IndexCards({
   }, [cacheKey, initialPage]);
 
   const listQuery = useApiQuery<IndexPage>(
-    cacheKey,
+    hasInitial ? null : cacheKey,
     () => getIndices({ as_of: asOf }) as Promise<IndexPage>,
     getIndicesQueryOptions(cacheKey),
   );
-  const pageData = listQuery.data ?? initialPage ?? null;
+  const pageData = initialPage ?? listQuery.data ?? null;
   const data = pageData?.items ?? [];
-  const loading = listQuery.isLoading && !pageData;
+  const loading = !hasInitial && listQuery.isLoading && !pageData;
   const error = !pageData ? listQuery.error?.message ?? null : null;
 
   const visibleItems = useMemo(() => {
@@ -84,18 +85,6 @@ export function IndexCards({
   }, [activeMarket, data]);
 
   const activeMarketMeta = MARKET_OPTIONS.find((item) => item.key === activeMarket) || MARKET_OPTIONS[0];
-
-  if (loading) {
-    return <div className="helper">指数快照加载中...</div>;
-  }
-
-  if (error) {
-    return <div className="helper">{`指数快照加载失败：${error}`}</div>;
-  }
-
-  if (data.length === 0) {
-    return <div className="helper">暂无指数快照数据。</div>;
-  }
 
   return (
     <div className="index-snapshot">
@@ -125,7 +114,15 @@ export function IndexCards({
       </div>
 
       <div key={activeMarket} className="motion-tab-panel">
-        {!visibleItems.length ? (
+        {loading ? (
+          <div className="grid grid-3">
+            {Array.from({ length: 3 }, (_, i) => (
+              <div key={i} className="skeleton-card" />
+            ))}
+          </div>
+        ) : error ? (
+          <div className="helper">{`指数快照加载失败：${error}`}</div>
+        ) : !visibleItems.length ? (
           <div className="helper">
             暂无{activeMarket === "A" ? "A股" : "港股"}指数数据。
           </div>

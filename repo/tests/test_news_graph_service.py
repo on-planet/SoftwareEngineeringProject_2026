@@ -49,7 +49,7 @@ class NewsGraphServiceTests(unittest.TestCase):
                 symbol="000001.SH",
                 type="earnings",
                 title="平安银行发布业绩预告",
-                date=date(2026, 3, 24),
+                date=date.today(),
                 link="https://example.com/event",
                 source="exchange",
             )
@@ -62,7 +62,7 @@ class NewsGraphServiceTests(unittest.TestCase):
                 symbol="000001.SH",
                 title="平安银行回购计划带动银行板块走强",
                 sentiment="positive",
-                published_at=datetime(2026, 3, 24, 9, 0, 0),
+                published_at=datetime.combine(date.today(), datetime.min.time()),
                 source="Example Feed",
                 related_symbols=["000001.SH", "600036.SH"],
                 related_sectors=["金融"],
@@ -81,7 +81,7 @@ class NewsGraphServiceTests(unittest.TestCase):
                 symbol="ALL",
                 title="银行股受政策支持集体上涨",
                 sentiment="positive",
-                published_at=datetime(2026, 3, 25, 10, 0, 0),
+                published_at=datetime.combine(date.today(), datetime.min.time()),
                 source="Example Feed",
                 related_symbols=["000001.SH", "600036.SH"],
                 related_sectors=["金融"],
@@ -114,6 +114,71 @@ class NewsGraphServiceTests(unittest.TestCase):
         self.assertGreaterEqual(len(payload.related_news), 2)
         self.assertEqual(payload.related_events[0].id, 101)
 
+    def test_build_stock_news_graph_normalizes_hk_symbol_aliases(self) -> None:
+        self.db.add(Stock(symbol="00700.HK", name="Tencent", market="HK", sector="Technology"))
+        self.db.commit()
+        create_news(
+            self.db,
+            NewsCreate(
+                symbol="00700.HK",
+                title="Tencent cloud demand improves",
+                sentiment="positive",
+                published_at=datetime.combine(date.today(), datetime.min.time()),
+                source="Example Feed",
+                related_symbols=["00700.HK"],
+                related_sectors=["Technology"],
+                event_type="earnings",
+                event_tags=["earnings"],
+                themes=["cloud"],
+                impact_direction="positive",
+                nlp_confidence=0.75,
+                nlp_version="rule-nlp-v1",
+                keywords=["cloud"],
+            ),
+        )
+
+        with patch("app.services.news_graph_service.chat_completion", return_value=None):
+            payload = build_stock_news_graph(self.db, "0700.HK", days=7, limit=10)
+
+        self.assertEqual(payload.center_id, "00700.HK")
+        self.assertTrue(any(item.symbol == "00700.HK" for item in payload.related_news))
+
+    def test_build_stock_news_graph_expands_index_constituents(self) -> None:
+        self.db.add(Stock(symbol="430047.BJ", name="BJ Sample", market="A", sector="Technology"))
+        self.db.commit()
+        create_news(
+            self.db,
+            NewsCreate(
+                symbol="430047.BJ",
+                title="BJ Sample wins new orders",
+                sentiment="positive",
+                published_at=datetime.combine(date.today(), datetime.min.time()),
+                source="Example Feed",
+                related_symbols=["430047.BJ"],
+                related_sectors=["Technology"],
+                event_type="orders",
+                event_tags=["orders"],
+                themes=["growth"],
+                impact_direction="positive",
+                nlp_confidence=0.75,
+                nlp_version="rule-nlp-v1",
+                keywords=["orders"],
+            ),
+        )
+
+        with patch("app.services.news_graph_service.chat_completion", return_value=None), patch(
+            "app.services.news_graph_service._supported_index_spec",
+            return_value={"symbol": "899050.BJ", "name": "BSE 50", "market": "A"},
+        ), patch(
+            "app.services.news_graph_service._index_constituent_rows",
+            return_value=[{"symbol": "430047.BJ"}],
+        ):
+            payload = build_stock_news_graph(self.db, "北证50", days=7, limit=10)
+
+        self.assertEqual(payload.center_type, "index")
+        self.assertEqual(payload.center_id, "899050.BJ")
+        self.assertTrue(any(item.symbol == "430047.BJ" for item in payload.related_news))
+
     def test_build_news_focus_graph_uses_llm_when_available(self) -> None:
         with patch(
             "app.services.news_graph_service.chat_completion",
@@ -136,7 +201,7 @@ class NewsGraphServiceTests(unittest.TestCase):
                 symbol="ALL",
                 title="Sector only filler",
                 sentiment="neutral",
-                published_at=datetime(2026, 3, 26, 9, 0, 0),
+                published_at=datetime.combine(date.today(), datetime.min.time()),
                 source="Example Feed",
                 related_symbols=["601398.SH"],
                 related_sectors=["閲戣瀺"],
@@ -164,7 +229,7 @@ class NewsGraphServiceTests(unittest.TestCase):
                 symbol="600036.SH",
                 title="Second symbol overlap",
                 sentiment="positive",
-                published_at=datetime(2026, 3, 26, 11, 0, 0),
+                published_at=datetime.combine(date.today(), datetime.min.time()),
                 source="Example Feed",
                 related_symbols=["600036.SH"],
                 related_sectors=["Brokerage"],
@@ -183,7 +248,7 @@ class NewsGraphServiceTests(unittest.TestCase):
                 symbol="ALL",
                 title="Weak sector overlap",
                 sentiment="neutral",
-                published_at=datetime(2026, 3, 26, 10, 30, 0),
+                published_at=datetime.combine(date.today(), datetime.min.time()),
                 source="Example Feed",
                 related_symbols=["601398.SH"],
                 related_sectors=["閲戣瀺"],

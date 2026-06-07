@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Iterable, List
+from typing import List
 import os
 import re
 
@@ -12,10 +12,16 @@ from etl.utils.normalize import ensure_required
 LOGGER = get_logger(__name__)
 
 try:
-    import pysnowball as ball  # type: ignore
-except Exception as exc:  # pragma: no cover - runtime env dependent
-    ball = None
-    LOGGER.warning("pysnowball import failed: %s", exc)
+    import akshare as ak  # type: ignore
+except Exception as exc:  # pragma: no cover
+    ak = None
+    LOGGER.warning("akshare import failed in fund client: %s", exc)
+
+try:
+    import pandas as pd  # type: ignore
+except Exception as exc:  # pragma: no cover
+    pd = None
+    LOGGER.warning("pandas import failed in fund client: %s", exc)
 
 
 def _safe_float(value) -> float | None:
@@ -23,15 +29,11 @@ def _safe_float(value) -> float | None:
         return None
     if isinstance(value, bool):
         return None
-    if isinstance(value, str):
-        text = value.strip().replace(",", "")
-        if not text:
-            return None
-        if text.endswith("%"):
-            text = text[:-1]
-        value = text
+    text = str(value).strip().replace(",", "")
+    if not text:
+        return None
     try:
-        number = float(value)
+        number = float(text)
     except Exception:
         return None
     if number != number:
@@ -39,92 +41,48 @@ def _safe_float(value) -> float | None:
     return number
 
 
-def _to_date(value, fallback: date) -> date:
-    if value is None:
-        return fallback
-    if isinstance(value, date) and not isinstance(value, datetime):
-        return value
-    if isinstance(value, datetime):
-        return value.date()
-    text = str(value).strip()
-    if not text:
-        return fallback
-    for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%Y%m%d"):
-        try:
-            return datetime.strptime(text[:10], fmt).date()
-        except Exception:
-            continue
-    return fallback
-
-
-def _pick(record: dict, keys: Iterable[str]):
-    for key in keys:
-        if key in record and record.get(key) not in (None, ""):
-            return record.get(key)
-    return None
-
-
-def _extract_dict_rows(payload) -> list[dict]:
-    rows: list[dict] = []
-    stack = [payload]
-    while stack:
-        node = stack.pop()
-        if isinstance(node, dict):
-            rows.append(node)
-            stack.extend(node.values())
-            continue
-        if isinstance(node, list):
-            stack.extend(node)
-    # Prefer flattened child rows over root dicts.
-    return [row for row in rows if any(isinstance(v, (str, int, float)) for v in row.values())]
-
-
 def _normalize_cn_fund_code(text: str) -> str:
     digits = re.sub(r"\D", "", text)
     return digits[:6] if len(digits) >= 6 else text.strip()
+
+
+def _quarter_for_date(as_of: date) -> str:
+    quarter = (as_of.month - 1) // 3 + 1
+    return f"{as_of.year}{quarter}"
 
 
 def get_fund_codes() -> list[str]:
     raw = os.getenv("SNOWBALL_FUND_CODES", "").strip()
     if raw:
         return [_normalize_cn_fund_code(item) for item in raw.split(",") if item.strip()]
-    # A small default CN fund set to keep pipeline runnable.
     return ["161725", "110022", "001186"]
 
 
 def get_fund_holdings(as_of: date) -> List[dict]:
-    if ball is None:
-        LOGGER.warning("pysnowball unavailable, skip fund holdings")
+    if ak is None or pd is None:
+        LOGGER.warning("akshare unavailable, skip fund holdings")
         return []
 
+    quarter = _quarter_for_date(as_of)
     rows: list[dict] = []
     for fund_code in get_fund_codes():
         try:
-            payload = ball.fund_asset(fund_code)
+            df = ak.fund_portfolio_hold_em(symbol=fund_code, date=quarter)
         except Exception as exc:
-            LOGGER.warning("snowball fund_asset failed [%s]: %s", fund_code, exc)
+            LOGGER.warning("akshare fund_portfolio_hold_em failed [%s]: %s", fund_code, exc)
+            continue
+        if df is None or getattr(df, "empty", True):
             continue
 
-        for record in _extract_dict_rows(payload):
-            raw_symbol = _pick(
-                record,
-                (
-                    "symbol",
-                    "stock_symbol",
-                    "stock_code",
-                    "code",
-                    "ticker",
-                    "stock",
-                    "asset_code",
-                ),
-            )
+        for record in df.to_dict(orient="records"):
+            raw_symbol = record.get("股票代码") or record.get("code") or record.get("symbol")
             if raw_symbol in (None, ""):
                 continue
             symbol = normalize_symbol(str(raw_symbol))
-            if not symbol.endswith((".SH", ".SZ", ".HK", ".US")):
+            if not symbol.endswith((".SH", ".SZ", ".BJ", ".HK", ".US")):
                 continue
 
-            weight = _safe_float(_pick(record, ("weight", "ratio", "proportion", "percent", "position_ratio")))
+            weight = _safe_float(record.get("占净值比例") or record.get("weight") or record.get("proportion"))
             if weight is not None and weight > 1:
                 weight = weight / 100.0
 
@@ -132,12 +90,9 @@ def get_fund_holdings(as_of: date) -> List[dict]:
                 {
                     "fund_code": fund_code,
                     "symbol": symbol,
-                    "report_date": _to_date(
-                        _pick(record, ("report_date", "date", "reportDate", "end_date", "publish_date")),
-                        as_of,
-                    ),
-                    "shares": _safe_float(_pick(record, ("shares", "volume", "amount", "position_shares"))),
-                    "market_value": _safe_float(_pick(record, ("market_value", "value", "marketValue", "position_value"))),
+                    "report_date": as_of,
+                    "shares": _safe_float(record.get("持股数") or record.get("shares") or record.get("volume")),
+                    "market_value": _safe_float(record.get("持仓市值") or record.get("market_value") or record.get("value")),
                     "weight": weight,
                 }
             )

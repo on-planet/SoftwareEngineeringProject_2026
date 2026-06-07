@@ -31,17 +31,38 @@ if "pydantic_settings" not in sys.modules:
     fake_module.BaseSettings = BaseSettings
     sys.modules["pydantic_settings"] = fake_module
 
-from app.services.stock_service import get_stock_compare_batch
+from app.services.stock_service import get_stock_compare_batch, list_stocks
 
 
 class StockServiceCompareBatchTests(unittest.TestCase):
+    def test_list_stocks_uses_sql_only_market_listing(self) -> None:
+        with patch(
+            "app.services.stock_service.list_live_stocks",
+            return_value=([{"symbol": "600000.SH", "name": "SPDB", "market": "A", "sector": "Banks"}], 1),
+        ) as list_mock:
+            items, total = list_stocks(market="A", keyword="bank", sector="bank", limit=10, offset=0, sort="asc")
+
+        self.assertEqual(total, 1)
+        self.assertEqual(items[0]["symbol"], "600000.SH")
+        list_mock.assert_called_once_with(
+            market="A",
+            keyword="bank",
+            sector="bank",
+            limit=10,
+            offset=0,
+            sort="asc",
+            sql_only=True,
+        )
+
     def test_compare_batch_uses_profile_service_for_missing_quote(self) -> None:
         db = MagicMock()
         stock = SimpleNamespace(symbol="000001.SZ", name="PingAn", market="A", sector="Financials")
         snapshot = None
         db.query.return_value.outerjoin.return_value.filter.return_value.all.return_value = [(stock, snapshot)]
 
-        with patch(
+        with patch("app.services.stock_service.get_json", return_value=None), patch(
+            "app.services.stock_service.set_json",
+        ), patch(
             "app.services.stock_service.get_stock_overview_payload",
             return_value={
                 "symbol": "000001.SZ",
@@ -61,7 +82,9 @@ class StockServiceCompareBatchTests(unittest.TestCase):
         db = MagicMock()
         db.query.return_value.outerjoin.return_value.filter.return_value.all.return_value = []
 
-        with patch(
+        with patch("app.services.stock_service.get_json", return_value=None), patch(
+            "app.services.stock_service.set_json",
+        ), patch(
             "app.services.stock_service.get_stock_overview_payload",
             return_value={
                 "symbol": "00700.HK",

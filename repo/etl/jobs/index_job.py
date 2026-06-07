@@ -4,7 +4,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
 import os
 
-from etl.fetchers.market_client import get_daily_prices, get_index_daily, get_stock_basic
+from etl.providers import get_provider
+
+_provider = get_provider()
 from etl.loaders.pg_loader import list_daily_price_rows, upsert_daily_prices, upsert_indices, upsert_stocks
 from etl.loaders.redis_cache import cache_risk
 from etl.transformers.heatmap import normalize_daily_rows
@@ -31,7 +33,7 @@ def _fetch_missing_index_daily_prices(symbols: list[str], as_of: date) -> list[d
 
     if batch_workers <= 1 or len(batches) == 1:
         for batch in batches:
-            rows.extend(get_daily_prices(batch, as_of, workers=batch_symbol_workers))
+            rows.extend(_provider.market.get_daily_prices(batch, as_of, workers=batch_symbol_workers))
         return rows
 
     LOGGER.info(
@@ -44,7 +46,7 @@ def _fetch_missing_index_daily_prices(symbols: list[str], as_of: date) -> list[d
     )
     with ThreadPoolExecutor(max_workers=min(batch_workers, len(batches))) as executor:
         future_map = {
-            executor.submit(get_daily_prices, batch, as_of, workers=batch_symbol_workers): idx
+            executor.submit(_provider.market.get_daily_prices, batch, as_of, workers=batch_symbol_workers): idx
             for idx, batch in enumerate(batches, start=1)
         }
         for done, future in enumerate(as_completed(future_map), start=1):
@@ -84,13 +86,13 @@ def _load_index_daily_rows(symbols: list[str], as_of: date) -> list[dict]:
 
 def run_index_job(start: date, end: date) -> int:
     """Run index job: fetch indices and store into DB (incremental)."""
-    stock_rows = get_stock_basic()
+    stock_rows = _provider.market.get_stock_basic()
     upsert_stocks(stock_rows)
     price_history: dict[str, list[float]] = {}
 
     total = 0
     for as_of in date_range(start, end):
-        index_rows = get_index_daily(as_of)
+        index_rows = _provider.market.get_index_daily(as_of)
         if not index_rows:
             LOGGER.info("index_job empty for %s", as_of)
             continue

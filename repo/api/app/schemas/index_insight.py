@@ -41,9 +41,9 @@ class IndexInsightSummaryOut(BaseModel):
     as_of: dt.date | None = None
     constituent_total: int
     priced_total: int
-    weight_coverage: float
-    top5_weight: float
-    top10_weight: float
+    weight_coverage: float | None = None
+    top5_weight: float | None = None
+    top10_weight: float | None = None
     rising_count: int
     falling_count: int
     flat_count: int

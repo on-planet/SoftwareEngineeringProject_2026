@@ -51,6 +51,7 @@ export function IndexDecompositionPanel() {
   const [response, setResponse] = useState<IndexInsightResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [liveRefreshing, setLiveRefreshing] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -80,6 +81,21 @@ export function IndexDecompositionPanel() {
     };
   }, [symbol]);
 
+  const refreshLiveInsight = () => {
+    setLiveRefreshing(true);
+    getIndexInsights(symbol, { prefer_live: true, refresh_key: Date.now() })
+      .then((payload) => {
+        setResponse(payload);
+        setError(null);
+      })
+      .catch((err: Error) => {
+        setError(err.message || "指数实时行情加载失败");
+      })
+      .finally(() => {
+        setLiveRefreshing(false);
+      });
+  };
+
   const summary = response?.summary ?? null;
   const displayName = summary?.name || INDEX_NAME_MAP[symbol] || symbol;
   const sectorLeaders = useMemo(() => (response?.sector_breakdown ?? []).slice(0, 8), [response]);
@@ -96,6 +112,14 @@ export function IndexDecompositionPanel() {
             聚合权重前十、行业集中度和涨跌贡献排名。A 股贡献度在缺少官方指标时按“权重 × 涨跌幅”估算。
           </div>
         </div>
+        <button
+          type="button"
+          className="stock-page-button"
+          onClick={refreshLiveInsight}
+          disabled={loading || liveRefreshing}
+        >
+          {liveRefreshing ? "刷新实时行情中..." : "刷新实时行情"}
+        </button>
         <Link href={`/indices/${encodeURIComponent(symbol)}`} className="badge-link">
           查看完整成分股
         </Link>

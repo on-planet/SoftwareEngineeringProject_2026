@@ -8,11 +8,13 @@ from sqlalchemy.orm import Session
 from app.core.cache import get_json, set_json
 from app.services.cache_utils import build_cache_key
 from app.services.index_constituent_service import list_index_constituents
-from etl.fetchers.snowball_client import get_stock_quotes, index_market, index_name, normalize_index_symbol
+from etl.providers import get_provider
+
+_provider = get_provider()
 from etl.utils.sector_taxonomy import UNKNOWN_SECTOR, normalize_sector_name
 
 INDEX_INSIGHT_CACHE_TTL = 300
-INDEX_INSIGHT_CACHE_VERSION = "v1"
+INDEX_INSIGHT_CACHE_VERSION = "v3"
 INDEX_INSIGHT_MAX_CONSTITUENTS = 1000
 
 
@@ -33,7 +35,13 @@ def _constituent_sort_key(item: dict, field: str, reverse: bool) -> tuple:
     return (0, float(value))
 
 
-def _build_constituent_snapshot(db: Session, symbol: str, as_of: date | None = None) -> list[dict]:
+def _build_constituent_snapshot(
+    db: Session,
+    symbol: str,
+    as_of: date | None = None,
+    *,
+    prefer_live: bool = False,
+) -> list[dict]:
     items, _ = list_index_constituents(
         db,
         symbol,
@@ -44,7 +52,11 @@ def _build_constituent_snapshot(db: Session, symbol: str, as_of: date | None = N
     if not items:
         return []
 
-    quotes = get_stock_quotes([str(item.get("symbol") or "") for item in items if item.get("symbol")])
+    quotes = (
+        _provider.market.get_stock_quotes([str(item.get("symbol") or "") for item in items if item.get("symbol")])
+        if prefer_live
+        else []
+    )
     by_symbol = {str(item.get("symbol")): item for item in quotes if isinstance(item, dict) and item.get("symbol")}
 
     output: list[dict] = []
@@ -70,20 +82,29 @@ def _build_constituent_snapshot(db: Session, symbol: str, as_of: date | None = N
     return output
 
 
-def get_index_insight(db: Session, symbol: str, as_of: date | None = None) -> dict:
-    canonical = normalize_index_symbol(symbol)
-    cache_key = build_cache_key("index:insight", version=INDEX_INSIGHT_CACHE_VERSION, symbol=canonical, as_of=as_of)
-    cached = get_json(cache_key)
+def get_index_insight(db: Session, symbol: str, as_of: date | None = None, *, prefer_live: bool = False) -> dict:
+    canonical = _provider.market.normalize_index_symbol(symbol)
+    cache_key = build_cache_key(
+        "index:insight",
+        version=INDEX_INSIGHT_CACHE_VERSION,
+        symbol=canonical,
+        as_of=as_of,
+        prefer_live=prefer_live,
+    )
+    cached = None if prefer_live else get_json(cache_key)
     if isinstance(cached, dict) and cached.get("summary"):
         return cached
 
-    constituents = _build_constituent_snapshot(db, canonical, as_of=as_of)
+    constituents = _build_constituent_snapshot(db, canonical, as_of=as_of, prefer_live=prefer_live)
     as_of_value = None
     if constituents:
         dates = [item.get("date") for item in constituents if item.get("date") is not None]
         as_of_value = max(dates) if dates else as_of
 
-    weights = sorted((_coerce_float(item.get("weight")) or 0.0 for item in constituents), reverse=True)
+    weights = sorted(
+        [weight for weight in (_coerce_float(item.get("weight")) for item in constituents) if weight is not None],
+        reverse=True,
+    )
     priced_total = 0
     rising_count = 0
     falling_count = 0
@@ -161,14 +182,14 @@ def get_index_insight(db: Session, symbol: str, as_of: date | None = None) -> di
     payload = {
         "summary": {
             "symbol": canonical,
-            "name": index_name(canonical),
-            "market": index_market(canonical),
+            "name": _provider.market.index_name(canonical),
+            "market": _provider.market.index_market(canonical),
             "as_of": as_of_value,
             "constituent_total": len(constituents),
             "priced_total": priced_total,
-            "weight_coverage": sum(weights),
-            "top5_weight": sum(weights[:5]),
-            "top10_weight": sum(weights[:10]),
+            "weight_coverage": sum(weights) if weights else None,
+            "top5_weight": sum(weights[:5]) if weights else None,
+            "top10_weight": sum(weights[:10]) if weights else None,
             "rising_count": rising_count,
             "falling_count": falling_count,
             "flat_count": flat_count,
@@ -179,7 +200,6 @@ def get_index_insight(db: Session, symbol: str, as_of: date | None = None) -> di
         "sector_breakdown": sector_breakdown[:12],
         "constituents": constituents,
     }
-    if constituents:
+    if constituents and not prefer_live:
         set_json(cache_key, payload, ttl=INDEX_INSIGHT_CACHE_TTL)
     return payload
-

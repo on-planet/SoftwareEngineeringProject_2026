@@ -12,8 +12,9 @@ from app.schemas.macro import MacroCreate, MacroUpdate
 from app.schemas.macro_series import MacroPoint
 from app.services.cache_utils import build_cache_key, item_to_dict, items_to_dicts
 from app.utils.query_params import SortOrder
-from etl.fetchers.akshare_macro_client import fetch_akshare_series_rows, is_akshare_macro_key
-from etl.fetchers.worldbank_client import get_indicator_series
+from etl.providers import get_provider
+
+_provider = get_provider()
 from etl.transformers.macro import normalize_macro_rows
 
 MACRO_QUERY_CACHE_TTL = 900
@@ -49,6 +50,23 @@ WORLD_BANK_COUNTRIES: set[str] = {
     "ARG",
     "EUU",
 }
+
+CORE_AKSHARE_MACRO_KEYS: tuple[str, ...] = (
+    "AK_CHN_GDP_YOY:CHN",
+    "AK_CHN_CPI_YOY:CHN",
+    "AK_CHN_PPI_YOY:CHN",
+    "AK_CHN_M2_YOY:CHN",
+    "AK_CHN_PMI:CHN",
+    "AK_CHN_CAIXIN_PMI:CHN",
+    "AK_CHN_URBAN_UNEMP:CHN",
+    "AK_CHN_LPR_LPR_1Y:CHN",
+    "AK_CHN_LPR_LPR_5Y:CHN",
+    "AK_CHN_SOCIAL_FINANCING_TOTAL:CHN",
+    "AK_USA_CPI_YOY_ACTUAL:USA",
+    "AK_USA_UNEMP_ACTUAL:USA",
+    "AK_USA_GDP_ACTUAL:USA",
+    "AK_EUR_CPI_YOY_ACTUAL:EUR",
+)
 
 
 def list_macro(db: Session, start: date | None = None, end: date | None = None, sort: SortOrder = "desc"):
@@ -168,6 +186,25 @@ def list_macro_snapshot(db: Session, as_of: date | None = None, sort: SortOrder 
         rows = query.order_by(Macro.date.desc(), Macro.key.asc()).all()
 
     items = items_to_dicts(rows)
+    if not items:
+        fetched_rows: list[dict] = []
+        for key in CORE_AKSHARE_MACRO_KEYS:
+            fetched_rows.extend(_provider.macro.fetch_akshare_series_rows(key, end=as_of))
+        if fetched_rows:
+            _upsert_macro_rows(db, fetched_rows)
+            latest_by_key: dict[str, dict] = {}
+            for row in fetched_rows:
+                row_key = str(row.get("key") or "")
+                row_date = row.get("date")
+                if not row_key or not isinstance(row_date, date):
+                    continue
+                if as_of is not None and row_date > as_of:
+                    continue
+                current = latest_by_key.get(row_key)
+                if current is None or row_date > current["date"]:
+                    latest_by_key[row_key] = row
+            items = list(latest_by_key.values())
+            items.sort(key=lambda item: (item.get("date") or date.min, str(item.get("key") or "")), reverse=(sort != "asc"))
     _cache_macro_snapshot(items, as_of=as_of)
     return items
 
@@ -195,12 +232,20 @@ def _fetch_world_bank_series_rows(key: str, start: date | None = None, end: date
     if fetch_start > fetch_end:
         return []
 
-    rows = get_indicator_series(country, WORLD_BANK_INDICATORS[indicator], fetch_start, fetch_end)
+    rows = _provider.macro.get_indicator_series(country, WORLD_BANK_INDICATORS[indicator], fetch_start, fetch_end)
     if not rows:
         return []
     for row in rows:
         row["key"] = f"{indicator}:{country}"
     return normalize_macro_rows(rows)
+
+
+def is_akshare_macro_key(key: str) -> bool:
+    return _provider.macro.is_akshare_macro_key(key)
+
+
+def fetch_akshare_series_rows(key: str, start: date | None = None, end: date | None = None) -> list[dict]:
+    return _provider.macro.fetch_akshare_series_rows(key, start=start, end=end)
 
 
 def _fetch_remote_macro_series_rows(key: str, start: date | None = None, end: date | None = None) -> list[dict]:
@@ -214,8 +259,15 @@ def _fetch_remote_macro_series_rows(key: str, start: date | None = None, end: da
 def _upsert_macro_rows(db: Session, rows: list[dict]) -> None:
     if not rows:
         return
+    deduped: dict[tuple[str, date], dict] = {}
+    for row in rows:
+        row_key = row.get("key")
+        row_date = row.get("date")
+        if not row_key or not isinstance(row_date, date):
+            continue
+        deduped[(str(row_key), row_date)] = row
     try:
-        for row in rows:
+        for row in deduped.values():
             row_key = row.get("key")
             row_date = row.get("date")
             if not row_key or not isinstance(row_date, date):
@@ -282,7 +334,7 @@ def get_macro_series(db: Session, key: str, start: date | None = None, end: date
     cached = get_json(cache_key)
     if isinstance(cached, list):
         items = _cached_rows_to_points(cached)
-        if items or (_parse_world_bank_series_key(key) is None and not is_akshare_macro_key(key)):
+        if items or (_parse_world_bank_series_key(key) is None and not _provider.macro.is_akshare_macro_key(key)):
             return items
 
     query = db.query(Macro).filter(Macro.key == key)

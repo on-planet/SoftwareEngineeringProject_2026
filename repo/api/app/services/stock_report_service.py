@@ -10,7 +10,9 @@ from app.models.stock_report_disclosure import StockReportDisclosure
 from app.services.cache_utils import item_to_dict
 from app.utils.query_params import SortOrder
 from app.utils.symbols import normalize_symbol
-from etl.fetchers.akshare_reference_client import fetch_stock_report_disclosure_rows
+from etl.providers import get_provider
+
+_provider = get_provider()
 
 
 def _parse_payload(raw_json: str | None) -> dict | None:
@@ -71,7 +73,7 @@ def _ensure_rows(db: Session, market: str, period: str | None, refresh: bool) ->
     for candidate in candidates:
         if not candidate:
             continue
-        rows = fetch_stock_report_disclosure_rows(market, candidate)
+        rows = _provider.reference.fetch_stock_report_disclosure_rows(market, candidate)
         if rows:
             _replace_partition(db, market, candidate, rows)
             return candidate

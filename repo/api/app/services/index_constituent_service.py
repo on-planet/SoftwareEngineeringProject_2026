@@ -7,8 +7,10 @@ from sqlalchemy.orm import Session
 
 from app.core.logger import get_logger
 from app.services.live_index_service import list_live_index_constituents
+from etl.providers import get_provider
 
 LOGGER = get_logger("api.index_constituents")
+_provider = get_provider()
 
 _LATEST_DATE_SQL = text(
     """
@@ -21,7 +23,7 @@ _LATEST_DATE_SQL = text(
 
 _LIST_ROWS_SQL = text(
     """
-    SELECT ic.index_symbol, ic.symbol, ic.date, ic.weight, s.name, s.market
+    SELECT ic.index_symbol, ic.symbol, ic.date, ic.weight, s.name, s.market, s.sector
     FROM index_constituents AS ic
     LEFT JOIN stocks AS s ON s.symbol = ic.symbol
     WHERE ic.index_symbol = :symbol
@@ -95,8 +97,12 @@ def list_index_constituents(
     as_of: date | None = None,
     limit: int = 200,
     offset: int = 0,
+    allow_live_fallback: bool = False,
 ):
-    items, total = list_live_index_constituents(index_symbol, as_of=as_of, limit=limit, offset=offset)
+    canonical_symbol = _provider.market.normalize_index_symbol(index_symbol)
+    items, total = _list_persisted_index_constituents(db, canonical_symbol, as_of, limit, offset)
     if total > 0:
         return items, total
-    return _list_persisted_index_constituents(db, index_symbol, as_of, limit, offset)
+    if allow_live_fallback:
+        return list_live_index_constituents(canonical_symbol, as_of=as_of, limit=limit, offset=offset)
+    return [], 0

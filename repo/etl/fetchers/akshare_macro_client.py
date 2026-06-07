@@ -387,8 +387,8 @@ def _call_akshare_function(spec: AkShareMacroSpec) -> pd.DataFrame:
 def _flatten_china_base(spec: AkShareMacroSpec, df: pd.DataFrame) -> list[dict]:
     rows: list[dict] = []
     for _, record in df.iterrows():
-        row_date = _to_date(record.iloc[0] if len(record) > 0 else None)
-        value = _to_float(record.iloc[-1] if len(record) > 0 else None)
+        row_date = _to_date(record.get("日期") if "日期" in record.index else record.iloc[0] if len(record) > 0 else None)
+        value = _to_float(record.get("今值") if "今值" in record.index else record.iloc[-1] if len(record) > 0 else None)
         if row_date is None or value is None:
             continue
         rows.append({"key": f"{spec.series_prefix}:{spec.region}", "date": row_date, "value": value})

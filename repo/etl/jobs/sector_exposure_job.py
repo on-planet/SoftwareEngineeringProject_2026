@@ -4,14 +4,16 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
 import os
 
-from etl.fetchers.market_client import get_daily_prices, get_stock_basic, market_data_session
-from etl.fetchers.snowball_client import get_stock_quote_detail
+from etl.providers import get_provider
+
+_provider = get_provider()
 from etl.loaders.pg_loader import (
     list_daily_price_rows,
     list_stock_valuation_rows,
     upsert_daily_prices,
     upsert_sector_exposure,
     upsert_sector_exposure_summary,
+    upsert_stocks,
     upsert_stock_valuation_snapshots,
 )
 from etl.loaders.redis_cache import cache_heatmap, cache_sector_exposure
@@ -24,6 +26,18 @@ from etl.utils.sector_taxonomy import normalize_sector_name
 
 LOGGER = get_logger(__name__)
 SECTOR_EXPOSURE_BASIS = "market_value"
+
+
+def get_stock_basic(*, force_refresh: bool = False) -> list[dict]:
+    return _provider.market.get_stock_basic(force_refresh=force_refresh)
+
+
+def get_daily_prices(symbols: list[str], as_of: date, *, workers: int | None = None) -> list[dict]:
+    return _provider.market.get_daily_prices(symbols, as_of, workers=workers)
+
+
+def market_data_session():
+    return _provider.market.session()
 
 
 def _chunk_symbols(symbols: list[str], chunk_size: int) -> list[list[str]]:
@@ -121,7 +135,7 @@ def _fetch_missing_valuation_snapshots(symbols: list[str], as_of: date) -> list[
     LOGGER.info("sector_exposure_job fetching live valuation snapshots workers=%s count=%s date=%s", workers, len(symbols), as_of)
 
     def _fetch(symbol: str) -> dict | None:
-        detail = get_stock_quote_detail(symbol)
+        detail = _provider.market.get_stock_quote_detail(symbol)
         if not detail:
             return None
         market_cap = detail.get("market_cap")
@@ -186,6 +200,8 @@ def run_sector_exposure_job(start: date, end: date) -> int:
     total = 0
     LOGGER.info("sector_exposure_job loading stock basics")
     stock_rows = get_stock_basic(force_refresh=True)
+    if stock_rows:
+        upsert_stocks(stock_rows)
     meta = {row.get("symbol"): row for row in stock_rows}
     symbols = [row.get("symbol") for row in stock_rows if row.get("symbol")]
     symbol_set = set(symbols)

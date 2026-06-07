@@ -69,7 +69,7 @@ class ReferenceDataServiceTests(unittest.TestCase):
             }
         ]
 
-        with patch.object(bond_market_service, "fetch_bond_market_quote_rows", return_value=rows) as fetch_mock:
+        with patch.object(bond_market_service._provider.reference, "fetch_bond_market_quote_rows", return_value=rows) as fetch_mock:
             items, total = bond_market_service.list_bond_market_quotes(self.db)
 
         self.assertEqual(total, 1)
@@ -95,7 +95,7 @@ class ReferenceDataServiceTests(unittest.TestCase):
             }
         ]
 
-        with patch.object(stock_institute_service, "fetch_stock_institute_hold_rows", return_value=rows) as fetch_mock:
+        with patch.object(stock_institute_service._provider.reference, "fetch_stock_institute_hold_rows", return_value=rows) as fetch_mock:
             items, total, target_quarter = stock_institute_service.list_stock_institute_holds(
                 self.db,
                 quarter="20251",
@@ -121,11 +121,11 @@ class ReferenceDataServiceTests(unittest.TestCase):
                 "actual_disclosure": date(2026, 3, 18),
                 "as_of": datetime(2026, 3, 24, 20, 0, 0),
                 "source": "stock_report_disclosure",
-                "raw_json": "{\"股票代码\": \"000001\"}",
+                "raw_json": '{"股票代码": "000001"}',
             }
         ]
 
-        with patch.object(stock_report_service, "fetch_stock_report_disclosure_rows", return_value=rows) as fetch_mock:
+        with patch.object(stock_report_service._provider.reference, "fetch_stock_report_disclosure_rows", return_value=rows) as fetch_mock:
             items, total, target_period = stock_report_service.list_stock_report_disclosures(
                 self.db,
                 market="沪深京",

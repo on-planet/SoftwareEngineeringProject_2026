@@ -11,12 +11,9 @@ from app.models.stock_institute_recommend import StockInstituteRecommend, StockI
 from app.services.cache_utils import item_to_dict
 from app.utils.query_params import SortOrder
 from app.utils.symbols import normalize_symbol
-from etl.fetchers.akshare_reference_client import (
-    fetch_stock_institute_hold_detail_rows,
-    fetch_stock_institute_hold_rows,
-    fetch_stock_institute_recommend_detail_rows,
-    fetch_stock_institute_recommend_rows,
-)
+from etl.providers import get_provider
+
+_provider = get_provider()
 
 
 def _parse_payload(raw_json: str | None) -> dict | None:
@@ -71,7 +68,7 @@ def _ensure_hold_rows(db: Session, quarter: str | None, refresh: bool) -> str | 
     for candidate in candidates:
         if not candidate:
             continue
-        rows = fetch_stock_institute_hold_rows(candidate)
+        rows = _provider.reference.fetch_stock_institute_hold_rows(candidate)
         if rows:
             _replace_partition(
                 db,
@@ -103,7 +100,7 @@ def _ensure_hold_detail_rows(db: Session, symbol: str, quarter: str | None, refr
     for candidate in candidates:
         if not candidate:
             continue
-        rows = fetch_stock_institute_hold_detail_rows(normalized, candidate)
+        rows = _provider.reference.fetch_stock_institute_hold_detail_rows(normalized, candidate)
         if rows:
             _replace_partition(
                 db,
@@ -122,7 +119,7 @@ def _ensure_recommend_rows(db: Session, category: str, refresh: bool) -> None:
     existing = db.query(StockInstituteRecommend.id).filter(StockInstituteRecommend.category == category).first()
     if existing is not None and not refresh:
         return
-    rows = fetch_stock_institute_recommend_rows(category)
+    rows = _provider.reference.fetch_stock_institute_recommend_rows(category)
     if rows:
         _replace_partition(
             db,
@@ -137,7 +134,7 @@ def _ensure_recommend_detail_rows(db: Session, symbol: str, refresh: bool) -> st
     existing = db.query(StockInstituteRecommendDetail.id).filter(StockInstituteRecommendDetail.symbol == normalized).first()
     if existing is not None and not refresh:
         return normalized
-    rows = fetch_stock_institute_recommend_detail_rows(normalized)
+    rows = _provider.reference.fetch_stock_institute_recommend_detail_rows(normalized)
     if rows:
         _replace_partition(
             db,

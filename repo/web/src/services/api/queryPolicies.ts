@@ -41,7 +41,7 @@ export function buildIndicesQueryKey(asOf?: string) {
 }
 
 export function getIndicesQueryOptions(cacheKey: string): ApiQueryOptions {
-  return buildPersistedQueryOptions(cacheKey, "indices", ONE_MINUTE_MS, FIVE_MINUTES_MS);
+  return buildPersistedQueryOptions(cacheKey, "indices", FIVE_MINUTES_MS, TEN_MINUTES_MS);
 }
 
 export function buildMacroSnapshotQueryKey() {

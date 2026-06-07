@@ -16,7 +16,7 @@ router = APIRouter(tags=["index"])
 def get_index_insight_route(
     symbol: str,
     as_of: date | None = Query(None),
+    prefer_live: bool = Query(False),
     db: Session = Depends(get_db),
 ):
-    return get_index_insight(db, symbol, as_of=as_of)
-
+    return get_index_insight(db, symbol, as_of=as_of, prefer_live=prefer_live)

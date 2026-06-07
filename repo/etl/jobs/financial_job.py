@@ -5,7 +5,9 @@ from datetime import date, timedelta
 import os
 import time
 
-from etl.fetchers.market_client import get_stock_basic, get_financials
+from etl.providers import get_provider
+
+_provider = get_provider()
 from etl.loaders.pg_loader import get_latest_financial_periods, upsert_financials, upsert_fundamental_score
 from etl.transformers.fundamentals import (
     build_fundamental_score_row,
@@ -24,7 +26,7 @@ FINANCIAL_JOB_WORKERS = max(1, int(os.getenv("FINANCIAL_JOB_WORKERS", "8")))
 
 
 def _iter_symbols() -> list[str]:
-    rows = get_stock_basic()
+    rows = _provider.market.get_stock_basic()
     symbols = [row.get("symbol") for row in rows if row.get("symbol")]
     return symbols or ["000001.SH"]
 
@@ -49,7 +51,7 @@ def _fetch_symbol_financial_payload(symbol: str, target_period: str, latest_peri
     if latest_period and latest_period >= target_period:
         return [], None, latest_period
 
-    data = get_financials(symbol, period=target_period)
+    data = _provider.market.get_financials(symbol, period=target_period)
     if not data:
         return [], None, latest_period
     actual_period = str(data.get("period") or "")

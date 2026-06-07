@@ -133,17 +133,13 @@ export default function HomePage() {
       <section>
         <h2 className="section-title">指数快照</h2>
         <div className="card">
-          {overview === undefined ? (
-            <div className="helper">市场总览加载中...</div>
-          ) : (
-            <IndexCards
-              activeMarket={activeIndexMarket}
-              selectedSymbol={selectedIndexSymbol}
-              onMarketChange={handleIndexMarketChange}
-              onSymbolChange={handleIndexSymbolChange}
-              initialPage={overview?.indices}
-            />
-          )}
+          <IndexCards
+            activeMarket={activeIndexMarket}
+            selectedSymbol={selectedIndexSymbol}
+            onMarketChange={handleIndexMarketChange}
+            onSymbolChange={handleIndexSymbolChange}
+            initialPage={overview?.indices}
+          />
         </div>
       </section>
 
@@ -160,11 +156,7 @@ export default function HomePage() {
       <section>
         <h2 className="section-title">期货快照</h2>
         <div className="card">
-          {overview === undefined ? (
-            <div className="helper">市场总览加载中...</div>
-          ) : (
-            <FuturesCards initialItems={overview?.futures.items} />
-          )}
+          <FuturesCards initialItems={overview?.futures.items} />
         </div>
       </section>
 
@@ -189,22 +181,18 @@ export default function HomePage() {
               港股
             </button>
           </div>
-          {overview === undefined ? (
-            <div className="helper">市场总览加载中...</div>
-          ) : (
-            <Heatmap
-              market={heatmapMarket}
-              showMarketSelector={false}
-              preloadedPages={
-                overview
-                  ? {
-                      A: overview.heatmap.a,
-                      HK: overview.heatmap.hk,
-                    }
-                  : undefined
-              }
-            />
-          )}
+          <Heatmap
+            market={heatmapMarket}
+            showMarketSelector={false}
+            preloadedPages={
+              overview
+                ? {
+                    A: overview.heatmap.a,
+                    HK: overview.heatmap.hk,
+                  }
+                : undefined
+            }
+          />
         </div>
       </section>
     </div>

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from datetime import date
 
-from etl.fetchers.futures_client import get_futures_daily, get_futures_weekly
+from etl.providers import get_provider
+
+_provider = get_provider()
 from etl.loaders.pg_loader import upsert_futures_prices, upsert_futures_weekly_prices
 from etl.utils.dates import date_range
 from etl.utils.logging import get_logger
@@ -14,7 +16,7 @@ def run_futures_job(start: date, end: date) -> int:
     """Run futures job: fetch SHFE daily and weekly futures data and store into DB."""
     total = 0
     for as_of in date_range(start, end):
-        rows = get_futures_daily(as_of)
+        rows = _provider.futures.get_futures_daily(as_of)
         if not rows:
             LOGGER.info("futures_job empty for %s", as_of)
         else:
@@ -47,7 +49,7 @@ def weekly_snapshot_dates(start: date, end: date) -> list[date]:
 def run_futures_weekly_job(start: date, end: date) -> int:
     total = 0
     for week_end in weekly_snapshot_dates(start, end):
-        weekly_rows = get_futures_weekly(week_end)
+        weekly_rows = _provider.futures.get_futures_weekly(week_end)
         if not weekly_rows:
             LOGGER.info("futures_job weekly empty for %s", week_end)
             continue

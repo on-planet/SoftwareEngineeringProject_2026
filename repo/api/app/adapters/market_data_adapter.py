@@ -52,6 +52,7 @@ class MarketDataProvider(Protocol):
         period: str = "day",
         count: int = 240,
         as_of: date | None = None,
+        is_index: bool = False,
     ) -> list[dict]:
         """获取 K 线历史数据"""
         ...
@@ -161,6 +162,7 @@ class MarketDataAdapter:
         period: str = "day",
         count: int = 240,
         as_of: date | None = None,
+        is_index: bool = False,
     ) -> list[dict]:
         """获取 K 线历史数据"""
         return self._provider.get_kline_history(
@@ -168,6 +170,7 @@ class MarketDataAdapter:
             period=period,
             count=count,
             as_of=as_of,
+            is_index=is_index,
         )
 
     def get_recent_financials(

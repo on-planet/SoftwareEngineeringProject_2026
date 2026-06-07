@@ -119,6 +119,7 @@ def get_dashboard_overview(
 ) -> dict[str, Any]:
     cache_key = build_cache_key(
         "dashboard:overview",
+        version="v2",
         as_of=as_of,
         index_limit=index_limit,
         heatmap_limit=heatmap_limit,
@@ -131,11 +132,11 @@ def get_dashboard_overview(
         index_items = list_indices(db, as_of=as_of, sort="desc")
 
         heatmap_a = get_cached_heatmap(as_of=as_of, market="A", sort="desc")
-        if heatmap_a is None:
+        if not heatmap_a:
             heatmap_a = get_heatmap(db, sort="desc", market="A", as_of=as_of)
 
         heatmap_hk = get_cached_heatmap(as_of=as_of, market="HK", sort="desc")
-        if heatmap_hk is None:
+        if not heatmap_hk:
             heatmap_hk = get_heatmap(db, sort="desc", market="HK", as_of=as_of)
 
         macro_items = list_macro_snapshot(db, as_of=as_of, sort="desc")

@@ -10,10 +10,12 @@ from app.models.futures_price import FuturesPrice
 from app.models.futures_weekly_price import FuturesWeeklyPrice
 from app.services.cache_utils import build_cache_key, items_to_dicts
 from app.utils.query_params import SortOrder
-from etl.fetchers.futures_client import get_futures_weekly
+from etl.providers import get_provider
+
+_provider = get_provider()
 
 FUTURES_CACHE_TTL = 900
-DEFAULT_FUTURES_SYMBOLS = ("CU", "AU", "AG", "AO", "SC", "FU")
+DEFAULT_FUTURES_SYMBOLS = tuple(_provider.futures.supported_symbols()) or ("CU", "AU", "AG", "AO", "SC", "FU")
 FuturesFrequency = Literal["day", "week"]
 
 
@@ -50,7 +52,7 @@ def list_futures(
         else:
             items = _query_weekly_snapshot(db, snapshot_date=snapshot_date, symbol=symbol, sort=sort)
         if not items and snapshot_date is not None:
-            items = _filter_sort_weekly_rows(get_futures_weekly(snapshot_date), symbol=symbol, sort=sort)
+            items = _filter_sort_weekly_rows(_provider.futures.get_futures_weekly(snapshot_date), symbol=symbol, sort=sort)
         total = len(items)
         sliced = items[offset : offset + limit]
         set_json(cache_key, {"items": sliced, "total": total}, ttl=FUTURES_CACHE_TTL)
@@ -72,8 +74,41 @@ def list_futures(
     else:
         query = query.order_by(FuturesPrice.date.desc(), FuturesPrice.symbol.asc())
     items = query.offset(offset).limit(limit).all()
-    set_json(cache_key, {"items": items_to_dicts(items), "total": total}, ttl=FUTURES_CACHE_TTL)
-    return items, total
+    if items or total > 0:
+        item_dicts = items_to_dicts(items)
+        if symbol is None and offset == 0:
+            present = {str(item.get("symbol") or "").upper() for item in item_dicts if isinstance(item, dict)}
+            if len(present) < len(DEFAULT_FUTURES_SYMBOLS):
+                snapshot_date = as_of or end or date.today()
+                live_items = _filter_sort_daily_rows(
+                    _provider.futures.get_futures_daily(snapshot_date),
+                    symbol=None,
+                    sort=sort,
+                )
+                missing_live_items = [
+                    row
+                    for row in live_items
+                    if str(row.get("symbol") or "").upper() not in present
+                    and _row_in_date_window(row, start=start, end=end)
+                ]
+                if missing_live_items:
+                    item_dicts.extend(missing_live_items)
+                    item_dicts = _filter_sort_daily_rows(item_dicts, symbol=None, sort=sort)[:limit]
+                    total += len(missing_live_items)
+        set_json(cache_key, {"items": item_dicts, "total": total}, ttl=FUTURES_CACHE_TTL)
+        return item_dicts, total
+
+    snapshot_date = as_of or end or date.today()
+    live_items = _filter_sort_daily_rows(
+        _provider.futures.get_futures_daily(snapshot_date),
+        symbol=symbol,
+        sort=sort,
+    )
+    total = len(live_items)
+    sliced = live_items[offset : offset + limit]
+    if sliced:
+        set_json(cache_key, {"items": sliced, "total": total}, ttl=FUTURES_CACHE_TTL)
+    return sliced, total
 
 
 def get_futures_series(
@@ -100,8 +135,15 @@ def get_futures_series(
     if end is not None:
         query = query.filter(FuturesPrice.date <= end)
     items = query.order_by(FuturesPrice.date.asc()).all()
-    set_json(cache_key, items_to_dicts(items), ttl=FUTURES_CACHE_TTL)
-    return items
+    if items:
+        payload = items_to_dicts(items)
+        set_json(cache_key, payload, ttl=FUTURES_CACHE_TTL)
+        return payload
+
+    payload = _provider.futures.get_futures_history(normalized, start=start, end=end)
+    if payload:
+        set_json(cache_key, payload, ttl=FUTURES_CACHE_TTL)
+    return payload
 
 
 def _normalize_weekly_as_of(as_of: date | None) -> date:
@@ -136,6 +178,28 @@ def _filter_sort_weekly_rows(rows: list[dict], *, symbol: str | None, sort: Sort
     else:
         rows.sort(key=lambda row: row.get("date"))
     return rows
+
+
+def _filter_sort_daily_rows(rows: list[dict], *, symbol: str | None, sort: SortOrder) -> list[dict]:
+    if symbol:
+        rows = [row for row in rows if str(row.get("symbol") or "").upper() == symbol.upper()]
+    rows = [row for row in rows if str(row.get("symbol") or "").upper() in DEFAULT_FUTURES_SYMBOLS]
+    if sort == "desc":
+        rows.sort(key=lambda row: (row.get("date"), str(row.get("symbol") or "")), reverse=True)
+    else:
+        rows.sort(key=lambda row: (row.get("date"), str(row.get("symbol") or "")))
+    return rows
+
+
+def _row_in_date_window(row: dict, *, start: date | None, end: date | None) -> bool:
+    row_date = row.get("date")
+    if not isinstance(row_date, date):
+        return True
+    if start is not None and row_date < start:
+        return False
+    if end is not None and row_date > end:
+        return False
+    return True
 
 
 def _resolve_weekly_snapshot_date(db: Session, as_of: date | None = None, end: date | None = None) -> date | None:
@@ -187,7 +251,7 @@ def _get_weekly_series(db: Session, symbol: str, start: date | None = None, end:
 
     rows: list[dict] = []
     for as_of in _weekly_dates(start, end):
-        snapshot = get_futures_weekly(as_of)
+        snapshot = _provider.futures.get_futures_weekly(as_of)
         matched = next((item for item in snapshot if str(item.get("symbol") or "").upper() == symbol.upper()), None)
         if matched:
             rows.append(matched)

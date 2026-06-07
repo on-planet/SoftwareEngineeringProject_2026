@@ -3,8 +3,10 @@ from __future__ import annotations
 import os
 from datetime import date
 
-from etl.fetchers.akshare_macro_client import AKSHARE_MACRO_KEY_COUNT, fetch_all_akshare_macro_rows
-from etl.fetchers.worldbank_client import get_indicator_series
+from etl.fetchers.akshare_macro_client import AKSHARE_MACRO_KEY_COUNT
+from etl.providers import get_provider
+
+_provider = get_provider()
 from etl.loaders.pg_loader import count_latest_macro_rows, list_latest_macro_rows, upsert_macro
 from etl.loaders.redis_cache import cache_macro
 from etl.transformers.macro import normalize_macro_rows
@@ -82,6 +84,14 @@ def _cache_latest_macro_rows() -> int:
         return 0
     cache_macro(latest_date, {"items": rows, "date": latest_date.isoformat()})
     return len(rows)
+
+
+def fetch_all_akshare_macro_rows(start: date | None = None, end: date | None = None) -> list[dict]:
+    return _provider.macro.fetch_all_akshare_macro_rows(start=start, end=end)
+
+
+def get_indicator_series(country: str, indicator: str, start: date, end: date) -> list[dict]:
+    return _provider.macro.get_indicator_series(country, indicator, start, end)
 
 
 def _should_refresh_world_bank(end: date, *, full_snapshot_healthy: bool) -> bool:
@@ -209,3 +219,26 @@ def run_worldbank_macro_job(start: date, end: date) -> int:
         return 0
     _cache_latest_macro_rows()
     return total
+
+
+def run_akshare_macro_full_backfill(end: date | None = None) -> int:
+    """Load every historical AkShare macro row currently exposed by the provider."""
+    target_end = end or date.today()
+    rows = fetch_all_akshare_macro_rows(start=None, end=target_end)
+    if not rows:
+        LOGGER.info("akshare_macro_full_backfill loaded rows=0 end=%s", target_end)
+        return 0
+
+    inserted = upsert_macro(rows)
+    key_count = len({str(row.get("key") or "") for row in rows if row.get("key")})
+    cached_count = _cache_latest_macro_rows()
+    update_job_state(MACRO_REFRESH_STATE_KEY, target_end)
+    LOGGER.info(
+        "akshare_macro_full_backfill loaded rows=%s inserted=%s keys=%s cached_items=%s end=%s",
+        len(rows),
+        inserted,
+        key_count,
+        cached_count,
+        target_end,
+    )
+    return inserted

@@ -51,7 +51,7 @@ _TOKEN_WARNING_SHOWN = False
 _TOKEN_BLOCKED = False
 _TOKEN_BLOCKED_VALUE = ""
 _TOKEN_BLOCK_WARNING_SHOWN = False
-AK_HK_SPOT_CACHE_TTL_SECONDS = max(3, int(os.getenv("AKSHARE_HK_SPOT_CACHE_SECONDS", "12")))
+AK_HK_SPOT_CACHE_TTL_SECONDS = max(3, int(os.getenv("AKSHARE_HK_SPOT_CACHE_SECONDS", "60")))
 _AK_HK_SPOT_CACHE_TS = 0.0
 _AK_HK_SPOT_CACHE_BY_SYMBOL: dict[str, dict] = {}
 _AK_HK_SPOT_CACHE_LOCK = Lock()
@@ -1859,6 +1859,13 @@ def _order_book_levels(record: dict, *, side: str) -> list[dict]:
 
 def get_stock_quote(symbol: str) -> dict:
     normalized = normalize_symbol(symbol)
+    # HK stocks: use AkShare spot cache first to avoid Snowball timeout.
+    if normalized.endswith(".HK"):
+        hk_quote = _get_ak_hk_spot_quote(normalized, allow_refresh=True)
+        if hk_quote:
+            return _quote_from_record(normalized, hk_quote)
+        # If AkShare cache miss, do NOT fall back to Snowball (slow & usually empty for HK).
+        return {}
     rows = _call_quotec([normalized])
     record = (
         _extract_primary_record(
@@ -1875,15 +1882,14 @@ def get_stock_quote(symbol: str) -> dict:
             record = recovered
     if record:
         return _quote_from_record(normalized, record)
-    if normalized.endswith(".HK"):
-        hk_quote = _get_ak_hk_spot_quote(normalized, allow_refresh=False)
-        if hk_quote:
-            return _quote_from_record(normalized, hk_quote)
     return {}
 
 
 def get_stock_quote_detail(symbol: str) -> dict:
     normalized = normalize_symbol(symbol)
+    # Snowball quote_detail does not support HK stocks; skip to avoid timeout.
+    if normalized.endswith(".HK"):
+        return {}
     for snow_symbol in _snowball_symbol_candidates(normalized):
         payload = _call_with_token_retry(
             lambda symbol_code=snow_symbol: ball.quote_detail(symbol_code),
@@ -1904,6 +1910,9 @@ def get_stock_quote_detail(symbol: str) -> dict:
 
 def get_stock_pankou(symbol: str) -> dict:
     normalized = normalize_symbol(symbol)
+    # Snowball pankou does not support HK stocks; skip to avoid timeout.
+    if normalized.endswith(".HK"):
+        return {}
     for snow_symbol in _snowball_symbol_candidates(normalized):
         payload = _call_with_token_retry(
             lambda symbol_code=snow_symbol: ball.pankou(symbol_code),

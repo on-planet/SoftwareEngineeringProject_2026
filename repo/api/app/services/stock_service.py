@@ -39,6 +39,7 @@ def list_stocks(
         limit=limit,
         offset=offset,
         sort=sort,
+        sql_only=True,
     )
 
 

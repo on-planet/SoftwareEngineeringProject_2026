@@ -4,14 +4,9 @@ from datetime import date
 
 from app.core.cache import get_json, set_json
 from app.services.cache_utils import build_cache_key
-from etl.fetchers.hk_index_client import get_hk_index_constituents, supported_hk_index_symbols
-from etl.fetchers.index_constituent_client import get_index_constituents
-from etl.fetchers.snowball_client import (
-    get_index_daily,
-    get_stock_basics,
-    normalize_index_symbol,
-    supported_index_specs,
-)
+from etl.providers import get_provider
+
+_provider = get_provider()
 
 LIVE_INDEX_CACHE_TTL = 300
 LIVE_INDEX_CACHE_VERSION = "v6"
@@ -25,11 +20,11 @@ def list_live_indices(*, as_of: date | None = None, sort: str = "desc") -> list[
 
     rows = {
         str(item.get("symbol")): item
-        for item in get_index_daily(as_of or date.today())
+        for item in _provider.market.get_index_daily(as_of or date.today())
         if isinstance(item, dict) and item.get("symbol")
     }
     items: list[dict] = []
-    for spec in supported_index_specs():
+    for spec in _provider.market.supported_index_specs():
         symbol = str(spec["symbol"])
         row = rows.get(symbol)
         if not row:
@@ -57,7 +52,7 @@ def list_live_index_constituents(
     limit: int = 200,
     offset: int = 0,
 ) -> tuple[list[dict], int]:
-    canonical = normalize_index_symbol(symbol)
+    canonical = _provider.market.normalize_index_symbol(symbol)
     cache_key = build_cache_key(
         "live:index:constituents",
         version=LIVE_INDEX_CACHE_VERSION,
@@ -70,13 +65,13 @@ def list_live_index_constituents(
     else:
         rows = []
         target_date = as_of or date.today()
-        if canonical in supported_hk_index_symbols():
+        if canonical in _provider.index.supported_hk_index_symbols():
             # Hang Seng payload already carries constituent name and market.
-            rows = get_hk_index_constituents(canonical)
+            rows = _provider.index.get_hk_index_constituents(canonical)
         else:
-            rows = get_index_constituents(canonical, target_date)
+            rows = _provider.index.get_index_constituents(canonical, target_date)
             if rows:
-                basics = get_stock_basics([row["symbol"] for row in rows if row.get("symbol")])
+                basics = _provider.market.get_stock_basic([row["symbol"] for row in rows if row.get("symbol")])
                 by_symbol = {str(item.get("symbol")): item for item in basics if isinstance(item, dict) and item.get("symbol")}
                 rows = sorted(
                     rows,

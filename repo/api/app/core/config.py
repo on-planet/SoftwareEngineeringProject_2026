@@ -55,6 +55,12 @@ def _default_max_overflow() -> int:
     return int(postgres.get("max_overflow") or 5)
 
 
+try:
+    from pydantic_settings import SettingsConfigDict
+except Exception:  # pragma: no cover - pydantic v1 fallback
+    SettingsConfigDict = None  # type: ignore[misc,assignment]
+
+
 class Settings(BaseSettings):
     app_name: str = "QuantPulse API"
     database_url: str = _default_database_url()
@@ -81,10 +87,20 @@ class Settings(BaseSettings):
     smtp_use_tls: bool = True
     smtp_use_ssl: bool = False
 
-    class Config:
-        if _DOTENV_AVAILABLE:
-            env_file = (".env", ".env.local")
-        env_file_encoding = "utf-8"
+    # 忽略 .env 中未定义的环境变量（避免 XUEQIUTOKEN 等第三方 Token 导致校验失败）
+    if SettingsConfigDict is not None:
+        model_config = SettingsConfigDict(
+            extra="ignore",
+            env_file=(".env", ".env.local") if _DOTENV_AVAILABLE else None,
+            env_file_encoding="utf-8",
+        )
+    else:
+
+        class Config:
+            extra = "ignore"
+            if _DOTENV_AVAILABLE:
+                env_file = (".env", ".env.local")
+            env_file_encoding = "utf-8"
 
 
 settings = Settings()

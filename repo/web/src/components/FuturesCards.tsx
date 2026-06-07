@@ -104,7 +104,13 @@ export function FuturesCards({ initialItems }: FuturesCardsProps) {
   const rows = useMemo(() => items.slice(0, 8), [items]);
 
   if (loading) {
-    return <div className="helper">期货数据加载中...</div>;
+    return (
+      <div className="grid grid-3">
+        {Array.from({ length: 3 }, (_, i) => (
+          <div key={i} className="skeleton-card" />
+        ))}
+      </div>
+    );
   }
 
   if (error) {

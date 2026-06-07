@@ -67,16 +67,14 @@ class FakeSession:
 
 
 class FuturesServiceWeeklyTests(unittest.TestCase):
-    def test_list_futures_weekly_uses_shfe_snapshot(self) -> None:
+    @patch.object(futures_service, "get_json", return_value=None)
+    @patch.object(futures_service, "set_json")
+    def test_list_futures_weekly_uses_provider_snapshot(self, set_json_mock, get_json_mock) -> None:
         rows = [
-            {"symbol": "SC", "date": date(2026, 3, 13), "contract_month": "2605"},
-            {"symbol": "CU", "date": date(2026, 3, 13), "contract_month": "2604"},
+            {"symbol": "SC", "date": date(2026, 3, 13), "contract_month": None},
+            {"symbol": "CU", "date": date(2026, 3, 13), "contract_month": None},
         ]
-        with (
-            patch.object(futures_service, "get_json", return_value=None),
-            patch.object(futures_service, "get_futures_weekly", return_value=rows) as weekly_mock,
-            patch.object(futures_service, "set_json") as set_json_mock,
-        ):
+        with patch.object(futures_service._provider.futures, "get_futures_weekly", return_value=rows) as weekly_mock:
             items, total = futures_service.list_futures(FakeSession([]), frequency="week", as_of=date(2026, 3, 13), sort="asc")
 
         weekly_mock.assert_called_once_with(date(2026, 3, 13))
@@ -84,20 +82,18 @@ class FuturesServiceWeeklyTests(unittest.TestCase):
         self.assertEqual([item["symbol"] for item in items], ["CU", "SC"])
         set_json_mock.assert_called_once()
 
-    def test_get_futures_series_weekly_builds_series_across_weeks(self) -> None:
+    @patch.object(futures_service, "get_json", return_value=None)
+    @patch.object(futures_service, "set_json")
+    def test_get_futures_series_weekly_builds_series_across_weeks(self, set_json_mock, get_json_mock) -> None:
         snapshots = {
-            date(2026, 3, 6): [{"symbol": "AU", "date": date(2026, 3, 6), "contract_month": "2606"}],
-            date(2026, 3, 13): [{"symbol": "AU", "date": date(2026, 3, 13), "contract_month": "2606"}],
+            date(2026, 3, 6): [{"symbol": "AU", "date": date(2026, 3, 6), "contract_month": None}],
+            date(2026, 3, 13): [{"symbol": "AU", "date": date(2026, 3, 13), "contract_month": None}],
         }
 
         def fake_weekly(as_of: date):
             return snapshots.get(as_of, [])
 
-        with (
-            patch.object(futures_service, "get_json", return_value=None),
-            patch.object(futures_service, "get_futures_weekly", side_effect=fake_weekly),
-            patch.object(futures_service, "set_json") as set_json_mock,
-        ):
+        with patch.object(futures_service._provider.futures, "get_futures_weekly", side_effect=fake_weekly):
             items = futures_service.get_futures_series(
                 FakeSession([]),
                 "AU",
@@ -107,7 +103,26 @@ class FuturesServiceWeeklyTests(unittest.TestCase):
             )
 
         self.assertEqual([item["date"] for item in items], [date(2026, 3, 6), date(2026, 3, 13)])
-        self.assertTrue(all(item["contract_month"] == "2606" for item in items))
+        set_json_mock.assert_called_once()
+
+    @patch.object(futures_service, "get_json", return_value=None)
+    @patch.object(futures_service, "set_json")
+    def test_get_futures_series_daily_falls_back_to_provider_history(self, set_json_mock, get_json_mock) -> None:
+        rows = [
+            {"symbol": "RB", "date": date(2026, 3, 12), "close": 3400.0},
+            {"symbol": "RB", "date": date(2026, 3, 13), "close": 3420.0},
+        ]
+        with patch.object(futures_service._provider.futures, "get_futures_history", return_value=rows) as history_mock:
+            items = futures_service.get_futures_series(
+                FakeSession([]),
+                "RB",
+                start=date(2026, 3, 12),
+                end=date(2026, 3, 13),
+                frequency="day",
+            )
+
+        history_mock.assert_called_once_with("RB", start=date(2026, 3, 12), end=date(2026, 3, 13))
+        self.assertEqual([item["close"] for item in items], [3400.0, 3420.0])
         set_json_mock.assert_called_once()
 
 

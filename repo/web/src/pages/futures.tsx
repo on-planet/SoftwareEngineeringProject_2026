@@ -3,7 +3,7 @@ import ReactECharts from "echarts-for-react";
 
 import { getFutures, getFuturesSeries } from "../services/api";
 import { formatNullableNumber, formatNumber, formatPercent, formatSigned } from "../utils/format";
-import { formatContractMonth, FUTURES_LABELS, sortPreferredFutures } from "../utils/futures";
+import { formatContractMonth, FUTURES_LABELS, sortPreferredFutures, FUTURES_CATEGORIES, getFuturesCategory } from "../utils/futures";
 import { readPersistentCache, writePersistentCache } from "../utils/persistentCache";
 
 type FuturesFrequency = "day" | "week";
@@ -71,6 +71,23 @@ export default function FuturesPage() {
   const [error, setError] = useState<string | null>(null);
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
+  const [activeCategory, setActiveCategory] = useState<string>("全部");
+  const [page, setPage] = useState(0);
+  const PAGE_SIZE = 6;
+
+  useEffect(() => {
+    setPage(0);
+  }, [activeCategory]);
+
+  const filteredItems = useMemo(() => {
+    if (activeCategory === "全部") return items;
+    return items.filter((item) => getFuturesCategory(item.symbol) === activeCategory);
+  }, [items, activeCategory]);
+
+  const pageCount = Math.ceil(filteredItems.length / PAGE_SIZE);
+  const paginatedItems = useMemo(() => {
+    return filteredItems.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+  }, [filteredItems, page]);
 
   useEffect(() => {
     let active = true;
@@ -253,51 +270,98 @@ export default function FuturesPage() {
       </section>
 
       <section>
-        <h2 className="section-title">期货快照</h2>
-        {items.length === 0 ? (
+        <div className="panel-header">
+          <h2 className="section-title">期货快照</h2>
+          <div className="chip-group">
+            {FUTURES_CATEGORIES.map((cat) => (
+              <button
+                key={cat}
+                className="chip-button"
+                data-active={activeCategory === cat}
+                onClick={() => setActiveCategory(cat)}
+              >
+                {cat}
+              </button>
+            ))}
+          </div>
+        </div>
+        {filteredItems.length === 0 ? (
           <div className="helper">暂无期货数据</div>
         ) : (
-          <div className="grid grid-3">
-            {items.map((item) => {
-              const open = Number(item.open ?? 0);
-              const close = Number(item.close ?? 0);
-              const delta = close - open;
-              const pct = open !== 0 ? delta / open : 0;
-              const trendColor = delta >= 0 ? "#f87171" : "#34d399";
-              const label = FUTURES_LABELS[item.symbol] || item.name || item.symbol;
-              return (
+          <>
+            <div className="grid grid-3">
+              {paginatedItems.map((item) => {
+                const open = Number(item.open ?? 0);
+                const close = Number(item.close ?? 0);
+                const delta = close - open;
+                const pct = open !== 0 ? delta / open : 0;
+                const trendColor = delta >= 0 ? "#f87171" : "#34d399";
+                const label = FUTURES_LABELS[item.symbol] || item.name || item.symbol;
+                return (
+                  <button
+                    type="button"
+                    key={`${item.symbol}-${item.date}`}
+                    className="card"
+                    style={{
+                      textAlign: "left",
+                      cursor: "pointer",
+                      borderColor: item.symbol === selectedSymbol ? "rgba(37, 99, 235, 0.35)" : undefined,
+                    }}
+                    onClick={() => setSelectedSymbol(item.symbol)}
+                  >
+                    <div className="card-title">{label}</div>
+                    <div className="helper">
+                      {item.symbol} | {item.date}
+                    </div>
+                    <div className="helper" style={{ marginTop: 4 }}>
+                      主力合约: {formatContractMonth(item.contract_month)}
+                    </div>
+                    <div style={{ marginTop: 8, fontSize: 20, fontWeight: 700 }}>{formatNumber(close)}</div>
+                    <div style={{ marginTop: 4, color: trendColor, fontWeight: 600 }}>
+                      {formatSigned(delta)} ({delta === 0 ? "0.00%" : formatPercent(pct)})
+                    </div>
+                    <div className="helper" style={{ marginTop: 8 }}>
+                      结算 {formatNullableNumber(item.settlement)}
+                    </div>
+                    <div className="helper">
+                      持仓 {formatNullableNumber(item.open_interest, 0)} | 成交额 {formatNullableNumber(item.turnover)}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+            {pageCount > 1 && (
+              <div style={{ display: "flex", justifyContent: "center", gap: 8, marginTop: 16 }}>
                 <button
                   type="button"
-                  key={`${item.symbol}-${item.date}`}
-                  className="card"
-                  style={{
-                    textAlign: "left",
-                    cursor: "pointer",
-                    borderColor: item.symbol === selectedSymbol ? "rgba(37, 99, 235, 0.35)" : undefined,
-                  }}
-                  onClick={() => setSelectedSymbol(item.symbol)}
+                  className="chip-button"
+                  disabled={page === 0}
+                  onClick={() => setPage((p) => Math.max(0, p - 1))}
                 >
-                  <div className="card-title">{label}</div>
-                  <div className="helper">
-                    {item.symbol} | {item.date}
-                  </div>
-                  <div className="helper" style={{ marginTop: 4 }}>
-                    主力合约: {formatContractMonth(item.contract_month)}
-                  </div>
-                  <div style={{ marginTop: 8, fontSize: 20, fontWeight: 700 }}>{formatNumber(close)}</div>
-                  <div style={{ marginTop: 4, color: trendColor, fontWeight: 600 }}>
-                    {formatSigned(delta)} ({delta === 0 ? "0.00%" : formatPercent(pct)})
-                  </div>
-                  <div className="helper" style={{ marginTop: 8 }}>
-                    结算 {formatNullableNumber(item.settlement)}
-                  </div>
-                  <div className="helper">
-                    持仓 {formatNullableNumber(item.open_interest, 0)} | 成交额 {formatNullableNumber(item.turnover)}
-                  </div>
+                  上一页
                 </button>
-              );
-            })}
-          </div>
+                {Array.from({ length: pageCount }, (_, i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    className="chip-button"
+                    data-active={page === i}
+                    onClick={() => setPage(i)}
+                  >
+                    {i + 1}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  className="chip-button"
+                  disabled={page === pageCount - 1}
+                  onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+                >
+                  下一页
+                </button>
+              </div>
+            )}
+          </>
         )}
       </section>
 

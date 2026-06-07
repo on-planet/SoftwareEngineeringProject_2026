@@ -3,7 +3,13 @@ setlocal EnableDelayedExpansion
 
 set "PROJECT_DIR=%~dp0"
 set "REPO_DIR=%PROJECT_DIR%repo"
-set "PYTHON_EXE=C:\Users\123\AppData\Local\Programs\Python\Python312\python.exe"
+set "VENV_PYTHON=%PROJECT_DIR%.venv\Scripts\python.exe"
+set "SYSTEM_PYTHON=C:\Users\123\AppData\Local\Programs\Python\Python310\python.exe"
+if exist "%VENV_PYTHON%" (
+  set "PYTHON_EXE=%VENV_PYTHON%"
+) else (
+  set "PYTHON_EXE=%SYSTEM_PYTHON%"
+)
 set "POWERSHELL_EXE=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
 set "ENV_FILE=%PROJECT_DIR%.env.local"
 set "ETL_WORKDIR=%REPO_DIR%\etl"

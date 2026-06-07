@@ -117,6 +117,15 @@ export async function loadStrategyBacktest(market: StrategyScoreMarket): Promise
   );
 }
 
+export function buildCigarbuttQueryKey(symbol: string) {
+  return ["cigarbutt-analysis", normalizeStrategySymbol(symbol)];
+}
+
+export async function loadCigarbuttAnalysis(symbol: string) {
+  const { getCigarbuttAnalysis } = await import("../services/api");
+  return getCigarbuttAnalysis(symbol, { cache: false, label: "cigarbutt-analysis" });
+}
+
 export async function retrainStrategyScore() {
   return trainSmokeButtStrategy({
     force_retrain: true,

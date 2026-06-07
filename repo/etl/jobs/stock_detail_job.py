@@ -9,15 +9,9 @@ from pathlib import Path
 import time
 from typing import Iterable
 
-from etl.fetchers.snowball_client import (
-    get_stock_earning_forecasts,
-    get_kline_history,
-    get_stock_pankou,
-    get_stock_quote,
-    get_stock_quote_detail,
-    get_stock_reports,
-    normalize_symbol,
-)
+from etl.providers import get_provider
+
+_provider = get_provider()
 from etl.loaders.pg_loader import (
     list_stock_intraday_meta,
     list_stock_live_snapshot_meta,
@@ -42,7 +36,7 @@ INTRADAY_REQUIRED_PERIODS = {"1m", "30m", "60m"}
 
 
 def _snapshot_row(symbol: str) -> dict | None:
-    normalized = normalize_symbol(symbol)
+    normalized = _provider.market.normalize_symbol(symbol)
     quote: dict = {}
     detail: dict = {}
     pankou: dict = {}
@@ -101,7 +95,7 @@ def _snapshot_row(symbol: str) -> dict | None:
 
 
 def _research_rows(symbol: str, *, report_limit: int, forecast_limit: int) -> list[dict]:
-    normalized = normalize_symbol(symbol)
+    normalized = _provider.market.normalize_symbol(symbol)
     rows: list[dict] = []
     with ThreadPoolExecutor(max_workers=RESEARCH_WORKERS, thread_name_prefix="stock_research") as executor:
         future_map = {
@@ -133,10 +127,10 @@ def _research_rows(symbol: str, *, report_limit: int, forecast_limit: int) -> li
 
 
 def _intraday_rows(symbol: str) -> list[dict]:
-    normalized = normalize_symbol(symbol)
+    normalized = _provider.market.normalize_symbol(symbol)
     rows: list[dict] = []
     for period, count in (("1m", 240), ("30m", 240), ("60m", 240)):
-        for item in get_kline_history(normalized, period=period, count=count, is_index=False):
+        for item in _provider.market.get_kline_history(normalized, period=period, count=count, is_index=False):
             timestamp = item.get("date")
             if timestamp is None:
                 continue
@@ -156,7 +150,7 @@ def _intraday_rows(symbol: str) -> list[dict]:
 
 
 def _collect_symbol_payload(symbol: str, *, report_limit: int, forecast_limit: int) -> dict:
-    normalized = normalize_symbol(symbol)
+    normalized = _provider.market.normalize_symbol(symbol)
     payload: dict = {
         "symbol": normalized,
         "snapshot": None,
@@ -197,7 +191,7 @@ def _target_symbols(
         output = []
         seen: set[str] = set()
         for item in symbols:
-            symbol = normalize_symbol(item)
+            symbol = _provider.market.normalize_symbol(item)
             if not symbol or symbol in seen:
                 continue
             seen.add(symbol)
@@ -399,7 +393,7 @@ def _status_updates_from_payloads(payloads: list[dict]) -> dict[str, dict]:
     processed_at = datetime.now().isoformat(timespec="seconds")
     updates: dict[str, dict] = {}
     for payload in payloads:
-        symbol = normalize_symbol(str(payload.get("symbol") or ""))
+        symbol = _provider.market.normalize_symbol(str(payload.get("symbol") or ""))
         if not symbol:
             continue
         sections = payload.get("section_statuses") or {}

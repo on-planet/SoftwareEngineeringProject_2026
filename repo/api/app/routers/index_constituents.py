@@ -27,9 +27,17 @@ router = APIRouter(tags=["index"])
 def list_constituents_route(
     symbol: str,
     as_of: date | None = Query(None),
+    allow_live: bool = Query(False),
     paging: dict = Depends(pagination_params),
     db: Session = Depends(get_db),
 ):
     """获取指数成分股列表。"""
-    items, total = list_index_constituents(db, symbol, as_of, paging["limit"], paging["offset"])
+    items, total = list_index_constituents(
+        db,
+        symbol,
+        as_of,
+        paging["limit"],
+        paging["offset"],
+        allow_live_fallback=allow_live,
+    )
     return {"items": items, "total": total, **paging}

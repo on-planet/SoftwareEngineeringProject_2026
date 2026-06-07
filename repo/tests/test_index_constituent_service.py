@@ -27,7 +27,7 @@ from app.services.index_constituent_service import list_index_constituents
 
 class IndexConstituentServiceTests(unittest.TestCase):
     @patch("app.services.index_constituent_service.list_live_index_constituents")
-    def test_falls_back_to_database_when_live_result_is_empty(self, mock_live: Mock) -> None:
+    def test_uses_database_before_live_lookup(self, mock_live: Mock) -> None:
         mock_live.return_value = ([], 0)
 
         latest_date_result = Mock()
@@ -57,6 +57,38 @@ class IndexConstituentServiceTests(unittest.TestCase):
         self.assertEqual(items[0]["symbol"], "600519.SH")
         self.assertEqual(items[0]["source"], "DB")
         self.assertEqual(items[0]["rank"], 1)
+        mock_live.assert_not_called()
+
+    @patch("app.services.index_constituent_service.list_live_index_constituents")
+    def test_live_fallback_requires_explicit_flag(self, mock_live: Mock) -> None:
+        mock_live.return_value = ([{"symbol": "600519.SH"}], 1)
+
+        empty_result = Mock()
+        empty_result.scalar.return_value = None
+        db = Mock()
+        db.execute.return_value = empty_result
+
+        items, total = list_index_constituents(
+            db,
+            "000300.SH",
+            as_of=date(2026, 3, 16),
+            limit=20,
+            offset=0,
+        )
+        self.assertEqual(items, [])
+        self.assertEqual(total, 0)
+        mock_live.assert_not_called()
+
+        items, total = list_index_constituents(
+            db,
+            "000300.SH",
+            as_of=date(2026, 3, 16),
+            limit=20,
+            offset=0,
+            allow_live_fallback=True,
+        )
+        self.assertEqual(total, 1)
+        self.assertEqual(items[0]["symbol"], "600519.SH")
         mock_live.assert_called_once_with("000300.SH", as_of=date(2026, 3, 16), limit=20, offset=0)
 
 

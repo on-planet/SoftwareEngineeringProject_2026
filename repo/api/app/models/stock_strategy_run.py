@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import Column, Date, DateTime, Integer, String, Text
 from sqlalchemy.orm import relationship
@@ -9,7 +9,7 @@ from app.models.base import Base
 
 
 def _utcnow() -> datetime:
-    return datetime.now(UTC).replace(tzinfo=None)
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class StockStrategyRun(Base):

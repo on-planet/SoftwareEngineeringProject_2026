@@ -2,6 +2,7 @@
 
 from collections import defaultdict
 from datetime import date
+import os
 
 from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
@@ -10,7 +11,11 @@ from app.core.cache import get_json
 from app.models.daily_prices import DailyPrice
 from app.models.stocks import Stock
 from app.utils.query_params import SortOrder
+from etl.providers import get_provider
+from etl.transformers.heatmap import build_heatmap
 from etl.utils.sector_taxonomy import UNKNOWN_SECTOR, normalize_sector_name
+
+_provider = get_provider()
 
 
 def _format_as_of(value) -> str:
@@ -37,6 +42,94 @@ def _normalize_cached_item(item: dict) -> dict:
         "change_sum": _coerce_float(item.get("change_sum")),
         "count": _coerce_int(item.get("count")),
     }
+
+
+def _apply_filters(
+    items: list[dict],
+    *,
+    sort: SortOrder,
+    sector: str | None,
+    market: str | None,
+    min_change: float | None,
+    max_change: float | None,
+) -> list[dict]:
+    sector_filter = normalize_sector_name(sector, market=market) if sector else None
+    output: list[dict] = []
+    for item in items:
+        normalized = {
+            **item,
+            "sector": normalize_sector_name(item.get("sector"), market=market or item.get("market")),
+            "avg_close": _coerce_float(item.get("avg_close")),
+            "avg_change": _coerce_float(item.get("avg_change")),
+        }
+        if sector_filter and normalized["sector"] != sector_filter:
+            continue
+        if min_change is not None and normalized["avg_change"] < min_change:
+            continue
+        if max_change is not None and normalized["avg_change"] > max_change:
+            continue
+        output.append(normalized)
+    return sorted(output, key=lambda item: item["avg_change"], reverse=(sort == "desc"))
+
+
+def _load_akshare_market_rows(market: str, as_of: date) -> tuple[list[dict], list[dict]]:
+    try:
+        from etl.fetchers import akshare_market_client
+    except Exception:
+        return [], []
+    basics = [
+        row
+        for row in akshare_market_client.get_stock_basics()
+        if str(row.get("market") or "").strip().upper() == market
+    ]
+    limit = max(20, int(os.getenv(f"HEATMAP_{market}_LIVE_SYMBOL_LIMIT", "180")))
+    symbols = [str(row.get("symbol") or "").strip() for row in basics if row.get("symbol")][:limit]
+    daily_rows = akshare_market_client.get_daily_prices(symbols, as_of)
+    return basics, daily_rows
+
+
+def _build_live_market_heatmap(market: str, as_of: date) -> list[dict]:
+    target_market = str(market or "").strip().upper()
+    if target_market != "HK":
+        return []
+
+    basics = [
+        row
+        for row in _provider.market.get_stock_basic(force_refresh=False)
+        if str(row.get("market") or "").strip().upper() == target_market
+    ]
+    limit = max(20, int(os.getenv(f"HEATMAP_{target_market}_LIVE_SYMBOL_LIMIT", "180")))
+    symbols = [str(row.get("symbol") or "").strip() for row in basics if row.get("symbol")][:limit]
+    daily_rows = _provider.market.get_daily_prices(symbols, as_of) if symbols else []
+    if not daily_rows:
+        basics, daily_rows = _load_akshare_market_rows(target_market, as_of)
+    if not basics or not daily_rows:
+        return []
+
+    meta_by_symbol = {
+        str(row.get("symbol") or "").strip().upper(): row
+        for row in basics
+        if row.get("symbol")
+    }
+    payload: list[dict] = []
+    for row in daily_rows:
+        symbol = str(row.get("symbol") or "").strip().upper()
+        meta = meta_by_symbol.get(symbol)
+        if not meta:
+            continue
+        close = _coerce_float(row.get("close"))
+        open_value = _coerce_float(row.get("open"))
+        if close <= 0:
+            continue
+        payload.append(
+            {
+                "sector": meta.get("sector") or UNKNOWN_SECTOR,
+                "market": target_market,
+                "close": close,
+                "change": close - open_value,
+            }
+        )
+    return build_heatmap(payload)
 
 
 def _aggregate_cached_items(items: list[dict]) -> list[dict] | None:
@@ -130,7 +223,23 @@ def get_heatmap(
         if max_change is not None and avg_change > max_change:
             continue
         results.append({"sector": sector_name, "avg_close": avg_close, "avg_change": avg_change})
-    return sorted(results, key=lambda item: item["avg_change"], reverse=(sort == "desc"))
+    if results:
+        sorted_results = sorted(results, key=lambda item: item["avg_change"], reverse=(sort == "desc"))
+        if not all(item["sector"] == UNKNOWN_SECTOR for item in sorted_results):
+            return sorted_results
+
+    if market:
+        live_rows = _build_live_market_heatmap(market, as_of or date.today())
+        if live_rows:
+            return _apply_filters(
+                live_rows,
+                sort=sort,
+                sector=sector,
+                market=market,
+                min_change=min_change,
+                max_change=max_change,
+            )
+    return []
 
 
 def get_cached_heatmap(

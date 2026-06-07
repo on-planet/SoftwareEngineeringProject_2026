@@ -141,6 +141,7 @@ export default function IndexDetailPage() {
   const [sortKey, setSortKey] = useState<SortKey>("weight_desc");
   const [pageSize, setPageSize] = useState(20);
   const [page, setPage] = useState(1);
+  const [liveRefreshing, setLiveRefreshing] = useState(false);
 
   useEffect(() => {
     setPage(1);
@@ -206,6 +207,21 @@ export default function IndexDetailPage() {
     void router.push(`/indices/${encodeURIComponent(symbol)}`);
   };
 
+  const refreshLiveInsight = () => {
+    setLiveRefreshing(true);
+    getIndexInsights(activeSymbol, { prefer_live: true, refresh_key: Date.now() })
+      .then((payload) => {
+        setResponse(payload);
+        setError(null);
+      })
+      .catch((err: Error) => {
+        setError(err.message || "指数实时行情加载失败");
+      })
+      .finally(() => {
+        setLiveRefreshing(false);
+      });
+  };
+
   return (
     <div className="page">
       <section className="card hero-card">
@@ -222,6 +238,14 @@ export default function IndexDetailPage() {
                 </option>
               ))}
             </select>
+            <button
+              type="button"
+              className="stock-page-button"
+              onClick={refreshLiveInsight}
+              disabled={loading || liveRefreshing}
+            >
+              {liveRefreshing ? "刷新实时行情中..." : "刷新实时行情"}
+            </button>
             <Link href="/insights" className="badge-link">
               返回洞察
             </Link>

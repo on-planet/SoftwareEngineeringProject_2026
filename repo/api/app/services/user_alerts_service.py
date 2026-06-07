@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
@@ -231,7 +231,7 @@ def _evaluate_price_rule(item: UserAlertRule, price_payload: dict | None) -> Ale
         status_message=f"Last price {current:.2f} {operator_text} {threshold:.2f}",
         explanation=_build_price_explanation(item, current=current, threshold=threshold, triggered=triggered),
         latest_value=current,
-        matched_at=datetime.now(UTC).isoformat() if triggered else None,
+        matched_at=datetime.now(timezone.utc).isoformat() if triggered else None,
     )
 
 

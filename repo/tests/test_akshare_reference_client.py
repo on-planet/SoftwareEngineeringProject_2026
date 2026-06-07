@@ -95,6 +95,35 @@ class AkshareReferenceClientTests(unittest.TestCase):
         self.assertEqual(rows[0]["period"], "2025年报")
         self.assertEqual(rows[0]["actual_disclosure"], date(2026, 3, 18))
 
+    def test_fetch_fx_swap_quote_rows_uses_midpoint_for_bid_ask_points(self) -> None:
+        frame = pd.DataFrame(
+            [
+                {
+                    "货币对": "USD/CNY",
+                    "1周": "-34.50/-34.00",
+                    "1月": "-144.50/-143.50",
+                    "3月": "-438.00/-437.00",
+                    "6月": "-870.00/-869.00",
+                    "9月": "-1297.00/-1295.00",
+                    "1年": "-1726.00/-1724.00",
+                }
+            ]
+        )
+        snapshot = datetime(2026, 6, 1, 20, 0, 0)
+
+        with patch.object(
+            akshare_reference_client,
+            "_call_akshare_frame",
+            return_value=(frame, "fx_swap_quote"),
+        ):
+            rows = akshare_reference_client.fetch_fx_swap_quote_rows(as_of=snapshot)
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["currency_pair"], "USD/CNY")
+        self.assertAlmostEqual(rows[0]["one_week"], -34.25)
+        self.assertAlmostEqual(rows[0]["one_year"], -1725.0)
+        self.assertEqual(rows[0]["as_of"], snapshot)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -11,12 +11,10 @@ from urllib.request import ProxyHandler, Request, build_opener, urlopen
 import json
 import os
 import re
-import shutil
-import subprocess
 import time
 import xml.etree.ElementTree as ET
 
-from etl.fetchers.snowball_client import normalize_symbol, to_snowball_symbol
+from etl.fetchers.snowball_client import normalize_symbol
 from etl.utils.logging import get_logger
 from etl.utils.normalize import ensure_required
 from etl.utils.stock_basics_cache import list_cached_symbols
@@ -47,14 +45,8 @@ RSS_DISABLE_ENV_PROXY = os.getenv("RSS_DISABLE_ENV_PROXY", "0").strip().lower() 
 EVENTS_SYMBOL_WORKERS = max(1, int(os.getenv("EVENTS_SYMBOL_WORKERS", "8")))
 
 try:
-    import pysnowball as ball  # type: ignore
-except Exception as exc:  # pragma: no cover - runtime env dependent
-    ball = None
-    LOGGER.warning("pysnowball import failed: %s", exc)
-
-try:
     import akshare as ak  # type: ignore
-except Exception as exc:  # pragma: no cover - runtime env dependent
+except Exception as exc:  # pragma: no cover
     ak = None
     LOGGER.warning("akshare import failed in events client: %s", exc)
 
@@ -132,8 +124,6 @@ def _safe_float(value) -> float | None:
     text = str(value).strip().replace(",", "")
     if not text:
         return None
-    if text.endswith("%"):
-        text = text[:-1]
     try:
         number = float(text)
     except Exception:
@@ -299,6 +289,7 @@ def _event_symbols() -> list[str]:
         seen.add(symbol)
         output.append(symbol)
     return output
+
 
 def _hkex_regulatory_announcements_rss() -> str:
     override = os.getenv("HKEX_REGULATORY_ANNOUNCEMENTS_RSS", "").strip()
@@ -578,79 +569,6 @@ def _fetch_rss_batch(urls: list[str]) -> dict[str, List[dict]]:
     return results
 
 
-def _fetch_symbol_report_rows(symbol: str, as_of: date) -> list[dict]:
-    if ball is None:
-        return []
-    snow_symbol = to_snowball_symbol(symbol)
-    try:
-        payload = ball.report(snow_symbol)
-    except Exception as exc:
-        LOGGER.warning("snowball report failed [%s]: %s", snow_symbol, exc)
-        return []
-
-    rows: list[dict] = []
-    for record in _extract_dict_rows(payload):
-        row_date = _to_date(
-            _pick(
-                record,
-                (
-                    "publish_date",
-                    "pub_date",
-                    "report_date",
-                    "date",
-                    "ctime",
-                    "timestamp",
-                ),
-            )
-        )
-        if row_date != as_of:
-            continue
-        title = _pick(record, ("title", "name", "report_name", "notice_title"))
-        if title in (None, ""):
-            continue
-        rows.append(
-            {
-                "symbol": symbol,
-                "type": "report",
-                "title": str(title),
-                "date": row_date,
-                "link": str(_pick(record, ("url", "link", "pdf_url", "article_url")) or ""),
-                "source": "Snowball Report",
-            }
-        )
-    return rows
-
-
-def _fetch_symbol_insider_rows(symbol: str, as_of: date) -> list[dict]:
-    if ball is None:
-        return []
-    snow_symbol = to_snowball_symbol(symbol)
-    try:
-        payload = ball.skholderchg(snow_symbol)
-    except Exception as exc:
-        LOGGER.warning("snowball skholderchg failed [%s]: %s", snow_symbol, exc)
-        return []
-
-    rows: list[dict] = []
-    for record in _extract_dict_rows(payload):
-        row_date = _to_date(_pick(record, ("change_date", "date", "publish_date", "ctime", "timestamp")))
-        if row_date != as_of:
-            continue
-        shares = _safe_float(_pick(record, ("change_amount", "shares", "volume", "chg_num"))) or 0.0
-        trade_type = _pick(record, ("change_type", "direction", "type", "change_reason")) or "trade"
-        rows.append(
-            {
-                "symbol": symbol,
-                "date": row_date,
-                "type": str(trade_type),
-                "shares": shares,
-                "link": str(_pick(record, ("url", "link")) or ""),
-                "source": "Snowball F10",
-            }
-        )
-    return rows
-
-
 def _fetch_akshare_company_dynamic_events(as_of: date) -> list[dict]:
     if as_of != date.today():
         return []
@@ -658,7 +576,7 @@ def _fetch_akshare_company_dynamic_events(as_of: date) -> list[dict]:
     def _fetch_stock_zh_a_new_em_records_via_curl() -> list[dict]:
         if not AKSHARE_A_DYNAMIC_CURL_FALLBACK_ENABLED:
             return []
-        curl_path = shutil.which("curl.exe") or shutil.which("curl")
+        curl_path = __import__("shutil").which("curl.exe") or __import__("shutil").which("curl")
         if not curl_path:
             return []
 
@@ -690,7 +608,7 @@ def _fetch_akshare_company_dynamic_events(as_of: date) -> list[dict]:
             "fields=f12,f14,f17,f15,f16,f5,f6",
         ]
         try:
-            result = subprocess.run(
+            result = __import__("subprocess").run(
                 command,
                 capture_output=True,
                 timeout=AKSHARE_A_DYNAMIC_CURL_TIMEOUT_SECONDS,
@@ -735,7 +653,7 @@ def _fetch_akshare_company_dynamic_events(as_of: date) -> list[dict]:
             return em_records
         if not AKSHARE_A_DYNAMIC_CURL_FALLBACK_ENABLED:
             return []
-        curl_path = shutil.which("curl.exe") or shutil.which("curl")
+        curl_path = __import__("shutil").which("curl.exe") or __import__("shutil").which("curl")
         if not curl_path:
             return []
 
@@ -749,7 +667,7 @@ def _fetch_akshare_company_dynamic_events(as_of: date) -> list[dict]:
             "node=new_stock",
         ]
         try:
-            count_result = subprocess.run(
+            count_result = __import__("subprocess").run(
                 count_cmd,
                 capture_output=True,
                 timeout=AKSHARE_A_DYNAMIC_CURL_TIMEOUT_SECONDS,
@@ -792,7 +710,7 @@ def _fetch_akshare_company_dynamic_events(as_of: date) -> list[dict]:
                 "_s_r_a=page",
             ]
             try:
-                data_result = subprocess.run(
+                data_result = __import__("subprocess").run(
                     data_cmd,
                     capture_output=True,
                     timeout=AKSHARE_A_DYNAMIC_CURL_TIMEOUT_SECONDS,
@@ -886,29 +804,59 @@ def _fetch_akshare_company_dynamic_events(as_of: date) -> list[dict]:
     return rows
 
 
-def get_events(as_of: date) -> List[dict]:
+def _fetch_symbol_notice_rows(symbol: str, as_of: date) -> list[dict]:
+    if ak is None:
+        return []
+    code = symbol.split(".")[0]
+    date_str = as_of.strftime("%Y%m%d")
+    try:
+        df = ak.stock_notice_report(symbol=code, date=date_str)
+    except Exception as exc:
+        LOGGER.debug("akshare stock_notice_report failed [%s]: %s", symbol, exc)
+        return []
+    if df is None or getattr(df, "empty", True):
+        return []
+
+    rows: list[dict] = []
+    for record in df.to_dict(orient="records"):
+        title = str(record.get("公告标题") or record.get("title") or "").strip()
+        if not title:
+            continue
+        pub_date = _to_date(record.get("公告日期") or record.get("date"))
+        if pub_date != as_of:
+            continue
+        rows.append(
+            {
+                "symbol": symbol,
+                "type": "report",
+                "title": title,
+                "date": pub_date,
+                "link": str(record.get("网址") or record.get("link") or "").strip(),
+                "source": "AkShare Notice",
+            }
+        )
+    return rows
+
+
+def get_events(as_of: date) -> list[dict]:
     rows: list[dict] = []
     rows.extend(_get_hkex_regulatory_announcements(as_of))
     rows.extend(_fetch_akshare_company_dynamic_events(as_of))
 
-    if ball is None:
-        LOGGER.warning("pysnowball unavailable, skip snowball events")
-        return ensure_required(_dedupe_event_rows(rows), ["symbol", "type", "title", "date"], "events.events")
-
     symbols = _event_symbols()
     workers = max(1, min(EVENTS_SYMBOL_WORKERS, len(symbols)))
-    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="event_reports") as executor:
-        future_map = {executor.submit(_fetch_symbol_report_rows, symbol, as_of): symbol for symbol in symbols}
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="event_notices") as executor:
+        future_map = {executor.submit(_fetch_symbol_notice_rows, symbol, as_of): symbol for symbol in symbols}
         for future in as_completed(future_map):
             symbol = future_map[future]
             try:
                 rows.extend(future.result())
             except Exception as exc:
-                LOGGER.warning("symbol report task failed [%s]: %s", symbol, exc)
+                LOGGER.warning("symbol notice task failed [%s]: %s", symbol, exc)
     return ensure_required(_dedupe_event_rows(rows), ["symbol", "type", "title", "date"], "events.events")
 
 
-def get_buyback(as_of: date) -> List[dict]:
+def get_buyback(as_of: date) -> list[dict]:
     rows: list[dict] = []
     items = _fetch_rss(_hkex_regulatory_announcements_rss())
     for item in items:
@@ -933,16 +881,62 @@ def get_buyback(as_of: date) -> List[dict]:
     return ensure_required(rows, ["symbol", "date", "amount"], "events.buyback")
 
 
-def get_insider_trade(as_of: date) -> List[dict]:
-    if ball is None:
-        LOGGER.warning("pysnowball unavailable, skip insider trades")
+def _fetch_insider_rows_from_akshare(symbol: str, as_of: date) -> list[dict]:
+    if ak is None:
         return []
+    # 使用最新季度的持股变动明细，按公告日期过滤
+    #  quarter strings: 20250331, 20241231, etc.
+    quarter_candidates = []
+    year, month = as_of.year, as_of.month
+    q = (month - 1) // 3 + 1
+    for _ in range(4):
+        q_end_month = q * 3
+        quarter_candidates.append(f"{year}{q_end_month:02d}31")
+        q -= 1
+        if q <= 0:
+            q = 4
+            year -= 1
 
-    rows: list[dict] = []
+    code = symbol.split(".")[0]
+    for quarter in quarter_candidates:
+        try:
+            df = ak.stock_gdfx_holding_detail_em(date=quarter)
+        except Exception as exc:
+            LOGGER.debug("akshare holding_detail failed [%s %s]: %s", symbol, quarter, exc)
+            continue
+        if df is None or getattr(df, "empty", True):
+            continue
+        rows: list[dict] = []
+        for record in df.to_dict(orient="records"):
+            row_code = str(record.get("股票代码") or record.get("code") or "").strip()
+            if row_code != code:
+                continue
+            pub_date = _to_date(record.get("公告日期") or record.get("date"))
+            if pub_date != as_of:
+                continue
+            change_type = str(record.get("期末持股-持股变动") or "").strip()
+            shares = _safe_float(record.get("期末持股-数量变动"))
+            rows.append(
+                {
+                    "symbol": symbol,
+                    "date": pub_date,
+                    "type": change_type or "trade",
+                    "shares": abs(shares) if shares is not None else 0.0,
+                    "link": "",
+                    "source": "AkShare Holding Detail",
+                }
+            )
+        if rows:
+            return rows
+    return []
+
+
+def get_insider_trade(as_of: date) -> list[dict]:
     symbols = _event_symbols()
     workers = max(1, min(EVENTS_SYMBOL_WORKERS, len(symbols)))
+    rows: list[dict] = []
     with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="event_insider") as executor:
-        future_map = {executor.submit(_fetch_symbol_insider_rows, symbol, as_of): symbol for symbol in symbols}
+        future_map = {executor.submit(_fetch_insider_rows_from_akshare, symbol, as_of): symbol for symbol in symbols}
         for future in as_completed(future_map):
             symbol = future_map[future]
             try:
@@ -950,6 +944,3 @@ def get_insider_trade(as_of: date) -> List[dict]:
             except Exception as exc:
                 LOGGER.warning("symbol insider task failed [%s]: %s", symbol, exc)
     return ensure_required(rows, ["symbol", "date", "type", "shares"], "events.insider")
-
-
-

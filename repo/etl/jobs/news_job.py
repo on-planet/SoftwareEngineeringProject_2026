@@ -5,7 +5,9 @@ from datetime import date
 import os
 import time
 
-from etl.fetchers.news_client import get_news
+from etl.providers import get_provider
+
+_provider = get_provider()
 from etl.loaders.pg_loader import upsert_news
 from etl.utils.dates import date_range
 from etl.utils.logging import get_logger
@@ -23,7 +25,7 @@ def run_news_job(start: date, end: date) -> int:
     fetch_results: dict[date, tuple[list[dict], float]] = {}
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_map = {
-            executor.submit(get_news, as_of): as_of
+            executor.submit(_provider.news.get_news, as_of): as_of
             for as_of in dates
         }
         for future in as_completed(future_map):

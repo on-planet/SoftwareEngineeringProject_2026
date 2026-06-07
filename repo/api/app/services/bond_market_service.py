@@ -7,7 +7,9 @@ from app.models.bond_market_quote import BondMarketQuote
 from app.models.bond_market_trade import BondMarketTrade
 from app.services.cache_utils import item_to_dict
 from app.utils.query_params import SortOrder
-from etl.fetchers.akshare_reference_client import fetch_bond_market_quote_rows, fetch_bond_market_trade_rows
+from etl.providers import get_provider
+
+_provider = get_provider()
 
 
 def _replace_rows(db: Session, model, rows: list[dict]) -> int:
@@ -27,7 +29,7 @@ def _ensure_quote_rows(db: Session, refresh: bool) -> None:
     has_rows = db.query(BondMarketQuote.id).first() is not None
     if has_rows and not refresh:
         return
-    rows = fetch_bond_market_quote_rows()
+    rows = _provider.reference.fetch_bond_market_quote_rows()
     if rows:
         _replace_rows(db, BondMarketQuote, rows)
 
@@ -36,7 +38,7 @@ def _ensure_trade_rows(db: Session, refresh: bool) -> None:
     has_rows = db.query(BondMarketTrade.id).first() is not None
     if has_rows and not refresh:
         return
-    rows = fetch_bond_market_trade_rows()
+    rows = _provider.reference.fetch_bond_market_trade_rows()
     if rows:
         _replace_rows(db, BondMarketTrade, rows)
 

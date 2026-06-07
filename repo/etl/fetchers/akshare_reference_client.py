@@ -48,6 +48,20 @@ def _safe_float(value: object) -> float | None:
     return number
 
 
+def _safe_mid_float(value: object) -> float | None:
+    direct = _safe_float(value)
+    if direct is not None:
+        return direct
+    text = str(value or "").strip().replace(",", "")
+    if not text or "/" not in text:
+        return None
+    numbers = [_safe_float(part) for part in text.split("/")]
+    valid_numbers = [number for number in numbers if number is not None]
+    if not valid_numbers:
+        return None
+    return sum(valid_numbers) / len(valid_numbers)
+
+
 def _safe_date(value: object) -> date | None:
     if value is None:
         return None
@@ -207,12 +221,12 @@ def fetch_fx_swap_quote_rows(*, as_of: datetime | None = None) -> list[dict]:
         rows.append(
             {
                 "currency_pair": pair,
-                "one_week": _safe_float(record.get("1周")),
-                "one_month": _safe_float(record.get("1月")),
-                "three_month": _safe_float(record.get("3月")),
-                "six_month": _safe_float(record.get("6月")),
-                "nine_month": _safe_float(record.get("9月")),
-                "one_year": _safe_float(record.get("1年")),
+                "one_week": _safe_mid_float(record.get("1周")),
+                "one_month": _safe_mid_float(record.get("1月")),
+                "three_month": _safe_mid_float(record.get("3月")),
+                "six_month": _safe_mid_float(record.get("6月")),
+                "nine_month": _safe_mid_float(record.get("9月")),
+                "one_year": _safe_mid_float(record.get("1年")),
                 "as_of": snapshot,
                 "source": source or "fx_swap_quote",
                 "raw_json": _raw_json(record),
